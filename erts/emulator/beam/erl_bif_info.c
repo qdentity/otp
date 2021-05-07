@@ -3586,7 +3586,7 @@ fun_info_2(BIF_ALIST_2)
 	    break;
 	case am_name:
             {
-                const ErtsCodeMFA *mfa = erts_code_to_codemfa((funp->fe)->address);
+                const ErtsCodeMFA *mfa = erts_get_fun_mfa(funp->fe);
                 hp = HAlloc(p, 3);
                 val = mfa->function;
             }
@@ -3661,8 +3661,9 @@ fun_info_mfa_1(BIF_ALIST_1)
     if (is_fun(fun)) {
         const ErtsCodeMFA *mfa;
         ErlFunThing* funp;
+
         funp = (ErlFunThing *) fun_val(fun);
-        mfa = erts_code_to_codemfa((funp->fe)->address);
+        mfa = erts_get_fun_mfa(funp->fe);
 
         hp = HAlloc(p, 4);
         BIF_RET(TUPLE3(hp,
