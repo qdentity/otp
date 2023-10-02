@@ -45,6 +45,8 @@
          select_bound_chunk/1, t_delete_all_objects/1, t_test_ms/1,
 	 t_select_delete/1,t_select_replace/1,t_select_replace_next_bug/1,
          t_select_pam_stack_overflow_bug/1,
+         t_select_flatmap_term_copy_bug/1,
+         t_select_hashmap_term_copy_bug/1,
          t_ets_dets/1]).
 -export([t_insert_list/1, t_insert_list_bag/1, t_insert_list_duplicate_bag/1,
          t_insert_list_set/1, t_insert_list_delete_set/1,
@@ -153,6 +155,8 @@ all() ->
      t_test_ms, t_select_delete, t_select_replace,
      t_select_replace_next_bug,
      t_select_pam_stack_overflow_bug,
+     t_select_flatmap_term_copy_bug,
+     t_select_hashmap_term_copy_bug,
      t_ets_dets, memory, t_select_reverse, t_bucket_disappears,
      t_named_select, select_fixtab_owner_change,
      select_fail, t_insert_new, t_repair_continuation,
@@ -1915,31 +1919,6 @@ t_select_pam_stack_overflow_bug(Config) ->
     ok.
 
 t_select_flatmap_term_copy_bug(_Config) ->
-        T = ets:new(a,[]),
-    ets:insert(T, {list_to_binary(lists:duplicate(36,$a)),
-                   list_to_binary(lists:duplicate(36,$b)),
-                   list_to_binary(lists:duplicate(36,$c))}),
-    V1 = ets:select(T, [{{'$1','$2','$3'},[],[#{ '$1' => a }]}]),
-    erlang:garbage_collect(),
-    V1 = ets:select(T, [{{'$1','$2','$3'},[],[#{ '$1' => a }]}]),
-    erlang:garbage_collect(),
-    V2 = ets:select(T, [{{'$1','$2','$3'},[],[#{ a => '$1' }]}]),
-    erlang:garbage_collect(),
-    V2 = ets:select(T, [{{'$1','$2','$3'},[],[#{ a => '$1' }]}]),
-    erlang:garbage_collect(),
-    V3 = ets:select(T, [{{'$1','$2','$3'},[],[#{ '$1' => '$1' }]}]),
-    erlang:garbage_collect(),
-    V3 = ets:select(T, [{{'$1','$2','$3'},[],[#{ '$1' => '$1' }]}]),
-    erlang:garbage_collect(),
-    V3 = ets:select(T, [{{'$1','$2','$3'},[],[#{ a => a }]}]),
-    erlang:garbage_collect(),
-    V3 = ets:select(T, [{{'$1','$2','$3'},[],[#{ a => a }]}]),
-    erlang:garbage_collect(),
-    ets:delete(T),
-    ok.
-
-t_select_hashmap_term_copy_bug(_Config) ->
-
     T = ets:new(a,[]),
     ets:insert(T, {list_to_binary(lists:duplicate(36,$a)),
                    list_to_binary(lists:duplicate(36,$b)),
@@ -1956,10 +1935,47 @@ t_select_hashmap_term_copy_bug(_Config) ->
     erlang:garbage_collect(),
     V3 = ets:select(T, [{{'$1','$2','$3'},[],[#{ '$1' => '$1' }]}]),
     erlang:garbage_collect(),
-    V3 = ets:select(T, [{{'$1','$2','$3'},[],[#{ a => a }]}]),
+    V4 = ets:select(T, [{{'$1','$2','$3'},[],[#{ a => a }]}]),
     erlang:garbage_collect(),
-    V3 = ets:select(T, [{{'$1','$2','$3'},[],[#{ a => a }]}]),
+    V4 = ets:select(T, [{{'$1','$2','$3'},[],[#{ a => a }]}]),
     erlang:garbage_collect(),
+    ets:delete(T),
+    ok.
+
+t_select_hashmap_term_copy_bug(_Config) ->
+
+    T = ets:new(a,[]),
+    Dollar1 = list_to_binary(lists:duplicate(36,$a)),
+    ets:insert(T, {Dollar1,
+                   list_to_binary(lists:duplicate(36,$b)),
+                   list_to_binary(lists:duplicate(36,$c))}),
+
+    LM = maps:from_list([{V,1} || V <- lists:seq(1,40)]),
+
+    V1 = ets:select(T, [{{'$1','$2','$3'},[], [LM#{ a => '$1'  }]}]),
+    erlang:garbage_collect(),
+    V1 = ets:select(T, [{{'$1','$2','$3'},[], [LM#{ a => '$1'  }]}]),
+
+    V1 = [LM#{ a => Dollar1 }],
+
+    V2 = ets:select(T, [{{'$1','$2','$3'},[], [LM#{ '$1' => a  }]}]),
+    erlang:garbage_collect(),
+    V2 = ets:select(T, [{{'$1','$2','$3'},[], [LM#{ '$1' => a  }]}]),
+
+    V2 = [LM#{ Dollar1 => a }],
+
+    V3 = ets:select(T, [{{'$1','$2','$3'},[], [LM#{ '$1' => '$1'  }]}]),
+    erlang:garbage_collect(),
+    V3 = ets:select(T, [{{'$1','$2','$3'},[], [LM#{ '$1' => '$1'  }]}]),
+
+    V3 = [LM#{ Dollar1 => Dollar1 }],
+
+    V4 = ets:select(T, [{{'$1','$2','$3'},[], [LM#{ a => a  }]}]),
+    erlang:garbage_collect(),
+    V4 = ets:select(T, [{{'$1','$2','$3'},[], [LM#{ a => a  }]}]),
+
+    V4 = [LM#{ a => a }],
+
     ets:delete(T),
     ok.
 
