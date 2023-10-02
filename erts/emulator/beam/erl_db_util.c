@@ -4031,10 +4031,12 @@ dmc_map(DMCContext *context, DMCHeap *heap, DMC_STACK_TYPE(UWord) *text,
         return retOk;
     } else {
         DECLARE_WSTACK(wstack);
+        DMC_STACK_TYPE(UWord) instr_save;
         Eterm *kv;
         int c;
         int textpos = DMC_STACK_NUM(*text);
         int stackpos = context->stack_used;
+        int preventive_bumps = 0;
 
         ASSERT(is_hashmap(t));
 
@@ -4048,16 +4050,32 @@ dmc_map(DMCContext *context, DMCHeap *heap, DMC_STACK_TYPE(UWord) *text,
                 DESTROY_WSTACK(wstack);
                 return ret;
             }
-            if (!c)
+
+            if (!c) {
                 constant_values = 0;
+                break;
+            }
+
+            ++context->stack_used;
+            ++preventive_bumps;
+
             if ((ret = dmc_expr(context, heap, text, CDR(kv), &c)) != retOk) {
                 DESTROY_WSTACK(wstack);
                 return ret;
             }
-            if (!c)
+                        
+            if (!c) {
                 constant_values = 0;
+                break;
+            }
+
+            ++context->stack_used;
+            ++preventive_bumps;
+            
         }
 
+        context->stack_used -= preventive_bumps;
+            
         if (constant_values) {
             ASSERT(DMC_STACK_NUM(*text) == textpos);
             *constant = 1;
@@ -4065,35 +4083,64 @@ dmc_map(DMCContext *context, DMCHeap *heap, DMC_STACK_TYPE(UWord) *text,
             return retOk;
         }
 
-        /* reset the program to the original position and re-emit everything */
-        DMC_STACK_NUM(*text) = textpos;
-        context->stack_used = stackpos;
-
-        *constant = 0;
+        DMC_INIT_STACK(instr_save);
+        while (DMC_STACK_NUM(*text) > textpos) {
+            DMC_PUSH(instr_save, DMC_POP(*text));
+        }
 
         hashmap_iterator_init(&wstack, t, 1);
 
         while ((kv=hashmap_iterator_prev(&wstack)) != NULL) {
+            do_emit_constant(context, text, CAR(kv));
+            if (--preventive_bumps == 0) {
+                while(!DMC_EMPTY(instr_save)) {
+                    DMC_PUSH(*text, DMC_POP(instr_save));
+                }
+                break;
+            }
+            do_emit_constant(context, text, CDR(kv));
+            if (--preventive_bumps == 0) {
+                while(!DMC_EMPTY(instr_save)) {
+                    DMC_PUSH(*text, DMC_POP(instr_save));
+                }
+                kv=hashmap_iterator_prev(&wstack);
+                if ((ret = dmc_expr(context, heap, text, CDR(kv), &c)) != retOk) {
+                    DESTROY_WSTACK(wstack);
+                    return ret;
+                }
+                if (c) {
+                    do_emit_constant(context, text, CDR(kv));
+                }
+                break;
+            }
+        }
+            
+        while ((kv=hashmap_iterator_prev(&wstack)) != NULL) {
+        
             /* push key */
             if ((ret = dmc_expr(context, heap, text, CAR(kv), &c)) != retOk) {
-                DESTROY_WSTACK(wstack);
-                return ret;
-            }
+                    DESTROY_WSTACK(wstack);
+                    return ret;
+                }
+
             if (c) {
                 do_emit_constant(context, text, CAR(kv));
             }
-
+            
             /* push value */
             if ((ret = dmc_expr(context, heap, text, CDR(kv), &c)) != retOk) {
                 DESTROY_WSTACK(wstack);
                 return ret;
             }
+            
             if (c) {
                 do_emit_constant(context, text, CDR(kv));
             }
         }
+        ASSERT(preventive_bumps <= 0);
         DMC_PUSH2(*text, matchMkHashMap, nelems);
         context->stack_used -= 2*nelems - 1;  /* n keys & values => 1 map */
+        DMC_FREE(instr_save);
         DESTROY_WSTACK(wstack);
         return retOk;
     }
