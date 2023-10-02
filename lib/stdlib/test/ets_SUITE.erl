@@ -1914,6 +1914,29 @@ t_select_pam_stack_overflow_bug(Config) ->
     ets:delete(T),
     ok.
 
+t_select_flatmap_term_copy_bug(_Config) ->
+        T = ets:new(a,[]),
+    ets:insert(T, {list_to_binary(lists:duplicate(36,$a)),
+                   list_to_binary(lists:duplicate(36,$b)),
+                   list_to_binary(lists:duplicate(36,$c))}),
+    V1 = ets:select(T, [{{'$1','$2','$3'},[],[#{ '$1' => a }]}]),
+    erlang:garbage_collect(),
+    V1 = ets:select(T, [{{'$1','$2','$3'},[],[#{ '$1' => a }]}]),
+    erlang:garbage_collect(),
+    V2 = ets:select(T, [{{'$1','$2','$3'},[],[#{ a => '$1' }]}]),
+    erlang:garbage_collect(),
+    V2 = ets:select(T, [{{'$1','$2','$3'},[],[#{ a => '$1' }]}]),
+    erlang:garbage_collect(),
+    V3 = ets:select(T, [{{'$1','$2','$3'},[],[#{ '$1' => '$1' }]}]),
+    erlang:garbage_collect(),
+    V3 = ets:select(T, [{{'$1','$2','$3'},[],[#{ '$1' => '$1' }]}]),
+    erlang:garbage_collect(),
+    V3 = ets:select(T, [{{'$1','$2','$3'},[],[#{ a => a }]}]),
+    erlang:garbage_collect(),
+    V3 = ets:select(T, [{{'$1','$2','$3'},[],[#{ a => a }]}]),
+    erlang:garbage_collect(),
+    ets:delete(T),
+    ok.
 
 %% Test that partly bound keys gives faster matches.
 partly_bound(Config) when is_list(Config) ->
