@@ -3977,9 +3977,9 @@ dmc_map(DMCContext *context, DMCHeap *heap, DMC_STACK_TYPE(UWord) *text,
         Eterm t, int *constant)
 {
     int nelems;
-    int constant_values, constant_keys;
     DMCRet ret;
     if (is_flatmap(t)) {
+        int constant_values, constant_keys;
         flatmap_t *m = (flatmap_t *)flatmap_val(t);
         Eterm *values = flatmap_get_values(m);
         int textpos = DMC_STACK_NUM(*text);
@@ -4039,22 +4039,18 @@ dmc_map(DMCContext *context, DMCHeap *heap, DMC_STACK_TYPE(UWord) *text,
         ASSERT(is_hashmap(t));
 
         hashmap_iterator_init(&wstack, t, 1);
-        constant_values = 1;
         nelems = hashmap_size(t);
 
         /* Check if all keys and values are constants. We do preventive_bumps for
            all constants we find so that if we find a non-constant, the stack
            depth will be correct. */
-        while ((kv=hashmap_iterator_prev(&wstack)) != NULL && constant_values) {
+        while ((kv=hashmap_iterator_prev(&wstack)) != NULL) {
             if ((ret = dmc_expr(context, heap, text, CAR(kv), &c)) != retOk) {
                 DESTROY_WSTACK(wstack);
                 return ret;
             }
 
-            if (!c) {
-                constant_values = 0;
-                break;
-            }
+            if (!c) break;
 
             ++context->stack_used;
             ++preventive_bumps;
@@ -4064,10 +4060,7 @@ dmc_map(DMCContext *context, DMCHeap *heap, DMC_STACK_TYPE(UWord) *text,
                 return ret;
             }
                         
-            if (!c) {
-                constant_values = 0;
-                break;
-            }
+            if (!c) break;
 
             ++context->stack_used;
             ++preventive_bumps;
@@ -4076,7 +4069,9 @@ dmc_map(DMCContext *context, DMCHeap *heap, DMC_STACK_TYPE(UWord) *text,
 
         context->stack_used -= preventive_bumps;
 
-        if (constant_values) {
+        /* c is true if we iterated through the entire hashmap without
+           encountering any variables */
+        if (c) {
             ASSERT(DMC_STACK_NUM(*text) == textpos);
             *constant = 1;
             DESTROY_WSTACK(wstack);
