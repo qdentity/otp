@@ -3993,7 +3993,7 @@ dmc_map(DMCContext *context, DMCHeap *heap, DMC_STACK_TYPE(UWord) *text,
         if (constant_values) {
             /* We may have to convert all values to individual matchPushC
                instructions, if we do that then more stack will be needed
-               than estimated, so we artificially bumb the needed stack here
+               than estimated, so we artificially bump the needed stack here
                so that dmc_tuple thinks that dmc_array has used the needed stack. */
             context->stack_used += nelems;
         }
