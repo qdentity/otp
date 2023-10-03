@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2016-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2016-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -32,8 +32,12 @@
     start_monitor/3,start_monitor/4,
     stop/1,stop/3,
     cast/2,call/2,call/3,
-    send_request/2,wait_response/1,wait_response/2,
-    receive_response/1,receive_response/2,check_response/2,
+    send_request/2, send_request/4,
+    wait_response/1, wait_response/2, wait_response/3,
+    receive_response/1, receive_response/2, receive_response/3,
+    check_response/2, check_response/3,
+    reqids_new/0, reqids_size/1,
+    reqids_add/3, reqids_to_list/1,
     enter_loop/4,enter_loop/5,enter_loop/6,
     reply/1,reply/2]).
 
@@ -61,6 +65,7 @@
 -export_type(
    [event_type/0,
     from/0,
+    reply_tag/0,
     callback_mode_result/0,
     init_result/1,
     init_result/2,
@@ -70,7 +75,10 @@
     event_handler_result/2,
     reply_action/0,
     enter_action/0,
-    action/0
+    action/0,
+    request_id/0,
+    request_id_collection/0,
+    format_status/0
    ]).
 %% Old types, not advertised
 -export_type(
@@ -85,15 +93,20 @@
    [server_name/0,
     server_ref/0,
     start_opt/0,
+    enter_loop_opt/0,
     start_ret/0,
-    enter_loop_opt/0]).
+    start_mon_ret/0]).
+
+%% -define(DBG(T), erlang:display({{self(), ?MODULE, ?LINE, ?FUNCTION_NAME}, T})).
+
 
 %%%==========================================================================
 %%% Interface functions.
 %%%==========================================================================
 
 -type from() ::
-	{To :: pid(), Tag :: term()}. % Reply-to specifier for call
+	{To :: pid(), Tag :: reply_tag()}. % Reply-to specifier for call
+-opaque reply_tag() :: gen:reply_tag().
 
 -type state() ::
 	state_name() | % For StateName/3 callback functions
@@ -109,6 +122,8 @@
         {'call',From :: from()} | 'cast' | 'info'.
 -type timeout_event_type() ::
         'timeout' | {'timeout', Name :: term()} | 'state_timeout'.
+
+-type event_content() :: term().
 
 -type callback_mode_result() ::
 	callback_mode() | [callback_mode() | state_enter()].
@@ -161,7 +176,7 @@
 	%% action() list is the first to be delivered.
 	{'next_event', % Insert event as the next to handle
 	 EventType :: event_type(),
-	 EventContent :: term()} |
+	 EventContent :: event_content()} |
         {'change_callback_module', NewModule :: module()} |
         {'push_callback_module', NewModule :: module()} |
         'pop_callback_module' |
@@ -174,24 +189,24 @@
 -type timeout_action() ::
 	(Time :: event_timeout()) | % {timeout,Time,Time}
 	{'timeout', % Set the event_timeout option
-	 Time :: event_timeout(), EventContent :: term()} |
+	 Time :: event_timeout(), EventContent :: event_content()} |
 	{'timeout', % Set the event_timeout option
 	 Time :: event_timeout(),
-	 EventContent :: term(),
+	 EventContent :: event_content(),
 	 Options :: (timeout_option() | [timeout_option()])} |
 	%%
 	{{'timeout', Name :: term()}, % Set the generic_timeout option
-	 Time :: generic_timeout(), EventContent :: term()} |
+	 Time :: generic_timeout(), EventContent :: event_content()} |
 	{{'timeout', Name :: term()}, % Set the generic_timeout option
 	 Time :: generic_timeout(),
-	 EventContent :: term(),
+	 EventContent :: event_content(),
 	 Options :: (timeout_option() | [timeout_option()])} |
 	%%
 	{'state_timeout', % Set the state_timeout option
-	 Time :: state_timeout(), EventContent :: term()} |
+	 Time :: state_timeout(), EventContent :: event_content()} |
 	{'state_timeout', % Set the state_timeout option
 	 Time :: state_timeout(),
-	 EventContent :: term(),
+	 EventContent :: event_content(),
 	 Options :: (timeout_option() | [timeout_option()])} |
         timeout_cancel_action() |
         timeout_update_action().
@@ -200,9 +215,10 @@
         {{'timeout', Name :: term()}, 'cancel'} |
         {'state_timeout', 'cancel'}.
 -type timeout_update_action() ::
-        {'timeout', 'update', EventContent :: term()} |
-        {{'timeout', Name :: term()}, 'update', EventContent :: term()} |
-        {'state_timeout', 'update', EventContent :: term()}.
+        {'timeout', 'update', EventContent :: event_content()} |
+        {{'timeout', Name :: term()},
+         'update', EventContent :: event_content()} |
+        {'state_timeout', 'update', EventContent :: event_content()}.
 -type reply_action() ::
 	{'reply', % Reply to a caller
 	 From :: from(), Reply :: term()}.
@@ -212,8 +228,9 @@
     {ok, State :: StateType, Data :: DataType} |
     {ok, State :: StateType, Data :: DataType,
      Actions :: [action()] | action()} |
-    'ignore' |
-    {'stop', Reason :: term()}.
+        'ignore' |
+        {'stop', Reason :: term()} |
+        {'error', Reason :: term()}.
 
 %% Old, not advertised
 -type state_function_result() ::
@@ -278,7 +295,12 @@
 	 Replies :: [reply_action()] | reply_action(),
 	 NewData :: DataType}.
 
--type request_id() :: term().
+-opaque request_id() :: gen:request_id().
+
+-opaque request_id_collection() :: gen:request_id_collection().
+
+-type response_timeout() ::
+        timeout() | {abs, integer()}.
 
 %% The state machine init function.  It is called only once and
 %% the server is not running until this function has returned
@@ -303,11 +325,11 @@
 -callback state_name(
 	    'enter',
 	    OldStateName :: state_name(),
-	    Data :: data()) ->
+	    data()) ->
     state_enter_result('state_name');
            (event_type(),
-	    EventContent :: term(),
-	    Data :: data()) ->
+	    event_content(),
+	    data()) ->
     event_handler_result(state_name()).
 %%
 %% State callback for all states
@@ -315,21 +337,21 @@
 -callback handle_event(
 	    'enter',
 	    OldState :: state(),
-	    State, % Current state
-	    Data :: data()) ->
-    state_enter_result(State);
+	    CurrentState,
+	    data()) ->
+    state_enter_result(CurrentState);
            (event_type(),
-	    EventContent :: term(),
-	    State :: state(), % Current state
-	    Data :: data()) ->
-    event_handler_result(state()).
+	    event_content(),
+	    CurrentState :: state(),
+	    data()) ->
+    event_handler_result(state()). % New state
 
 %% Clean up before the server terminates.
 -callback terminate(
 	    Reason :: 'normal' | 'shutdown' | {'shutdown', term()}
 		    | term(),
-	    State :: state(),
-	    Data :: data()) ->
+	    CurrentState :: state(),
+	    data()) ->
     any().
 
 %% Note that the new code can expect to get an OldState from
@@ -347,6 +369,8 @@
 %% often condensed way.  For StatusOption =:= 'normal' the preferred
 %% return term is [{data,[{"State",FormattedState}]}], and for
 %% StatusOption =:= 'terminate' it is just FormattedState.
+%%
+%% Deprecated
 -callback format_status(
 	    StatusOption,
 	    [ [{Key :: term(), Value :: term()}] |
@@ -355,8 +379,24 @@
     Status :: term() when
       StatusOption :: 'normal' | 'terminate'.
 
+-type format_status() ::
+        #{ state => state(),
+           data => data(),
+           reason => term(),
+           queue => [{event_type(), event_content()}],
+           postponed => [{event_type(), event_content()}],
+           timeouts => [{timeout_event_type(), event_content()}],
+           log => [sys:system_event()] }.
+
+%% Format the callback module status in some sensible that is
+%% often condensed way.
+-callback format_status(Status) -> NewStatus when
+      Status    :: format_status(),
+      NewStatus :: format_status().
+
 -optional_callbacks(
-   [format_status/2, % Has got a default implementation
+   [format_status/1, % Has got a default implementation
+    format_status/2, % Has got a default implementation
     terminate/3, % Has got a default implementation
     code_change/4, % Only needed by advanced soft upgrade
     %%
@@ -463,7 +503,7 @@ event_type(Type) ->
 -record(state,
         {state_data = {undefined,undefined} ::
            {State :: term(),Data :: term()},
-         postponed = [] :: [{event_type(),term()}],
+         postponed = [] :: [{event_type(),event_content()}],
          timers = #{t0q => []} ::
            #{
               %% Timeout 0 Queue.
@@ -474,38 +514,44 @@ event_type(Type) ->
 
               TimeoutType :: timeout_event_type() =>
                              {TimerRef :: reference() | 0,
-                              TimeoutMsg :: term()}},
+                              TimeoutMsg :: event_content()}},
          hibernate = false :: boolean()
         }).
 
 %%%==========================================================================
 %%% API
 
--type server_name() ::
-        {'global', GlobalName :: term()}
-      | {'via', RegMod :: module(), Name :: term()}
-      | {'local', atom()}.
--type server_ref() ::
+-type server_name() :: % Duplicate of gen:emgr_name()
+        {'local', atom()}
+      | {'global', GlobalName :: term()}
+      | {'via', RegMod :: module(), Name :: term()}.
+
+-type server_ref() :: % What gen:call/3,4 and gen:stop/1,3 accepts
         pid()
       | (LocalName :: atom())
       | {Name :: atom(), Node :: atom()}
       | {'global', GlobalName :: term()}
       | {'via', RegMod :: module(), ViaName :: term()}.
--type start_opt() ::
+
+-type start_opt() :: % Duplicate of gen:option()
         {'timeout', Time :: timeout()}
-      | {'spawn_opt', [proc_lib:start_spawn_option()]}
+      | {'spawn_opt', [proc_lib:spawn_option()]}
       | enter_loop_opt().
--type start_ret() ::
+%%
+-type enter_loop_opt() :: % Some gen:option()s works for enter_loop/*
+	{'hibernate_after', HibernateAfterTimeout :: timeout()}
+      | {'debug', Dbgs :: [sys:debug_option()]}.
+
+-type start_ret() :: % gen:start_ret() without monitor return
         {'ok', pid()}
       | 'ignore'
       | {'error', term()}.
--type start_mon_ret() ::
+
+-type start_mon_ret() :: % gen:start_ret() with only monitor return
         {'ok', {pid(),reference()}}
       | 'ignore'
       | {'error', term()}.
--type enter_loop_opt() ::
-	{'hibernate_after', HibernateAfterTimeout :: timeout()}
-      | {'debug', Dbgs :: [sys:debug_option()]}.
+
 
 
 
@@ -599,45 +645,200 @@ call(ServerRef, Request) ->
 	  {'dirty_timeout',T :: timeout()}) ->
 		  Reply :: term().
 call(ServerRef, Request, infinity = T = Timeout) ->
-    call_dirty(ServerRef, Request, Timeout, T);
+    call(ServerRef, Request, Timeout, T);
 call(ServerRef, Request, {dirty_timeout, T} = Timeout) ->
-    call_dirty(ServerRef, Request, Timeout, T);
+    call(ServerRef, Request, Timeout, T);
 call(ServerRef, Request, {clean_timeout, T} = Timeout) ->
-    call_clean(ServerRef, Request, Timeout, T);
+    call(ServerRef, Request, Timeout, T);
 call(ServerRef, Request, {_, _} = Timeout) ->
     erlang:error(badarg, [ServerRef,Request,Timeout]);
 call(ServerRef, Request, Timeout) ->
-    call_clean(ServerRef, Request, Timeout, Timeout).
+    call(ServerRef, Request, Timeout, Timeout).
 
 -spec send_request(ServerRef::server_ref(), Request::term()) ->
-        RequestId::request_id().
+        ReqId::request_id().
 send_request(Name, Request) ->
-    gen:send_request(Name, '$gen_call', Request).
+    try
+        gen:send_request(Name, '$gen_call', Request)
+    catch
+        error:badarg ->
+            error(badarg, [Name, Request])
+    end.
 
--spec wait_response(RequestId::request_id()) ->
-        {reply, Reply::term()} | {error, {term(), server_ref()}}.
-wait_response(RequestId) ->
-    gen:wait_response(RequestId, infinity).
+-spec send_request(ServerRef::server_ref(),
+                   Request::term(),
+                   Label::term(),
+                   ReqIdCollection::request_id_collection()) ->
+          NewReqIdCollection::request_id_collection().
 
--spec wait_response(RequestId::request_id(), timeout()) ->
-        {reply, Reply::term()} | 'timeout' | {error, {term(), server_ref()}}.
-wait_response(RequestId, Timeout) ->
-    gen:wait_response(RequestId, Timeout).
+send_request(ServerRef, Request, Label, ReqIdCol) ->
+    try
+        gen:send_request(ServerRef, '$gen_call', Request, Label, ReqIdCol)
+    catch
+        error:badarg ->
+            error(badarg, [ServerRef, Request, Label, ReqIdCol])
+    end.
 
--spec receive_response(RequestId::request_id()) ->
-        {reply, Reply::term()} | {error, {term(), server_ref()}}.
-receive_response(RequestId) ->
-    gen:receive_response(RequestId, infinity).
 
--spec receive_response(RequestId::request_id(), timeout()) ->
-        {reply, Reply::term()} | 'timeout' | {error, {term(), server_ref()}}.
-receive_response(RequestId, Timeout) ->
-    gen:receive_response(RequestId, Timeout).
+-spec wait_response(ReqId) -> Result when
+      ReqId :: request_id(),
+      Response :: {reply, Reply::term()}
+                | {error, {Reason::term(), server_ref()}},
+      Result :: Response | 'timeout'.
 
--spec check_response(Msg::term(), RequestId::request_id()) ->
-        {reply, Reply::term()} | 'no_reply' | {error, {term(), server_ref()}}.
-check_response(Msg, RequestId) ->
-    gen:check_response(Msg, RequestId).
+wait_response(ReqId) ->
+    wait_response(ReqId, infinity).
+
+-spec wait_response(ReqId, WaitTime) -> Result when
+      ReqId :: request_id(),
+      WaitTime :: response_timeout(),
+      Response :: {reply, Reply::term()}
+                | {error, {Reason::term(), server_ref()}},
+      Result :: Response | 'timeout'.
+
+wait_response(ReqId, WaitTime) ->
+    try
+        gen:wait_response(ReqId, WaitTime)
+    catch
+        error:badarg ->
+            error(badarg, [ReqId, WaitTime])
+    end.
+
+-spec wait_response(ReqIdCollection, WaitTime, Delete) -> Result when
+      ReqIdCollection :: request_id_collection(),
+      WaitTime :: response_timeout(),
+      Delete :: boolean(),
+      Response :: {reply, Reply::term()} |
+                  {error, {Reason::term(), server_ref()}},
+      Result :: {Response,
+                 Label::term(),
+                 NewReqIdCollection::request_id_collection()} |
+                'no_request' |
+                'timeout'.
+
+wait_response(ReqIdCol, WaitTime, Delete) ->
+    try
+        gen:wait_response(ReqIdCol, WaitTime, Delete)
+    catch
+        error:badarg ->
+            error(badarg, [ReqIdCol, WaitTime, Delete])
+    end.
+
+-spec receive_response(ReqId) -> Result when
+      ReqId :: request_id(),
+      Response :: {reply, Reply::term()} |
+                  {error, {Reason::term(), server_ref()}},
+      Result :: Response | 'timeout'.
+
+receive_response(ReqId) ->
+    receive_response(ReqId, infinity).
+
+-spec receive_response(ReqId, Timeout) -> Result when
+      ReqId :: request_id(),
+      Timeout :: response_timeout(),
+      Response :: {reply, Reply::term()} |
+                  {error, {Reason::term(), server_ref()}},
+      Result :: Response | 'timeout'.
+
+receive_response(ReqId, Timeout) ->
+    try
+        gen:receive_response(ReqId, Timeout)
+    catch
+        error:badarg ->
+            error(badarg, [ReqId, Timeout])
+    end.
+
+-spec receive_response(ReqIdCollection, Timeout, Delete) -> Result when
+      ReqIdCollection :: request_id_collection(),
+      Timeout :: response_timeout(),
+      Delete :: boolean(),
+      Response :: {reply, Reply::term()} |
+                  {error, {Reason::term(), server_ref()}},
+      Result :: {Response,
+                 Label::term(),
+                 NewReqIdCollection::request_id_collection()} |
+                'no_request' |
+                'timeout'.
+
+receive_response(ReqIdCol, Timeout, Delete) ->
+    try
+        gen:receive_response(ReqIdCol, Timeout, Delete)
+    catch
+        error:badarg ->
+            error(badarg, [ReqIdCol, Timeout, Delete])
+    end.
+
+-spec check_response(Msg, ReqId) -> Result when
+      Msg :: term(),
+      ReqId :: request_id(),
+      Response :: {reply, Reply::term()} |
+                  {error, {Reason::term(), server_ref()}},
+      Result :: Response | 'no_reply'.
+
+check_response(Msg, ReqId) ->
+    try
+        gen:check_response(Msg, ReqId)
+    catch
+        error:badarg ->
+            error(badarg, [Msg, ReqId])
+    end.
+
+-spec check_response(Msg, ReqIdCollection, Delete) -> Result when
+      Msg :: term(),
+      ReqIdCollection :: request_id_collection(),
+      Delete :: boolean(),
+      Response :: {reply, Reply::term()} |
+                  {error, {Reason::term(), server_ref()}},
+      Result :: {Response,
+                 Label::term(),
+                 NewReqIdCollection::request_id_collection()} |
+                'no_request' |
+                'no_reply'.
+
+check_response(Msg, ReqIdCol, Delete) ->
+    try
+        gen:check_response(Msg, ReqIdCol, Delete)
+    catch
+        error:badarg ->
+            error(badarg, [Msg, ReqIdCol, Delete])
+    end.
+
+-spec reqids_new() ->
+          NewReqIdCollection::request_id_collection().
+
+reqids_new() ->
+    gen:reqids_new().
+
+-spec reqids_size(ReqIdCollection::request_id_collection()) ->
+          non_neg_integer().
+
+reqids_size(ReqIdCollection) ->
+    try
+        gen:reqids_size(ReqIdCollection)
+    catch
+        error:badarg -> error(badarg, [ReqIdCollection])
+    end.
+
+-spec reqids_add(ReqId::request_id(), Label::term(),
+                 ReqIdCollection::request_id_collection()) ->
+          NewReqIdCollection::request_id_collection().
+
+reqids_add(ReqId, Label, ReqIdCollection) ->
+    try
+        gen:reqids_add(ReqId, Label, ReqIdCollection)
+    catch
+        error:badarg -> error(badarg, [ReqId, Label, ReqIdCollection])
+    end.
+
+-spec reqids_to_list(ReqIdCollection::request_id_collection()) ->
+          [{ReqId::request_id(), Label::term()}].
+
+reqids_to_list(ReqIdCollection) ->
+    try
+        gen:reqids_to_list(ReqIdCollection)
+    catch
+        error:badarg -> error(badarg, [ReqIdCollection])
+    end.
 
 %% Reply from a state machine callback to whom awaits in call/2
 -spec reply([reply_action()] | reply_action()) -> ok.
@@ -699,66 +900,19 @@ enter_loop(Module, Opts, State, Data, Server, Actions) ->
 wrap_cast(Event) ->
     {'$gen_cast',Event}.
 
-call_dirty(ServerRef, Request, Timeout, T) ->
+-compile({inline, [call/4]}).
+call(ServerRef, Request, Timeout, T) ->
     try gen:call(ServerRef, '$gen_call', Request, T) of
         {ok,Reply} ->
             Reply
     catch
-        Class:Reason:Stacktrace ->
+        %% 'gen' raises 'exit' for problems
+        Class:Reason:Stacktrace when Class =:= exit ->
             erlang:raise(
               Class,
+              %% Wrap the reason according to tradition
               {Reason,{?MODULE,call,[ServerRef,Request,Timeout]}},
               Stacktrace)
-    end.
-
-call_clean(ServerRef, Request, Timeout, T)
-  when (is_pid(ServerRef)
-        andalso (node(ServerRef) == node()))
-       orelse (element(2, ServerRef) == node()
-               andalso is_atom(element(1, ServerRef))
-               andalso (tuple_size(ServerRef) =:= 2)) ->
-    %% No need to use a proxy locally since we know alias will be
-    %% used as of OTP 24 which will prevent garbage responses...
-    call_dirty(ServerRef, Request, Timeout, T);
-call_clean(ServerRef, Request, Timeout, T) ->
-    %% Call server through proxy process to dodge any late reply
-    %%
-    %% We still need a proxy in the distributed case since we may
-    %% communicate with a node that does not understand aliases.
-    %% This can be removed when alias support is mandatory.
-    %% Probably in OTP 26.
-    Ref = make_ref(),
-    Self = self(),
-    Pid = spawn(
-            fun () ->
-                    Self !
-                        try gen:call(
-                              ServerRef, '$gen_call', Request, T) of
-                            Result ->
-                                {Ref,Result}
-                        catch Class:Reason:Stacktrace ->
-                                {Ref,Class,Reason,Stacktrace}
-                        end
-            end),
-    Mref = monitor(process, Pid),
-    receive
-        {Ref,Result} ->
-            demonitor(Mref, [flush]),
-            case Result of
-                {ok,Reply} ->
-                    Reply
-            end;
-        {Ref,Class,Reason,Stacktrace} ->
-            demonitor(Mref, [flush]),
-            erlang:raise(
-              Class,
-              {Reason,{?MODULE,call,[ServerRef,Request,Timeout]}},
-              Stacktrace);
-        {'DOWN',Mref,_,_,Reason} ->
-            %% There is a theoretical possibility that the
-            %% proxy process gets killed between try--of and !
-            %% so this clause is in case of that
-            exit(Reason)
     end.
 
 replies([{reply,From,Reply}|Replies]) ->
@@ -821,12 +975,12 @@ init_it(Starter, Parent, ServerRef, Module, Args, Opts) ->
               Name, Debug, HibernateAfterTimeout);
 	Class:Reason:Stacktrace ->
 	    gen:unregister_name(ServerRef),
-	    proc_lib:init_ack(Starter, {error,Reason}),
 	    error_info(
 	      Class, Reason, Stacktrace, Debug,
               #params{parent = Parent, name = Name, modules = [Module]},
               #state{}, []),
-	    erlang:raise(Class, Reason, Stacktrace)
+            proc_lib:init_fail(
+              Starter, {error,Reason}, {Class,Reason,Stacktrace})
     end.
 
 %%---------------------------------------------------------------------------
@@ -848,21 +1002,24 @@ init_result(
               State, Data, Actions);
 	{stop,Reason} ->
 	    gen:unregister_name(ServerRef),
-	    proc_lib:init_ack(Starter, {error,Reason}),
-	    exit(Reason);
+            exit(Reason);
+	{error, _Reason} = ERROR ->
+            %% The point of this clause is that we shall have a *silent*
+            %% termination. The error reason will be returned to the
+            %% 'Starter' ({error, Reason}), but *no* crash report.
+	    gen:unregister_name(ServerRef),
+	    proc_lib:init_fail(Starter, ERROR, {exit,normal});
 	ignore ->
 	    gen:unregister_name(ServerRef),
-	    proc_lib:init_ack(Starter, ignore),
-	    exit(normal);
+            proc_lib:init_fail(Starter, ignore, {exit,normal});
 	_ ->
 	    gen:unregister_name(ServerRef),
-	    Error = {bad_return_from_init,Result},
-	    proc_lib:init_ack(Starter, {error,Error}),
+	    Reason = {bad_return_from_init,Result},
 	    error_info(
-	      error, Error, ?STACKTRACE(), Debug,
+	      error, Reason, ?STACKTRACE(), Debug,
               #params{parent = Parent, name = Name, modules = [Module]},
               #state{}, []),
-	    exit(Error)
+            exit(Reason)
     end.
 
 %%%==========================================================================
@@ -917,22 +1074,39 @@ system_replace_state(
 format_status(
   Opt,
   [PDict,SysState,Parent,Debug,
-   {#params{name = Name, modules = Modules} = P,
-    #state{postponed = Postponed, timers = Timers} = S}]) ->
+   {#params{name = Name, modules = [Mod | _] = Modules},
+    #state{postponed = Postponed, timers = Timers,
+           state_data = {State,Data}}}]) ->
     Header = gen:format_status_header("Status for state machine", Name),
-    Log = sys:get_log(Debug),
+
+    {NumTimers, ListTimers} = list_timeouts(Timers),
+    StatusMap = #{ state => State, data => Data,
+                   postponed => Postponed, log => sys:get_log(Debug),
+                   timeouts => ListTimers
+                 },
+
+    NewStatusMap =
+        case gen:format_status(Mod, Opt, StatusMap, [PDict,State,Data]) of
+            #{ 'EXIT' := R } ->
+                Crashed = [{data,[{"State",{State,R}}]}],
+                StatusMap#{ '$status' => Crashed };
+            %% Status is set when the old format_status/2 is called,
+            %% so we do a little backwards compatibility dance here
+            #{ '$status' := L } = SM when is_list(L) -> SM;
+            #{ '$status' := T } = SM -> SM#{ '$status' := [T] };
+            #{ state := S, data := D } = SM ->
+                SM#{ '$status' => [{data,[{"State",{S,D}}]}]}
+        end,
+
     [{header,Header},
      {data,
       [{"Status",SysState},
        {"Parent",Parent},
        {"Modules",Modules},
-       {"Time-outs",list_timeouts(Timers)},
-       {"Logged Events",Log},
-       {"Postponed",Postponed}]} |
-     case format_status(Opt, PDict, update_parent(P, Parent), S) of
-	 L when is_list(L) -> L;
-	 T -> [T]
-     end].
+       {"Time-outs",{NumTimers,maps:get(timeouts,NewStatusMap)}},
+       {"Logged Events",maps:get(log,NewStatusMap)},
+       {"Postponed",maps:get(postponed,NewStatusMap)}]} |
+     maps:get('$status',NewStatusMap)].
 
 %% Update #params.parent only if it differs.  This should not
 %% be possible today (OTP-22.0), but could happen for example
@@ -2413,25 +2587,44 @@ error_info(
   Class, Reason, Stacktrace, Debug,
   #params{
      name = Name,
-     modules = Modules,
+     modules = [Mod|_] = Modules,
      callback_mode = CallbackMode,
-     state_enter = StateEnter} = P,
+     state_enter = StateEnter},
   #state{
      postponed = Postponed,
-     timers = Timers} = S,
+     timers = Timers,
+     state_data = {State,Data}},
   Q) ->
-    Log = sys:get_log(Debug),
+
+    {NumTimers,ListTimers} = list_timeouts(Timers),
+
+    Status =
+        gen:format_status(Mod, terminate,
+                          #{ reason => Reason,
+                             state => State,
+                             data => Data,
+                             queue => Q,
+                             postponed => Postponed,
+                             timeouts => ListTimers,
+                             log => sys:get_log(Debug)},
+                          [get(),State,Data]),
+    NewState = case maps:find('$status', Status) of
+                   error ->
+                       {maps:get(state,Status),maps:get(data,Status)};
+                   {ok, S} ->
+                       S
+               end,
     ?LOG_ERROR(#{label=>{gen_statem,terminate},
                  name=>Name,
-                 queue=>Q,
-                 postponed=>Postponed,
+                 queue=>maps:get(queue,Status),
+                 postponed=>maps:get(postponed,Status),
                  modules=>Modules,
                  callback_mode=>CallbackMode,
                  state_enter=>StateEnter,
-                 state=>format_status(terminate, get(), P, S),
-                 timeouts=>list_timeouts(Timers),
-                 log=>Log,
-                 reason=>{Class,Reason,Stacktrace},
+                 state=>NewState,
+                 timeouts=>{NumTimers,maps:get(timeouts,Status)},
+                 log=>maps:get(log,Status),
+                 reason=>{Class,maps:get(reason,Status),Stacktrace},
                  client_info=>client_stacktrace(Q)},
                #{domain=>[otp],
                  report_cb=>fun gen_statem:format_log/2,
@@ -2764,34 +2957,6 @@ single(false) -> "".
 mod(latin1) -> "";
 mod(_) -> "t".
 
-%% Call Module:format_status/2 or return a default value
-format_status(
-  Opt, PDict,
-  #params{modules = [Module | _]},
-  #state{state_data = {State,Data} = State_Data}) ->
-    case erlang:function_exported(Module, format_status, 2) of
-	true ->
-	    try Module:format_status(Opt, [PDict,State,Data])
-	    catch
-		Result -> Result;
-		_:_ ->
-		    format_status_default(
-		      Opt,
-                      {State,
-                       atom_to_list(Module) ++ ":format_status/2 crashed"})
-	    end;
-	false ->
-	    format_status_default(Opt, State_Data)
-    end.
-
-%% The default Module:format_status/3
-format_status_default(Opt, State_Data) ->
-    case Opt of
-	terminate ->
-	    State_Data;
-	_ ->
-	    [{data,[{"State",State_Data}]}]
-    end.
 
 -compile({inline, [listify/1]}).
 listify(Item) when is_list(Item) ->
@@ -2860,9 +3025,6 @@ cancel_timer(TimeoutType, Timers) ->
 %% Return a list of all pending timeouts
 list_timeouts(Timers) ->
     {maps:size(Timers) - 1, % Subtract fixed key 't0q'
-     maps:fold(
-       fun (t0q, _, Acc) ->
-               Acc;
-           (TimeoutType, {_TimerRef,TimeoutMsg}, Acc) ->
-               [{TimeoutType,TimeoutMsg}|Acc]
-       end, [], Timers)}.
+     [{TimeoutType, TimeoutMsg}
+      || TimeoutType := {_TimerRef, TimeoutMsg} <- Timers,
+         TimeoutType =/= t0q]}.

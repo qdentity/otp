@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2021. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -36,11 +36,15 @@
 %% Implemented in native code
 -export([printable_range/0]).
 
--export_type([device/0, format/0, server_no_data/0]).
+-export_type([device/0, format/0, server_no_data/0,
+              standard_io/0, standard_error/0, user/0]).
 
 %%-------------------------------------------------------------------------
 
--type device() :: atom() | pid().
+-type standard_io() :: standard_io.
+-type standard_error() :: standard_error.
+-type user() :: user.
+-type device() :: atom() | pid() | standard_io() | standard_error() | user().
 -type prompt() :: atom() | unicode:chardata().
 
 %% ErrorDescription is whatever the I/O-server sends.
@@ -209,19 +213,22 @@ get_password(Io) ->
 
 -type encoding()   :: 'latin1' | 'unicode' | 'utf8' | 'utf16' | 'utf32'
                     | {'utf16', 'big' | 'little'} | {'utf32','big' | 'little'}.
--type expand_fun() :: fun((term()) -> {'yes'|'no', string(), [string(), ...]}).
+-type expand_fun() :: fun((string()) -> {'yes'|'no', string(), list()}).
 -type opt_pair()   :: {'binary', boolean()}
                     | {'echo', boolean()}
                     | {'expand_fun', expand_fun()}
-                    | {'encoding', encoding()}.
+                    | {'encoding', encoding()}
+                    | {atom(), term()}.
+-type get_opt_pair() :: opt_pair()
+                      | {'terminal', boolean()}.
 
--spec getopts() -> [opt_pair()] | {'error', Reason} when
+-spec getopts() -> [get_opt_pair()] | {'error', Reason} when
       Reason :: term().
 
 getopts() ->
     getopts(default_input()).
 
--spec getopts(IoDevice) -> [opt_pair()] | {'error', Reason} when
+-spec getopts(IoDevice) -> [get_opt_pair()] | {'error', Reason} when
       IoDevice :: device(),
       Reason :: term().
 
@@ -335,6 +342,7 @@ read(Io, Prompt, Pos0, Options) ->
 
 conv_reason(arguments) -> badarg;
 conv_reason(terminated) -> terminated;
+conv_reason(calling_self) -> calling_self;
 conv_reason({no_translation,_,_}) -> no_translation;
 conv_reason(_Reason) -> badarg.
 
@@ -596,6 +604,8 @@ request(Name, Request, ErrorTag) when is_atom(Name) ->
 	    request(Pid, Request, ErrorTag)
     end.
 
+execute_request(Pid, _Tuple, ErrorTag) when Pid =:= self() ->
+    {ErrorTag, calling_self};
 execute_request(Pid, {Convert,Converted}, ErrorTag) ->
     Mref = erlang:monitor(process, Pid),
     Pid ! {io_request,self(),Mref,Converted},

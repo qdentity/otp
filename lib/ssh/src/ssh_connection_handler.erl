@@ -421,11 +421,11 @@ init([Role, Socket, Opts]) when Role==client ; Role==server ->
             end;
 
         {error,Error} ->
-            {stop, {error,Error}}
+            {stop, {shutdown,Error}}
     end.
 
 %%%----------------------------------------------------------------
-%%% Connection start and initalization helpers
+%%% Connection start and initialization helpers
 
 init_connection_record(Role, Socket, Opts) ->
     {WinSz, PktSz} = init_inet_buffers_window(Socket),
@@ -625,7 +625,7 @@ handle_event(internal, {version_exchange,Version}, {hello,Role}, D0) ->
     {NumVsn, StrVsn} = ssh_transport:handle_hello_version(Version),
     case handle_version(NumVsn, StrVsn, D0#data.ssh_params) of
 	{ok, Ssh1} ->
-	    %% Since the hello part is finnished correctly, we set the
+	    %% Since the hello part is finished correctly, we set the
 	    %% socket to the packet handling mode (including recbuf size):
 	    inet:setopts(D0#data.socket, [{packet,0},
 					 {mode,binary},
@@ -651,7 +651,7 @@ handle_event(state_timeout, no_hello_received, {hello,_Role}=StateName, D0 = #da
     Time = ?GET_OPT(hello_timeout, Ssh0#ssh.opts),
     {Shutdown, D} =
         ?send_disconnect(?SSH_DISCONNECT_PROTOCOL_ERROR,
-                         lists:concat(["No HELLO recieved within ",ssh_lib:format_time_ms(Time)]),
+                         lists:concat(["No HELLO received within ",ssh_lib:format_time_ms(Time)]),
                          StateName, D0),
     {stop, Shutdown, D};
 		  
@@ -939,7 +939,7 @@ handle_event({call,From}, {request, ChannelPid, ChannelId, Type, Data, Timeout},
         {error,Error} ->
             {keep_state, D0, {reply,From,{error,Error}}};
         D ->
-            %% Note reply to channel will happen later when reply is recived from peer on the socket
+            %% Note reply to channel will happen later when reply is received from peer on the socket
             start_channel_request_timer(ChannelId, From, Timeout),
             {keep_state, D, cond_set_idle_timer(D)}
     end;
@@ -950,7 +950,7 @@ handle_event({call,From}, {request, ChannelId, Type, Data, Timeout}, StateName, 
         {error,Error} ->
             {keep_state, D0, {reply,From,{error,Error}}};
         D ->
-            %% Note reply to channel will happen later when reply is recived from peer on the socket
+            %% Note reply to channel will happen later when reply is received from peer on the socket
             start_channel_request_timer(ChannelId, From, Timeout),
             {keep_state, D, cond_set_idle_timer(D)}
     end;
@@ -1120,7 +1120,10 @@ handle_event(info, {Proto, Sock, NewData}, StateName,
                 #ssh_msg_global_request{}            = Msg -> {keep_state, D1, ?CONNECTION_MSG(Msg)};
                 #ssh_msg_request_success{}           = Msg -> {keep_state, D1, ?CONNECTION_MSG(Msg)};
                 #ssh_msg_request_failure{}           = Msg -> {keep_state, D1, ?CONNECTION_MSG(Msg)};
-                #ssh_msg_channel_open{}              = Msg -> {keep_state, D1, ?CONNECTION_MSG(Msg)};
+                #ssh_msg_channel_open{}              = Msg -> {keep_state, D1,
+                                                               [{{timeout, max_initial_idle_time}, cancel} |
+                                                                ?CONNECTION_MSG(Msg)
+                                                               ]};
                 #ssh_msg_channel_open_confirmation{} = Msg -> {keep_state, D1, ?CONNECTION_MSG(Msg)};
                 #ssh_msg_channel_open_failure{}      = Msg -> {keep_state, D1, ?CONNECTION_MSG(Msg)};
                 #ssh_msg_channel_window_adjust{}     = Msg -> {keep_state, D1, ?CONNECTION_MSG(Msg)};
@@ -1186,7 +1189,7 @@ handle_event(info, {Proto, Sock, NewData}, StateName,
 %%%==== 
 handle_event(internal, prepare_next_packet, _StateName, D) ->
     Enough =  erlang:max(8, D#data.ssh_params#ssh.decrypt_block_size),
-    case size(D#data.encrypted_data_buffer) of
+    case byte_size(D#data.encrypted_data_buffer) of
 	Sz when Sz >= Enough ->
 	    self() ! {D#data.transport_protocol, D#data.socket, <<>>};
 	_ ->
@@ -1237,6 +1240,9 @@ handle_event({timeout,idle_time}, _Data,  _StateName, D) ->
             keep_state_and_data
     end;
 
+handle_event({timeout,max_initial_idle_time}, _Data,  _StateName, _D) ->
+    {stop, {shutdown, "Timeout"}};
+
 %%% So that terminate will be run when supervisor is shutdown
 handle_event(info, {'EXIT', _Sup, Reason}, StateName, _D) ->
     Role = ?role(StateName),
@@ -1247,7 +1253,7 @@ handle_event(info, {'EXIT', _Sup, Reason}, StateName, _D) ->
 	    {stop, {shutdown, Reason}};
 
 	Reason == normal ->
-	    %% An exit normal should not cause a server to crash. This has happend...
+	    %% An exit normal should not cause a server to crash. This has happened...
 	    keep_state_and_data;
 
 	true ->
@@ -1588,7 +1594,7 @@ handle_ssh_msg_ext_info(#ssh_msg_ext_info{data=Data}, D0) ->
 ext_info({"server-sig-algs",SigAlgsStr},
          D0 = #data{ssh_params=#ssh{role=client,
                                     userauth_pubkeys=ClientSigAlgs}=Ssh0}) ->
-    %% ClientSigAlgs are the pub_key algortithms that:
+    %% ClientSigAlgs are the pub_key algorithms that:
     %%  1) is usable, that is, the user has such a public key and
     %%  2) is either the default list or set by the caller
     %%     with the client option 'pref_public_key_algs'
@@ -2082,7 +2088,7 @@ ssh_dbg_off(disconnect) -> dbg:ctpl(?MODULE, send_disconnect, 7);
 ssh_dbg_off(terminate) -> dbg:ctpg(?MODULE, terminate, 3);
 ssh_dbg_off(tcp) -> dbg:ctpg(?MODULE, handle_event, 4), % How to avoid cancelling 'connection_events' ?
                     dbg:ctpl(?MODULE, send_bytes, 2),
-                    dbg:ctpg(?MODULE, close_transport, 1);
+                    dbg:ctpl(?MODULE, close_transport, 1);
 ssh_dbg_off(renegotiation) -> dbg:ctpl(?MODULE,   init_renegotiate_timers, 3),
                               dbg:ctpl(?MODULE,   pause_renegotiate_timers, 3),
                               dbg:ctpl(?MODULE,   check_data_rekeying_dbg, 2),

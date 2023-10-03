@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2000-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2000-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -51,6 +51,7 @@
 -export([make_crypto_key/2, get_crypto_key/1]).	%Utilities used by compiler
 
 -export_type([attrib_entry/0, compinfo_entry/0, labeled_entry/0, label/0]).
+-export_type([chunkid/0]).
 -export_type([chnk_rsn/0]).
 
 -import(lists, [append/1, delete/2, foreach/2, keysort/2, 
@@ -155,7 +156,7 @@ chunks(File, Chunks, Options) ->
     catch Error -> Error end.
 
 -spec all_chunks(beam()) ->
-           {'ok', 'beam_lib', [{chunkid(), dataB()}]} | {'error', 'beam_lib', info_rsn()}.
+           {'ok', module(), [{chunkid(), dataB()}]} | {'error', 'beam_lib', info_rsn()}.
 
 all_chunks(File) ->
     read_all_chunks(File).
@@ -831,8 +832,7 @@ symbol(_, AT, I1, I2, _I3, _Cnt) ->
     {atm(AT, I1), I2}.
 
 atm(AT, N) ->
-    [{_N, S}] = ets:lookup(AT, N),
-    S.
+    ets:lookup_element(AT, N, 2).
 
 %% AT is updated.
 ensure_atoms({empty, AT}, Cs) ->
@@ -953,13 +953,13 @@ error(Reason) ->
 %% The following chunks must be kept when stripping a BEAM file.
 
 significant_chunks() ->
-    ["Line" | md5_chunks()].
+    ["Line", "Type" | md5_chunks()].
 
 %% The following chunks are significant when calculating the MD5
 %% for a module. They are listed in the order that they should be MD5:ed.
 
 md5_chunks() ->
-    ["Atom", "AtU8", "Code", "StrT", "ImpT", "ExpT", "FunT", "LitT"].
+    ["Atom", "AtU8", "Code", "StrT", "ImpT", "ExpT", "FunT", "LitT", "Meta"].
 
 %% The following chunks are mandatory in every Beam file.
 
@@ -1150,11 +1150,12 @@ terminate(_Reason, _State) ->
     ok.
 
 crypto_key_fun_from_file() ->
+    UserConfig = filename:basedir(user_config,"erlang"),
     case init:get_argument(home) of
 	{ok,[[Home]]} ->
-	    crypto_key_fun_from_file_1([".",Home]);
+	    crypto_key_fun_from_file_1([".", Home, UserConfig]);
 	_ ->
-	    crypto_key_fun_from_file_1(["."])
+	    crypto_key_fun_from_file_1([".", UserConfig])
     end.
 
 crypto_key_fun_from_file_1(Path) ->

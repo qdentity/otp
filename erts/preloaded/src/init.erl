@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2022. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -97,6 +97,17 @@
 
 debug(false, _) -> ok;
 debug(_, T)     -> erlang:display(T).
+
+debug(false, _, Fun) ->
+    Fun();
+debug(_, T, Fun) ->
+    erlang:display(T),
+    T1 = erlang:monotonic_time(),
+    Val = Fun(),
+    T2 = erlang:monotonic_time(),
+    Time = erlang:convert_time_unit(T2 - T1, native, microsecond),
+    erlang:display({done_in_microseconds, Time}),
+    Val.
 
 -spec get_configfd(integer()) -> none | term().
 get_configfd(ConfigFdId) ->
@@ -304,60 +315,9 @@ boot(Start,Flags,Args) ->
 		   bootpid = BootPid},
     boot_loop(BootPid,State).
 
-%%% Convert a term to a printable string, if possible.
-to_string(X, D) when is_list(X), D < 4 ->			% assume string
-    F = flatten(X, []),
-    case printable_list(F) of
-	true when length(F) > 0 ->  F;
-	_false ->
-            List = [to_string(E, D+1) || E <- X],
-            flatten(["[",join(List),"]"], [])
-    end;
-to_string(X, _D) when is_list(X) ->
-    "[_]";
-to_string(X, _D) when is_atom(X) ->
-    atom_to_list(X);
-to_string(X, _D) when is_pid(X) ->
-    pid_to_list(X);
-to_string(X, _D) when is_float(X) ->
-    float_to_list(X);
-to_string(X, _D) when is_integer(X) ->
-    integer_to_list(X);
-to_string(X, D) when is_tuple(X), D < 4 ->
-    List = [to_string(E, D+1) || E <- tuple_to_list(X)],
-    flatten(["{",join(List),"}"], []);
-to_string(X, _D) when is_tuple(X) ->
-    "{_}";
-to_string(_X, _D) ->
-    "".						% can't do anything with it
-
-%% This is an incorrect and narrow definition of printable characters.
-%% The correct one is in io_lib:printable_list/1
-%%
-printable_list([H|T]) when is_integer(H), H >= 32, H =< 126 ->
-    printable_list(T);
-printable_list([$\n|T]) -> printable_list(T);
-printable_list([$\r|T]) -> printable_list(T);
-printable_list([$\t|T]) -> printable_list(T);
-printable_list([]) -> true;
-printable_list(_) ->  false.
-
-join([] = T) ->
-    T;
-join([_Elem] = T) ->
-    T;
-join([Elem|T]) ->
-    [Elem,","|join(T)].
-
-flatten([H|T], Tail) when is_list(H) ->
-    flatten(H, flatten(T, Tail));
-flatten([H|T], Tail) ->
-    [H|flatten(T, Tail)];
-flatten([], Tail) ->
-    Tail.
-
 things_to_string([X|Rest]) ->
-    " (" ++ to_string(X, 0) ++ ")" ++ things_to_string(Rest);
+    " (" ++ erts_internal:term_to_string(X, 32768) ++ ")" ++
+        things_to_string(Rest);
 things_to_string([]) ->
     "".
 
@@ -396,8 +356,8 @@ boot_loop(BootPid, State) ->
 	    loop(State#state{status = {started,PS},
 			     subscribed = []});
 	{'EXIT',BootPid,Reason} ->
-	    erlang:display({"init terminating in do_boot",Reason}),
-	    crash("init terminating in do_boot", [Reason]);
+	    % erlang:display({"init terminating in do_boot",Reason}),
+	    crash("Runtime terminating during boot", [Reason]);
 	{'EXIT',Pid,Reason} ->
 	    Kernel = State#state.kernel,
 	    terminate(Pid,Kernel,Reason), %% If Pid is a Kernel pid, halt()!
@@ -462,9 +422,9 @@ new_kernelpid({_Name,ignore},BootPid,State) ->
     BootPid ! {self(),ignore},
     State;
 new_kernelpid({Name,What},BootPid,State) ->
-    erlang:display({"could not start kernel pid",Name,What}),
+    % erlang:display({"could not start kernel pid",Name,What}),
     clear_system(false,BootPid,State),
-    crash("could not start kernel pid", [Name, What]).
+    crash("Could not start kernel pid", [Name, What]).
 
 %% Here is the main loop after the system has booted.
 
@@ -558,7 +518,7 @@ do_handle_msg(Msg,State) ->
                         true -> logger:info("init got unexpected: ~p", [X],
                                             #{ error_logger=>#{tag=>info_msg}});
                         false ->
-                            erlang:display_string("init got unexpected: "),
+                            erlang:display_string(stdout, "init got unexpected: "),
                             erlang:display(X)
                     end
             end
@@ -591,7 +551,7 @@ set_flag(_Flag,false,Flags) ->
     {ok,Flags};
 set_flag(Flag,Value,Flags) when is_list(Value) ->
     %% The flag here can be -boot or -config, which means the value is
-    %% a file name! Thus the file name encoding is used when coverting.
+    %% a file name! Thus the file name encoding is used when converting.
     Encoding = file:native_name_encoding(),
     case catch unicode:characters_to_binary(Value,Encoding,Encoding) of
 	{'EXIT',_} ->
@@ -833,8 +793,9 @@ del(_Item, [])      -> [].
 terminate(Pid,Kernel,Reason) ->
     case kernel_pid(Pid,Kernel) of
 	{ok,Name} ->
+            %% If you change this time, also change the time in logger_simple_h.erl
 	    sleep(500), %% Flush error printouts!
-	    erlang:display({"Kernel pid terminated",Name,Reason}),
+	    % erlang:display({"Kernel pid terminated",Name,Reason}),
 	    crash("Kernel pid terminated", [Name, Reason]);
 	_ ->
 	    false
@@ -889,6 +850,7 @@ do_boot(Flags,Start) ->
 do_boot(Init,Flags,Start) ->
     process_flag(trap_exit,true),
     Root = get_root(Flags),
+    true = check_bindir(Flags),
     Path = get_flag_list(path, Flags, false),
     {Pa,Pz} = PathFls = path_flags(Flags),
     start_prim_loader(Init, bs2ss(Path), PathFls),
@@ -921,6 +883,14 @@ get_root(Flags) ->
 	    Root;
 	_ ->
 	    exit(no_or_multiple_root_variables)
+    end.
+
+check_bindir(Flags) ->
+    case get_argument(bindir, Flags) of
+	{ok,[[_Bindir]]} ->
+	    true;
+	_ ->
+	    exit(no_or_multiple_bindir_variables)
     end.
 
 get_boot_vars(Root, Flags) ->
@@ -1003,10 +973,13 @@ eval_script([{preLoaded,_}|T], #es{}=Es) ->
     eval_script(T, Es);
 eval_script([{path,Path}|T], #es{path=false,pa=Pa,pz=Pz,
 				 path_choice=PathChoice,
-				 vars=Vars}=Es) ->
-    RealPath0 = make_path(Pa, Pz, Path, Vars),
-    RealPath = patch_path(RealPath0, PathChoice),
-    erl_prim_loader:set_path(RealPath),
+				 vars=Vars,debug=Deb}=Es) ->
+    debug(Deb, {path,Path},
+          fun() ->
+                  RealPath0 = make_path(Pa, Pz, Path, Vars),
+                  RealPath = patch_path(RealPath0, PathChoice),
+                  erl_prim_loader:set_path(RealPath)
+          end),
     eval_script(T, Es);
 eval_script([{path,_}|T], #es{}=Es) ->
     %% Ignore, use the command line -path flag.
@@ -1029,12 +1002,10 @@ eval_script([{primLoad,Mods}|T], #es{init=Init,prim_load=PrimLoad}=Es)
     eval_script(T, Es);
 eval_script([{kernelProcess,Server,{Mod,Fun,Args}}|T],
 	    #es{init=Init,debug=Deb}=Es) ->
-    debug(Deb, {start,Server}),
-    start_in_kernel(Server, Mod, Fun, Args, Init),
+    debug(Deb, {start,Server}, fun() -> start_in_kernel(Server, Mod, Fun, Args, Init) end),
     eval_script(T, Es);
 eval_script([{apply,{Mod,Fun,Args}}=Apply|T], #es{debug=Deb}=Es) ->
-    debug(Deb, Apply),
-    apply(Mod, Fun, Args),
+    debug(Deb, Apply, fun() -> apply(Mod, Fun, Args) end),
     eval_script(T, Es);
 eval_script([], #es{}) ->
     ok;
@@ -1216,20 +1187,53 @@ start_it([]) ->
     ok;
 start_it({eval,Bin}) ->
     Str = b2s(Bin),
-    {ok,Ts,_} = erl_scan:string(Str),
-    Ts1 = case reverse(Ts) of
-	      [{dot,_}|_] -> Ts;
-	      TsR -> reverse([{dot,erl_anno:new(1)} | TsR])
-	  end,
-    {ok,Expr} = erl_parse:parse_exprs(Ts1),
-    {value, _Value, _Bs} = erl_eval:exprs(Expr, erl_eval:new_bindings()),
-    ok;
-start_it([_|_]=MFA) ->
-    case MFA of
-	[M]        -> M:start();
-	[M,F]      -> M:F();
-	[M,F|Args] -> M:F(Args)	% Args is a list
+    try
+        {ok,Ts,_} = erl_scan:string(Str),
+        Ts1 = case reverse(Ts) of
+                  [{dot,_}|_] -> Ts;
+                  TsR -> reverse([{dot,erl_anno:new(1)} | TsR])
+              end,
+        {ok,Expr} = erl_parse:parse_exprs(Ts1),
+        {value, _Value, _Bs} = erl_eval:exprs(Expr, erl_eval:new_bindings()),
+        ok
+    catch E:R:ST ->
+            Message = [<<"Error! Failed to eval: ">>, Bin, <<"\r\n\r\n">>],
+            erlang:display_string(binary_to_list(iolist_to_binary(Message))),
+            erlang:raise(E,R,ST)
+    end;
+start_it([M|FA]) ->
+    case code:ensure_loaded(M) of
+        {module, M} ->
+            case FA of
+                []       -> M:start();
+                [F]      -> M:F();
+                [F|Args] -> M:F(Args)	% Args is a list
+            end;
+
+        {error, Reason} ->
+            Message = [explain_ensure_loaded_error(M, Reason), <<"\r\n\r\n">>],
+            erlang:display_string(binary_to_list(iolist_to_binary(Message))),
+            erlang:error(undef)
     end.
+
+explain_ensure_loaded_error(M, badfile) ->
+    S = [<<"it requires a more recent Erlang/OTP version "
+           "or its .beam file was corrupted.\r\n"
+           "(You are running Erlang/OTP ">>,
+         erlang:system_info(otp_release), <<".)">>],
+    explain_add_head(M, S);
+explain_ensure_loaded_error(M, nofile) ->
+    S = <<"it cannot be found. Make sure that the module name is correct and\r\n",
+          "that its .beam file is in the code path.">>,
+    explain_add_head(M, S);
+explain_ensure_loaded_error(M, Other) ->
+    [<<"Error! Failed to load module '", (atom_to_binary(M))/binary,
+       "'. Reason: ">>,
+     atom_to_binary(Other)].
+
+explain_add_head(M, S) ->
+    [<<"Error! Failed to load module '", (atom_to_binary(M))/binary,
+       "' because ">>, S].
 
 %% Load a module.
 
@@ -1448,7 +1452,7 @@ archive_extension() ->
 
 run_on_load_handlers() ->
     Ref = monitor(process, ?ON_LOAD_HANDLER),
-    catch ?ON_LOAD_HANDLER ! run_on_load,
+    _ = catch ?ON_LOAD_HANDLER ! {run_on_load, Ref},
     receive
 	{'DOWN',Ref,process,_,noproc} ->
 	    %% There is no on_load handler process,
@@ -1456,12 +1460,13 @@ run_on_load_handlers() ->
 	    %% called and it is not the first time we
 	    %% pass through here.
 	    ok;
-	{'DOWN',Ref,process,_,on_load_done} ->
+	{'DOWN',Ref,process,_,Ref} ->
+            %% All on_load handlers have run succesfully
 	    ok;
-	{'DOWN',Ref,process,_,Res} ->
+	{'DOWN',Ref,process,_,Reason} ->
 	    %% Failure to run an on_load handler.
 	    %% This is fatal during start-up.
-	    exit(Res)
+	    exit(Reason)
     end.
 
 start_on_load_handler_process() ->
@@ -1477,34 +1482,37 @@ on_load_loop(Mods, Debug0) ->
 	    on_load_loop(Mods, Debug);
 	{loaded,Mod} ->
 	    on_load_loop([Mod|Mods], Debug0);
-	run_on_load ->
+	{run_on_load, Ref} ->
 	    run_on_load_handlers(Mods, Debug0),
-	    exit(on_load_done)
+	    exit(Ref)
     end.
 
 run_on_load_handlers([M|Ms], Debug) ->
-    debug(Debug, {running_on_load_handler,M}),
-    Fun = fun() ->
-		  Res = erlang:call_on_load_function(M),
-		  exit(Res)
-	  end,
-    {Pid,Ref} = spawn_monitor(Fun),
-    receive
-	{'DOWN',Ref,process,Pid,OnLoadRes} ->
-	    Keep = OnLoadRes =:= ok,
-	    erlang:finish_after_on_load(M, Keep),
-	    case Keep of
-		false ->
-		    Error = {on_load_function_failed,M,OnLoadRes},
-		    debug(Debug, Error),
-		    exit(Error);
-		true ->
-		    debug(Debug, {on_load_handler_returned_ok,M}),
-		    run_on_load_handlers(Ms, Debug)
-	    end
-    end;
+    debug(Debug,
+          {running_on_load_handler,M},
+          fun() -> run_on_load_handler(M, Debug) end),
+    run_on_load_handlers(Ms, Debug);
 run_on_load_handlers([], _) -> ok.
 
+run_on_load_handler(M, Debug) ->
+    Fun = fun() ->
+                  Res = erlang:call_on_load_function(M),
+                  exit(Res)
+          end,
+    {Pid,Ref} = spawn_monitor(Fun),
+    receive
+        {'DOWN',Ref,process,Pid,OnLoadRes} ->
+            Keep = OnLoadRes =:= ok,
+            erlang:finish_after_on_load(M, Keep),
+            case Keep of
+                false ->
+                    Error = {on_load_function_failed,M,OnLoadRes},
+                    debug(Debug, Error),
+                    exit(Error);
+                true ->
+                    debug(Debug, {on_load_handler_returned_ok,M})
+            end
+    end.
 
 %% debug profile (light variant of eprof)
 debug_profile_start() ->
@@ -1551,6 +1559,8 @@ collect_mfas([MFA|MFAs],Info) ->
         {call_time, []} ->
             collect_mfas(MFAs,Info);
         {call_time, false} ->
+            collect_mfas(MFAs,Info);
+        {call_time, undefined} ->
             collect_mfas(MFAs,Info);
         {call_time, Data} ->
             case collect_mfa(MFA,Data,0,0) of

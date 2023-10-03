@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2001-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2001-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -336,6 +336,8 @@ filter_options(Options) ->
                              {d, _Macro, _Value} -> true;
                              export_all -> true;
                              tuple_calls -> true;
+                             {feature,_,enable} -> true; %FIXME: To be removed.
+                             {feature,_,disable} -> true; %FIXME: To be removed.
                              _ -> false
                          end
                  end,
@@ -430,7 +432,7 @@ get_mods_and_beams([{Module,File}|ModFiles],Acc) ->
 	    %% Duplicate, but same file so ignore
 	    get_mods_and_beams(ModFiles,Acc);
 	{ok,Module,_OtherFile} ->
-	    %% Duplicate and differnet file - error
+	    %% Duplicate and different file - error
 	    get_mods_and_beams(ModFiles,[{error,{duplicate,Module}}|Acc]);
 	_ ->
 	    get_mods_and_beams(ModFiles,[{ok,Module,File}|Acc])
@@ -1863,6 +1865,10 @@ expand({bc,Anno,Expr,Qs}, Vs, N) ->
     {ExpandedExpr,N2} = expand(Expr, Vs, N),
     {ExpandedQs,N3} = expand_qualifiers(Qs, Vs, N2),
     {{bc,Anno,ExpandedExpr,ExpandedQs},N3};
+expand({mc,Anno,Expr,Qs}, Vs, N) ->
+    {ExpandedExpr,N2} = expand(Expr, Vs, N),
+    {ExpandedQs,N3} = expand_qualifiers(Qs, Vs, N2),
+    {{mc,Anno,ExpandedExpr,ExpandedQs},N3};
 expand({op,_Anno,'andalso',ExprL,ExprR}, Vs, N) ->
     {ExpandedExprL,N2} = expand(ExprL, Vs, N),
     {ExpandedExprR,N3} = expand(ExprR, Vs, N2),
@@ -1958,7 +1964,7 @@ munge({function,Anno,Function,Arity,Clauses},Vars,_MainFile,on) ->
     {MungedClauses, Vars3} = munge_clauses(Clauses, Vars2),
     {{function,Anno,Function,Arity,MungedClauses},Vars3,on};
 munge(Form={attribute,_,file,{MainFile,_}},Vars,MainFile,_Switch) ->
-    {Form,Vars,on};                     % Switch on tranformation!
+    {Form,Vars,on};                     % Switch on transformation!
 munge(Form={attribute,_,file,{_InclFile,_}},Vars,_MainFile,_Switch) ->
     {Form,Vars,off};                    % Switch off transformation!
 munge({attribute,_,compile,{parse_transform,_}},_Vars,_MainFile,_Switch) ->
@@ -2169,6 +2175,10 @@ munge_expr({match,Anno,ExprL,ExprR}, Vars) ->
     {MungedExprL, Vars2} = munge_expr(ExprL, Vars),
     {MungedExprR, Vars3} = munge_expr(ExprR, Vars2),
     {{match,Anno,MungedExprL,MungedExprR}, Vars3};
+munge_expr({maybe_match,Anno,ExprL,ExprR}, Vars) ->
+    {MungedExprL, Vars2} = munge_expr(ExprL, Vars),
+    {MungedExprR, Vars3} = munge_expr(ExprR, Vars2),
+    {{maybe_match,Anno,MungedExprL,MungedExprR}, Vars3};
 munge_expr({tuple,Anno,Exprs}, Vars) ->
     {MungedExprs, Vars2} = munge_exprs(Exprs, Vars, []),
     {{tuple,Anno,MungedExprs}, Vars2};
@@ -2233,6 +2243,11 @@ munge_expr({bc,Anno,Expr,Qs}, Vars) ->
     {MungedExpr,Vars2} = munge_expr(?BLOCK1(Expr), Vars),
     {MungedQs, Vars3} = munge_qualifiers(Qs, Vars2),
     {{bc,Anno,MungedExpr,MungedQs}, Vars3};
+munge_expr({mc,Anno,{map_field_assoc,FAnno,K,V},Qs}, Vars) ->
+    Expr = {map_field_assoc,FAnno,?BLOCK1(K),?BLOCK1(V)},
+    {MungedExpr,Vars2} = munge_expr(Expr, Vars),
+    {MungedQs, Vars3} = munge_qualifiers(Qs, Vars2),
+    {{mc,Anno,MungedExpr,MungedQs}, Vars3};
 munge_expr({block,Anno,Body}, Vars) ->
     {MungedBody, Vars2} = munge_body(Body, Vars),
     {{block,Anno,MungedBody}, Vars2};
@@ -2260,6 +2275,13 @@ munge_expr({'try',Anno,Body,Clauses,CatchClauses,After}, Vars) ->
     {MungedAfter, Vars4} = munge_body(After, Vars3),
     {{'try',Anno,MungedBody,MungedClauses,MungedCatchClauses,MungedAfter},
      Vars4};
+munge_expr({'maybe',Anno,Exprs}, Vars) ->
+    {MungedExprs, Vars2} = munge_body(Exprs, Vars),
+    {{'maybe',Anno,MungedExprs}, Vars2};
+munge_expr({'maybe',MaybeAnno,Exprs,{'else',ElseAnno,Clauses}}, Vars) ->
+    {MungedExprs, Vars2} = munge_body(Exprs, Vars),
+    {MungedClauses, Vars3} = munge_clauses(Clauses, Vars2),
+    {{'maybe',MaybeAnno,MungedExprs,{'else',ElseAnno,MungedClauses}}, Vars3};
 munge_expr({'fun',Anno,{clauses,Clauses}}, Vars) ->
     {MungedClauses,Vars2}=munge_clauses(Clauses, Vars),
     {{'fun',Anno,{clauses,MungedClauses}}, Vars2};
@@ -2298,6 +2320,10 @@ munge_qs([{b_generate,Anno,Pattern,Expr}|Qs], Vars, MQs) ->
     A = element(2, Expr),
     {MExpr, Vars2} = munge_expr(Expr, Vars),
     munge_qs1(Qs, A, {b_generate,Anno,Pattern,MExpr}, Vars, Vars2, MQs);
+munge_qs([{m_generate,Anno,Pattern,Expr}|Qs], Vars, MQs) ->
+    A = element(2, Expr),
+    {MExpr, Vars2} = munge_expr(Expr, Vars),
+    munge_qs1(Qs, A, {m_generate,Anno,Pattern,MExpr}, Vars, Vars2, MQs);
 munge_qs([Expr|Qs], Vars, MQs) ->
     A = element(2, Expr),
     {MungedExpr, Vars2} = munge_expr(Expr, Vars),

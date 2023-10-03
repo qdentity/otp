@@ -198,8 +198,7 @@ ml_cmp_keys(Eterm key1, Eterm key2)
                 if (n1->sysname != n2->sysname)
                     return n1->sysname < n2->sysname ? -1 : 1;
                 ASSERT(n1->creation != n2->creation);
-                if (n1->creation != 0 && n2->creation != 0)
-                    return n1->creation < n2->creation ? -1 : 1;
+                return n1->creation < n2->creation ? -1 : 1;
             }
 
             ndw1 = external_thing_data_words(et1);
@@ -704,10 +703,15 @@ erts_debug_monitor_tree_destroying_foreach(ErtsMonitor *root,
                                            void *arg,
                                            void *vysp)
 {
-    void *tmp_vysp = erts_alloc(ERTS_ALC_T_ML_YIELD_STATE,
-                                sizeof(ErtsMonLnkYieldState));
+    void *tmp_vysp;
     Sint reds;
-    sys_memcpy(tmp_vysp, tmp_vysp, sizeof(ErtsMonLnkYieldState));
+    if (!vysp)
+        tmp_vysp = NULL;
+    else {
+        tmp_vysp = erts_alloc(ERTS_ALC_T_ML_YIELD_STATE,
+                              sizeof(ErtsMonLnkYieldState));
+        sys_memcpy(tmp_vysp, tmp_vysp, sizeof(ErtsMonLnkYieldState));
+    }
     do {
         reds = ml_rbt_foreach_yielding((ErtsMonLnkNode *) root,
                                        (ErtsMonLnkNodeFunc) func,
@@ -916,7 +920,7 @@ erts_monitor_create(Uint16 type, Eterm ref, Eterm orgn, Eterm trgt, Eterm name, 
         else {
             /* Pending spawn_request() */
             pending_flag = ERTS_ML_FLG_SPAWN_PENDING;
-            /* Prepare for storage of exteral pid */
+            /* Prepare for storage of external pid */
             tsz = EXTERNAL_PID_HEAP_SIZE;
             /* name contains tag */
             
@@ -1095,16 +1099,6 @@ erts_monitor_destroy__(ErtsMonitorData *mdp)
     ERTS_ML_ASSERT(mdp->origin.type == ERTS_MON_TYPE_ALIAS
                    || ((mdp->origin.flags & ERTS_ML_FLGS_SAME)
                        == (mdp->u.target.flags & ERTS_ML_FLGS_SAME)));
-
-    if (mdp->origin.flags & ERTS_ML_STATE_ALIAS_MASK) {
-        ASSERT(mdp->origin.type == ERTS_MON_TYPE_ALIAS
-               || mdp->origin.type == ERTS_MON_TYPE_PROC
-               || mdp->origin.type == ERTS_MON_TYPE_PORT
-               || mdp->origin.type == ERTS_MON_TYPE_TIME_OFFSET
-               || mdp->origin.type == ERTS_MON_TYPE_DIST_PROC
-               || mdp->origin.type == ERTS_MON_TYPE_DIST_PORT);
-        erts_pid_ref_delete(mdp->ref);
-    }
 
     switch (mdp->origin.type) {
     case ERTS_MON_TYPE_ALIAS:
@@ -1349,10 +1343,15 @@ erts_debug_link_tree_destroying_foreach(ErtsLink *root,
                                         void *arg,
                                         void *vysp)
 {
-    void *tmp_vysp = erts_alloc(ERTS_ALC_T_ML_YIELD_STATE,
-                                sizeof(ErtsMonLnkYieldState));
+    void *tmp_vysp;
     Sint reds;
-    sys_memcpy(tmp_vysp, vysp, sizeof(ErtsMonLnkYieldState));
+    if (!vysp)
+        tmp_vysp = NULL;
+    else {
+        tmp_vysp = erts_alloc(ERTS_ALC_T_ML_YIELD_STATE,
+                              sizeof(ErtsMonLnkYieldState));
+        sys_memcpy(tmp_vysp, vysp, sizeof(ErtsMonLnkYieldState));
+    }
     do {
         reds = ml_rbt_foreach_yielding((ErtsMonLnkNode *) root,
                                        (ErtsMonLnkNodeFunc) func,

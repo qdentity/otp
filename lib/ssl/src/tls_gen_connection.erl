@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2020-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2020-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@
 %%
 %%
 %%----------------------------------------------------------------------
-%% Purpose:
+%% Purpose: 
 %%----------------------------------------------------------------------
 
 -module(tls_gen_connection).
@@ -33,6 +33,7 @@
 -include("ssl_alert.hrl").
 -include("ssl_api.hrl").
 -include("ssl_internal.hrl").
+-include("tls_record_1_3.hrl").
 
 %% Setup
 -export([start_fsm/8,
@@ -52,7 +53,7 @@
          empty_connection_state/2,
          encode_handshake/4]).
 
-%% State transition handling
+%% State transition handling	 
 -export([next_event/3,
          next_event/4,
          handle_protocol_record/3]).
@@ -70,8 +71,6 @@
          close/4,
          protocol_name/0]).
 
--define(DIST_CNTRL_SPAWN_OPTS, [{priority, max}]).
-
 %%====================================================================
 %% Internal application API
 %%====================================================================
@@ -79,10 +78,12 @@
 %% Setup
 %%====================================================================
 start_fsm(Role, Host, Port, Socket,
-          {#{erl_dist := ErlDist}, _, Trackers} = Opts,
+          {SSLOpts, _, Trackers} = Opts,
 	  User, {CbModule, _, _, _, _} = CbInfo,
 	  Timeout) ->
-    SenderOptions = handle_sender_options(ErlDist),
+    ErlDist = maps:get(erl_dist, SSLOpts, false),
+    SenderSpawnOpts = maps:get(sender_spawn_opts, SSLOpts, []),
+    SenderOptions = handle_sender_options(ErlDist, SenderSpawnOpts),
     Starter = start_connection_tree(User, ErlDist, SenderOptions,
                                     Role, [Host, Port, Socket, Opts, User, CbInfo]),
     receive
@@ -92,18 +93,18 @@ start_fsm(Role, Host, Port, Socket,
             Error
     end.
 
-handle_sender_options(ErlDist) ->
+handle_sender_options(ErlDist, SpawnOpts) ->
     case ErlDist of
         true ->
-            [[{spawn_opt, ?DIST_CNTRL_SPAWN_OPTS}]];
+            [[{spawn_opt, [{priority, max} | proplists:delete(priority, SpawnOpts)]}]];
         false ->
-            [[]]
+            [[{spawn_opt, SpawnOpts}]]
     end.
 
 start_connection_tree(User, IsErlDist, SenderOpts, Role, ReceiverOpts) ->
     StartConnectionTree =
         fun() ->
-                case start_dyn_connection_sup(IsErlDist) of
+                try start_dyn_connection_sup(IsErlDist) of
                     {ok, DynSup} ->
                         case tls_dyn_connection_sup:start_child(DynSup, sender, SenderOpts) of
                             {ok, Sender} ->
@@ -121,6 +122,11 @@ start_connection_tree(User, IsErlDist, SenderOpts, Role, ReceiverOpts) ->
                         end;
                     {error, Error} ->
                         User ! {self(), Error}
+                catch exit:{noproc, _} ->
+                        User ! {self(), {error, ssl_not_started}};
+                      _:Reason:ST ->  %% Don't hang signal internal error
+                        ?SSL_LOG(notice, internal_error, [{error, Reason}, {stacktrace, ST}]),
+                        User ! {self(), {error, internal_error}}
                 end
         end,
     spawn(StartConnectionTree).
@@ -148,24 +154,26 @@ initialize_tls_sender(#state{static_env = #static_env{
                                              trackers = Trackers
                                             },
                              connection_env = #connection_env{negotiated_version = Version},
-                             socket_options = SockOpts, 
+                             socket_options = SockOpts,
                              ssl_options = #{renegotiate_at := RenegotiateAt,
                                              key_update_at := KeyUpdateAt,
-                                             erl_dist := ErlDist,
-                                             log_level := LogLevel},
+                                             log_level := LogLevel
+                                            } = SSLOpts,
                              connection_states = #{current_write := ConnectionWriteState},
                              protocol_specific = #{sender := Sender}}) ->
+    HibernateAfter = maps:get(hibernate_after, SSLOpts, infinity),
     Init = #{current_write => ConnectionWriteState,
              role => Role,
              socket => Socket,
              socket_options => SockOpts,
-             erl_dist => ErlDist, 
+             erl_dist => maps:get(erl_dist, SSLOpts, false),
              trackers => Trackers,
              transport_cb => Transport,
              negotiated_version => Version,
              renegotiate_at => RenegotiateAt,
              key_update_at => KeyUpdateAt,
-             log_level => LogLevel},
+             log_level => LogLevel,
+             hibernate_after => HibernateAfter},
     tls_sender:initialize(Sender, Init).
 
 %%====================================================================
@@ -354,6 +362,11 @@ handle_info({CloseTag, Socket}, StateName,
             %% is called after all data has been deliver.
             {next_state, StateName, State#state{protocol_specific = PS#{active_n_toggle => true}}, []}
     end;
+handle_info({ssl_tls, Port, Type, {Major, Minor}, Data}, StateName,
+            #state{static_env = #static_env{data_tag = Protocol},
+                   ssl_options = #{ktls := true}} = State0) ->
+    Len = byte_size(Data),
+    handle_info({Protocol, Port, <<Type, Major, Minor, Len:16, Data/binary>>}, StateName, State0);
 handle_info(Msg, StateName, State) ->
     ssl_gen_statem:handle_info(Msg, StateName, State).
 
@@ -470,7 +483,8 @@ handle_protocol_record(#ssl_tls{type = ?ALERT, fragment = EncAlerts}, StateName,
         #alert{} = Alert ->
             ssl_gen_statem:handle_own_alert(Alert, StateName, State)
     catch
-	_:_ ->
+	_:Reason:ST ->
+            ?SSL_LOG(info, handshake_error, [{error, Reason}, {stacktrace, ST}]),
 	    ssl_gen_statem:handle_own_alert(?ALERT_REC(?FATAL, ?HANDSHAKE_FAILURE, alert_decode_error),
 					    StateName, State)
 
@@ -527,7 +541,8 @@ send_sync_alert(
   Alert, #state{protocol_specific = #{sender := Sender}} = State) ->
     try tls_sender:send_and_ack_alert(Sender, Alert)
     catch
-        _:_ ->
+        _:Reason:ST ->
+            ?SSL_LOG(info, "Send failed", [{error, Reason}, {stacktrace, ST}]),
             throw({stop, {shutdown, own_alert}, State})
     end.
 
@@ -586,7 +601,6 @@ tls_handshake_events(HSPackets, RecordRest) ->
     FirstHS = tls_handshake_events(HSPackets, <<>>),
     FirstHS ++ [RestEvent].
 
-
 unprocessed_events(Events) ->
     %% The first handshake event will be processed immediately
     %% as it is entered first in the event queue and
@@ -630,7 +644,7 @@ next_tls_record(Data, StateName,
                 %% This does not allow SSL-3.0 connections, that we do not support
                 %% or interfere with TLS-1.3 extensions to handle version negotiation.
                 AllHelloVersions = [ 'sslv3' | ?ALL_AVAILABLE_VERSIONS],
-                [tls_record:protocol_version(Vsn) || Vsn <- AllHelloVersions];
+                [tls_record:protocol_version_name(Vsn) || Vsn <- AllHelloVersions];
             _ ->
                 State0#state.connection_env#connection_env.negotiated_version
         end,
@@ -672,6 +686,8 @@ next_record(_, #state{protocol_buffers = #protocol_buffers{tls_cipher_texts = []
 next_record(_, State) ->
     {no_record, State}.
 
+flow_ctrl(#state{ssl_options = #{ktls := true}} = State) ->
+    {no_record, State};
 %%% bytes_to_read equals the integer Length arg of ssl:recv
 %%% the actual value is only relevant for packet = raw | 0
 %%% bytes_to_read = undefined means no recv call is ongoing
@@ -731,7 +747,7 @@ activate_socket(#state{protocol_specific = #{active_n_toggle := true, active_n :
 next_record(State, CipherTexts, ConnectionStates, Check) ->
     next_record(State, CipherTexts, ConnectionStates, Check, [], false).
 %%
-next_record(#state{connection_env = #connection_env{negotiated_version = {3,4} = Version}} = State,
+next_record(#state{connection_env = #connection_env{negotiated_version = ?TLS_1_3 = Version}} = State,
             [CT|CipherTexts], ConnectionStates0, Check, Acc, IsEarlyData) ->
     case tls_record:decode_cipher_text(Version, CT, ConnectionStates0, Check) of
         {Record = #ssl_tls{type = ?APPLICATION_DATA, fragment = Fragment}, ConnectionStates} ->
@@ -821,7 +837,7 @@ next_record_done(#state{protocol_buffers = Buffers} = State, CipherTexts, Connec
 %% field in TLS-1.3 client hello). The versions are instead negotiated with an hello extension. When
 %% decoding the server_hello messages we want to go through TLS-1.3 decode functions to be able
 %% to handle TLS-1.3 extensions if TLS-1.3 will be the negotiated version.
-handle_unnegotiated_version({3,3} , #{versions := [{3,4} = Version |_]} = Options, Data, Buffer, client, hello) ->
+handle_unnegotiated_version(?LEGACY_VERSION , #{versions := [?TLS_1_3 = Version |_]} = Options, Data, Buffer, client, hello) ->
     %% The effective version for decoding the server hello message should be the TLS-1.3. Possible coalesced TLS-1.2
     %% server handshake messages should be decoded with the negotiated version in later state.
     <<_:8, ?UINT24(Length), _/binary>> = Data,
@@ -829,7 +845,7 @@ handle_unnegotiated_version({3,3} , #{versions := [{3,4} = Version |_]} = Option
     {HSPacket, <<>> = NewHsBuffer} = tls_handshake:get_tls_handshakes(Version, FirstPacket, Buffer, Options),
     {HSPacket, NewHsBuffer, RecordRest};
 %% TLS-1.3 RetryRequest
-handle_unnegotiated_version({3,3} , #{versions := [{3,4} = Version |_]} = Options, Data, Buffer, client, wait_sh) ->
+handle_unnegotiated_version(?TLS_1_2 , #{versions := [?TLS_1_3 = Version |_]} = Options, Data, Buffer, client, wait_sh) ->
     tls_handshake:get_tls_handshakes(Version, Data, Buffer, Options);
 %% When the `negotiated_version` variable is not yet set use the highest supported version.
 handle_unnegotiated_version(undefined, #{versions := [Version|_]} = Options, Data, Buff, _, _) ->

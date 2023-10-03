@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2005-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2005-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -644,58 +644,61 @@ print_term(fmtfn_t fn, void* arg, Eterm obj, long *dcount) {
 		}
 	    }
 	    break;
-	case EXPORT_DEF:
-	    {
-		Export* ep = *((Export **) (export_val(wobj) + 1));
-		long tdcount;
-		int tres;
+        case FUN_DEF:
+            {
+                ErlFunThing *funp = (ErlFunThing *) fun_val(wobj);
 
-		PRINT_STRING(res, fn, arg, "fun ");
+                if (is_local_fun(funp)) {
+                    ErlFunEntry *fe = funp->entry.fun;
+                    Atom *ap = atom_tab(atom_val(fe->module));
 
-		/* We pass a temporary 'dcount' and adjust the real one later to ensure
-		 * that the fun doesn't get split up between the module and function
-		 * name. */
-		tdcount = MAX_ATOM_SZ_LIMIT;
-		tres = print_atom_name(fn, arg, ep->info.mfa.module, &tdcount);
-		if (tres < 0) {
-		    res = tres;
-		    goto L_done;
-		}
-		*dcount -= (MAX_ATOM_SZ_LIMIT - tdcount);
-		res += tres;
+                    PRINT_STRING(res, fn, arg, "#Fun<");
+                    PRINT_BUF(res, fn, arg, ap->name, ap->len);
+                    PRINT_CHAR(res, fn, arg, '.');
+                    PRINT_SWORD(res, fn, arg, 'd', 0, 1,
+                            (ErlPfSWord) fe->old_index);
+                    PRINT_CHAR(res, fn, arg, '.');
+                    PRINT_SWORD(res, fn, arg, 'd', 0, 1,
+                            (ErlPfSWord) fe->old_uniq);
+                    PRINT_CHAR(res, fn, arg, '>');
+                } else {
+                    Export* ep = funp->entry.exp;
+                    long tdcount;
+                    int tres;
 
-		PRINT_CHAR(res, fn, arg, ':');
+                    ASSERT(is_external_fun(funp) && funp->next == NULL);
 
-		tdcount = MAX_ATOM_SZ_LIMIT;
-		tres = print_atom_name(fn, arg, ep->info.mfa.function, &tdcount);
-		if (tres < 0) {
-		    res = tres;
-		    goto L_done;
-		}
-		*dcount -= (MAX_ATOM_SZ_LIMIT - tdcount);
-		res += tres;
+                    PRINT_STRING(res, fn, arg, "fun ");
 
-		PRINT_CHAR(res, fn, arg, '/');
-		PRINT_SWORD(res, fn, arg, 'd', 0, 1,
-			    (ErlPfSWord) ep->info.mfa.arity);
-	    }
-	    break;
-	case FUN_DEF:
-	    {
-		ErlFunThing *funp = (ErlFunThing *) fun_val(wobj);
-		Atom *ap = atom_tab(atom_val(funp->fe->module));
+                    /* We pass a temporary 'dcount' and adjust the real one
+                     * later to ensure that the fun doesn't get split up
+                     * between the module and function name. */
+                    tdcount = MAX_ATOM_SZ_LIMIT;
+                    tres = print_atom_name(fn, arg, ep->info.mfa.module, &tdcount);
+                    if (tres < 0) {
+                        res = tres;
+                        goto L_done;
+                    }
+                    *dcount -= (MAX_ATOM_SZ_LIMIT - tdcount);
+                    res += tres;
 
-		PRINT_STRING(res, fn, arg, "#Fun<");
-		PRINT_BUF(res, fn, arg, ap->name, ap->len);
-		PRINT_CHAR(res, fn, arg, '.');
-		PRINT_SWORD(res, fn, arg, 'd', 0, 1,
-			    (ErlPfSWord) funp->fe->old_index);
-		PRINT_CHAR(res, fn, arg, '.');
-		PRINT_SWORD(res, fn, arg, 'd', 0, 1,
-			    (ErlPfSWord) funp->fe->old_uniq);
-		PRINT_CHAR(res, fn, arg, '>');
-	    }
-	    break;
+                    PRINT_CHAR(res, fn, arg, ':');
+
+                    tdcount = MAX_ATOM_SZ_LIMIT;
+                    tres = print_atom_name(fn, arg, ep->info.mfa.function, &tdcount);
+                    if (tres < 0) {
+                        res = tres;
+                        goto L_done;
+                    }
+                    *dcount -= (MAX_ATOM_SZ_LIMIT - tdcount);
+                    res += tres;
+
+                    PRINT_CHAR(res, fn, arg, '/');
+                    PRINT_SWORD(res, fn, arg, 'd', 0, 1,
+                            (ErlPfSWord) ep->info.mfa.arity);
+                }
+            }
+            break;
 	case MAP_DEF: {
             Eterm *head = boxed_val(wobj);
 
@@ -719,45 +722,46 @@ print_term(fmtfn_t fn, void* arg, Eterm obj, long *dcount) {
                 }
             } else {
                 Uint n, mapval;
+                Eterm* assoc;
+                Eterm key, val;
+
                 mapval = MAP_HEADER_VAL(*head);
                 switch (MAP_HEADER_TYPE(*head)) {
                 case MAP_HEADER_TAG_HAMT_HEAD_ARRAY:
                 case MAP_HEADER_TAG_HAMT_HEAD_BITMAP:
-                    PRINT_STRING(res, fn, arg, "#<");
-                    PRINT_UWORD(res, fn, arg, 'x', 0, 1, mapval);
-                    PRINT_STRING(res, fn, arg, ">{");
-                    WSTACK_PUSH(s,PRT_CLOSE_TUPLE);
-                    n = hashmap_bitcount(mapval);
-                    ASSERT(n < 17);
-                    head += 2;
-                    if (n > 0) {
-                        n--;
-                        WSTACK_PUSH(s, head[n]);
-                        WSTACK_PUSH(s, PRT_TERM);
-                        while (n--) {
-                            WSTACK_PUSH(s, PRT_COMMA);
-                            WSTACK_PUSH(s, head[n]);
-                            WSTACK_PUSH(s, PRT_TERM);
-                        }
-                    }
-                    break;
+                    PRINT_STRING(res, fn, arg, "#{");
+                    WSTACK_PUSH(s, PRT_CLOSE_TUPLE);
+                    head++;
+                    /* fall through */
                 case MAP_HEADER_TAG_HAMT_NODE_BITMAP:
                     n = hashmap_bitcount(mapval);
-                    head++;
-                    PRINT_CHAR(res, fn, arg, '<');
-                    PRINT_UWORD(res, fn, arg, 'x', 0, 1, mapval);
-                    PRINT_STRING(res, fn, arg, ">{");
-                    WSTACK_PUSH(s,PRT_CLOSE_TUPLE);
-                    ASSERT(n < 17);
-                    if (n > 0) {
-                        n--;
-                        WSTACK_PUSH(s, head[n]);
-                        WSTACK_PUSH(s, PRT_TERM);
-                        while (n--) {
-                            WSTACK_PUSH(s, PRT_COMMA);
-                            WSTACK_PUSH(s, head[n]);
-                            WSTACK_PUSH(s, PRT_TERM);
+                    ASSERT(0 < n && n < 17);
+                    while (1) {
+                        if (is_list(head[n])) {
+                            assoc = list_val(head[n]);
+                            key = CAR(assoc);
+                            val = CDR(assoc);
+                            WSTACK_PUSH5(s, val, PRT_TERM, PRT_ASSOC, key, PRT_TERM);
                         }
+                        else if (is_tuple(head[n])) { /* collision node */
+                            Eterm *tpl = tuple_val(head[n]);
+                            Uint arity = arityval(tpl[0]);
+                            ASSERT(arity >= 2);
+                            while (1) {
+                                assoc = list_val(tpl[arity]);
+                                key = CAR(assoc);
+                                val = CDR(assoc);
+                                WSTACK_PUSH5(s, val, PRT_TERM, PRT_ASSOC, key, PRT_TERM);
+                                if (--arity == 0)
+                                    break;
+                                WSTACK_PUSH(s, PRT_COMMA);
+                            }
+                        } else {
+                            WSTACK_PUSH2(s, head[n], PRT_TERM);
+                        }
+                        if (--n == 0)
+                            break;
+                        WSTACK_PUSH(s, PRT_COMMA);
                     }
                     break;
                 }

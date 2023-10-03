@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1997-2021. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@
 -module(filename).
 
 -removed([{find_src,'_',"use filelib:find_source/1,3 instead"}]).
--deprecated([{safe_relative_path,1,"use filelib:safe_relative_path/2 instead"}]).
+-removed([{safe_relative_path,1,"use filelib:safe_relative_path/2 instead"}]).
 
 %% Purpose: Provides generic manipulation of filenames.
 %%
@@ -69,8 +69,7 @@
 -export([absname/1, absname/2, absname_join/2, 
 	 basename/1, basename/2, dirname/1,
 	 extension/1, join/1, join/2, pathtype/1,
-         rootname/1, rootname/2, split/1, flatten/1, nativename/1,
-         safe_relative_path/1]).
+         rootname/1, rootname/2, split/1, flatten/1, nativename/1]).
 -export([basedir/2, basedir/3]).
 -export([validate/1]).
 
@@ -79,8 +78,10 @@
 
 -include_lib("kernel/include/file.hrl").
 
--define(IS_DRIVELETTER(Letter),(((Letter >= $A) andalso (Letter =< $Z)) orelse
-				((Letter >= $a) andalso (Letter =< $z)))). 
+-define(IS_DRIVELETTER(Letter),
+        (is_integer(Letter)
+         andalso (($A =< Letter andalso Letter =< $Z)
+                  orelse ($a =< Letter andalso Letter =< $z)))).
 
 %% Converts a relative filename to an absolute filename
 %% or the filename itself if it already is an absolute filename
@@ -334,8 +335,7 @@ dirname([$/|Rest], Dir, File, Seps) ->
 dirname([DirSep|Rest], Dir, File, {DirSep,_}=Seps) when is_integer(DirSep) ->
     dirname(Rest, File++Dir, [$/], Seps);
 dirname([Dl,DrvSep|Rest], [], [], {_,DrvSep}=Seps)
-  when is_integer(DrvSep), ((($a =< Dl) and (Dl =< $z)) or
-			    (($A =< Dl) and (Dl =< $Z))) ->
+  when is_integer(DrvSep), ?IS_DRIVELETTER(Dl) ->
     dirname(Rest, [DrvSep,Dl], [], Seps);
 dirname([Char|Rest], Dir, File, Seps) when is_integer(Char) ->
     dirname(Rest, Dir, [Char|File], Seps);
@@ -758,7 +758,8 @@ win32_split([X, $\\|Rest]) when is_integer(X) ->
     win32_split([X, $/|Rest]);
 win32_split([X, Y, $\\|Rest]) when is_integer(X), is_integer(Y) ->
     win32_split([X, Y, $/|Rest]);
-win32_split([UcLetter, $:|Rest]) when UcLetter >= $A, UcLetter =< $Z ->
+win32_split([UcLetter, $:|Rest])
+  when is_integer(UcLetter), $A =< UcLetter, UcLetter =< $Z ->
     win32_split([UcLetter+$a-$A, $:|Rest]);
 win32_split([Letter, $:, $/|Rest]) ->
     split(Rest, [], [[Letter, $:, $/]], win32);
@@ -815,39 +816,6 @@ separators() ->
 	{win32, _} -> {$\\, $:};
 	_ -> {false, false}
     end.
-
--spec safe_relative_path(Filename) -> 'unsafe' | SafeFilename when
-      Filename :: file:name_all(),
-      SafeFilename :: file:name_all().
-
-safe_relative_path(Path) ->
-    case pathtype(Path) of
-        relative ->
-            Cs0 = split(Path),
-            safe_relative_path_1(Cs0, []);
-        _ ->
-            unsafe
-    end.
-
-safe_relative_path_1(["."|T], Acc) ->
-    safe_relative_path_1(T, Acc);
-safe_relative_path_1([<<".">>|T], Acc) ->
-    safe_relative_path_1(T, Acc);
-safe_relative_path_1([".."|T], Acc) ->
-    climb(T, Acc);
-safe_relative_path_1([<<"..">>|T], Acc) ->
-    climb(T, Acc);
-safe_relative_path_1([H|T], Acc) ->
-    safe_relative_path_1(T, [H|Acc]);
-safe_relative_path_1([], []) ->
-    [];
-safe_relative_path_1([], Acc) ->
-    join(lists:reverse(Acc)).
-
-climb(_, []) ->
-    unsafe;
-climb(T, [_|Acc]) ->
-    safe_relative_path_1(T, Acc).
 
 major_os_type() ->
     {OsT, _} = os:type(),

@@ -2,7 +2,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1998-2022. All Rights Reserved.
+ * Copyright Ericsson AB 1998-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -559,7 +559,7 @@ void run(EpmdVars *g)
 	      /*
 	       * The accept() succeeded, and we have at least one file
 	       * descriptor still free, which means that another accept()
-	       * could succeed. Go do do another select(), in case there
+	       * could succeed. Go do another select(), in case there
 	       * are more incoming connections waiting to be accepted.
 	       */
 	      goto select_again;
@@ -745,12 +745,7 @@ static unsigned int get_creation(Node* node)
 
 /* buf is actually one byte larger than bsize,
    giving place for null termination */
-static void do_request(g, fd, s, buf, bsize)
-     EpmdVars *g;
-     int fd;
-     Connection *s;
-     char *buf;
-     int bsize;
+static void do_request(EpmdVars *g, int fd, Connection *s, char *buf, int bsize)
 {
   char wbuf[OUTBUF_SIZE];	/* Buffer for writing */
   int i;

@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2022. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -122,11 +122,16 @@ extern void erts_add_taint(Eterm mod_atom);
 extern Eterm erts_nif_taints(Process* p);
 extern void erts_print_nif_taints(fmtfn_t to, void* to_arg);
 
-/* Loads the specified NIF. The caller must have code write permission. */
+/* Loads the specified NIF. The caller must have code modification
+ * permission. */
 Eterm erts_load_nif(Process *c_p, ErtsCodePtr I, Eterm filename, Eterm args);
 
 void erts_unload_nif(struct erl_module_nif* nif);
 extern void erl_nif_init(void);
+extern void erts_nif_sched_init(ErtsSchedulerData *esdp);
+extern void erts_nif_execute_on_halt(void);
+extern void erts_nif_notify_halt(void);
+extern void erts_nif_wait_calls(void);
 extern int erts_nif_get_funcs(struct erl_module_nif*,
                               struct enif_func_t **funcs);
 extern Module *erts_nif_get_module(struct erl_module_nif*);
@@ -950,6 +955,7 @@ Eterm erl_is_function(Process* p, Eterm arg1, Eterm arg2);
 Eterm erts_check_process_code(Process *c_p, Eterm module, int *redsp, int fcalls);
 #define ERTS_CLA_SCAN_WORDS_PER_RED 512
 
+int erts_check_copy_literals_gc_need_max_reds(Process *c_p);
 int erts_check_copy_literals_gc_need(Process *c_p, int *redsp,
                                      char *literals, Uint lit_bsize);
 Eterm erts_copy_literals_gc(Process *c_p, int *redsp, int fcalls);
@@ -969,7 +975,7 @@ typedef struct ErtsLiteralArea_ {
 void erts_queue_release_literals(Process *c_p, ErtsLiteralArea* literals);
 
 #define ERTS_LITERAL_AREA_ALLOC_SIZE(N) \
-    (sizeof(ErtsLiteralArea) + sizeof(Eterm)*((N) - 1))
+    (sizeof(ErtsLiteralArea) + sizeof(Eterm)*(N - 1))
 #define ERTS_LITERAL_AREA_SIZE(AP) \
     (ERTS_LITERAL_AREA_ALLOC_SIZE((AP)->end - (AP)->start))
 
@@ -1043,9 +1049,9 @@ double erts_get_positive_zero_float(void);
 
 /* config.c */
 
-__decl_noreturn void __noreturn erts_exit_epilogue(void);
+__decl_noreturn void __noreturn erts_exit_epilogue(int flush);
 __decl_noreturn void __noreturn erts_exit(int n, const char*, ...);
-__decl_noreturn void __noreturn erts_flush_async_exit(int n, char*, ...);
+__decl_noreturn void __noreturn erts_flush_exit(int n, char*, ...);
 void erl_error(const char*, va_list);
 
 /* This controls whether sharing-preserving copy is used by Erlang */
@@ -1141,10 +1147,10 @@ Uint size_shared(Eterm);
 
 #ifdef ERTS_COPY_REGISTER_LOCATION
 
-#define copy_shared_perform(U, V, X, Y, Z) \
-    copy_shared_perform_x((U), (V), (X), (Y), (Z), __FILE__, __LINE__)
 Eterm copy_shared_perform_x(Eterm, Uint, erts_shcopy_t*, Eterm**, ErlOffHeap*,
                             char *file, int line);
+#define copy_shared_perform(U, V, X, Y, Z) \
+    copy_shared_perform_x((U), (V), (X), (Y), (Z), __FILE__, __LINE__)
 
 Eterm copy_struct_x(Eterm, Uint, Eterm**, ErlOffHeap*, Uint*, erts_literal_area_t*,
                     char *file, int line);
@@ -1153,16 +1159,21 @@ Eterm copy_struct_x(Eterm, Uint, Eterm**, ErlOffHeap*, Uint*, erts_literal_area_
 #define copy_struct_litopt(Obj,Sz,HPP,OH,LitArea) \
     copy_struct_x(Obj,Sz,HPP,OH,NULL,LitArea,__FILE__,__LINE__)
 
+Eterm* copy_shallow_x(Eterm* ERTS_RESTRICT, Uint, Eterm**, ErlOffHeap*,
+                     char *file, int line);
 #define copy_shallow(R, SZ, HPP, OH) \
     copy_shallow_x((R), (SZ), (HPP), (OH), __FILE__, __LINE__)
-Eterm copy_shallow_x(Eterm* ERTS_RESTRICT, Uint, Eterm**, ErlOffHeap*,
+
+Eterm copy_shallow_obj_x(Eterm, Uint, Eterm**, ErlOffHeap*,
                      char *file, int line);
+#define copy_shallow_obj(R, SZ, HPP, OH) \
+    copy_shallow_obj_x((R), (SZ), (HPP), (OH), __FILE__, __LINE__)
 
 #else
 
+Eterm copy_shared_perform_x(Eterm, Uint, erts_shcopy_t*, Eterm**, ErlOffHeap*);
 #define copy_shared_perform(U, V, X, Y, Z) \
     copy_shared_perform_x((U), (V), (X), (Y), (Z))
-Eterm copy_shared_perform_x(Eterm, Uint, erts_shcopy_t*, Eterm**, ErlOffHeap*);
 
 Eterm copy_struct_x(Eterm, Uint, Eterm**, ErlOffHeap*, Uint*, erts_literal_area_t*);
 #define copy_struct(Obj,Sz,HPP,OH) \
@@ -1170,9 +1181,13 @@ Eterm copy_struct_x(Eterm, Uint, Eterm**, ErlOffHeap*, Uint*, erts_literal_area_
 #define copy_struct_litopt(Obj,Sz,HPP,OH,LitArea) \
     copy_struct_x(Obj,Sz,HPP,OH,NULL,LitArea)
 
+Eterm* copy_shallow_x(Eterm* ERTS_RESTRICT, Uint, Eterm**, ErlOffHeap*);
 #define copy_shallow(R, SZ, HPP, OH) \
     copy_shallow_x((R), (SZ), (HPP), (OH))
-Eterm copy_shallow_x(Eterm* ERTS_RESTRICT, Uint, Eterm**, ErlOffHeap*);
+
+Eterm copy_shallow_obj_x(Eterm, Uint, Eterm**, ErlOffHeap*);
+#define copy_shallow_obj(R, SZ, HPP, OH) \
+    copy_shallow_obj_x((R), (SZ), (HPP), (OH))
 
 #endif
 
@@ -1209,6 +1224,7 @@ void print_pass_through(int, byte*, int);
 int catchlevel(Process*);
 void init_emulator(void);
 void process_main(ErtsSchedulerData *);
+void erts_prepare_bs_construct_fail_info(Process* c_p, const BeamInstr* p, Eterm reason, Eterm Info, Eterm value);
 void erts_dirty_process_main(ErtsSchedulerData *);
 Eterm build_stacktrace(Process* c_p, Eterm exc);
 Eterm expand_error_value(Process* c_p, Uint freason, Eterm Value);
@@ -1300,14 +1316,15 @@ typedef struct {
     ErlDrvEntry* de;
     int taint;
 } ErtsStaticDriver;
-typedef void *(*ErtsStaticNifInitFPtr)(void);
-typedef struct ErtsStaticNifEntry_ {
-    const char *nif_name;
-    ErtsStaticNifInitFPtr nif_init;
-    int taint;
-} ErtsStaticNifEntry;
-ErtsStaticNifEntry* erts_static_nif_get_nif_init(const char *name, int len);
-int erts_is_static_nif(void *handle);
+typedef void* ErtsStaticNifInitF(void);
+typedef struct {
+    ErtsStaticNifInitF* const nif_init;
+    const int taint;
+
+    Eterm mod_atom;
+    ErlNifEntry* entry;
+} ErtsStaticNif;
+extern ErtsStaticNif erts_static_nif_tab[];
 void erts_init_static_drivers(void);
 
 /* erl_drv_thread.c */
@@ -1436,6 +1453,7 @@ void erts_init_bif_binary(void);
 Sint erts_binary_set_loop_limit(Sint limit);
 
 /* erl_bif_persistent.c */
+Eterm erts_persistent_term_get(Eterm key);
 void erts_init_bif_persistent_term(void);
 void erts_init_persistent_dumping(void);
 extern ErtsLiteralArea** erts_persistent_areas;
@@ -1448,6 +1466,7 @@ Eterm erts_debug_persistent_term_xtra_info(Process* c_p);
 
 /* external.c */
 void erts_init_external(void);
+void erts_late_init_external(void);
 
 /* erl_map.c */
 void erts_init_map(void);
@@ -1464,10 +1483,10 @@ Sint erts_unicode_set_loop_limit(Sint limit);
 void erts_native_filename_put(Eterm ioterm, int encoding, byte *p) ;
 Sint erts_native_filename_need(Eterm ioterm, int encoding);
 void erts_copy_utf8_to_utf16_little(byte *target, byte *bytes, int num_chars);
-int erts_analyze_utf8(byte *source, Uint size, 
-			byte **err_pos, Uint *num_chars, int *left);
-int erts_analyze_utf8_x(byte *source, Uint size, 
-			byte **err_pos, Uint *num_chars, int *left,
+int erts_analyze_utf8(const byte *source, Uint size, 
+			const byte **err_pos, Uint *num_chars, int *left);
+int erts_analyze_utf8_x(const byte *source, Uint size, 
+			const byte **err_pos, Uint *num_chars, int *left,
 			Sint *num_latin1_chars, Uint max_chars);
 char *erts_convert_filename_to_native(Eterm name, char *statbuf, 
 				      size_t statbuf_size, 
@@ -1488,6 +1507,11 @@ char* erts_convert_filename_to_wchar(byte* bytes, Uint size,
 Eterm erts_convert_native_to_filename(Process *p, size_t size, byte *bytes);
 Eterm erts_utf8_to_list(Process *p, Uint num, byte *bytes, Uint sz, Uint left,
 			Uint *num_built, Uint *num_eaten, Eterm tail);
+Eterm
+erts_make_list_from_utf8_buf(Eterm **hpp, Uint num,
+                             const byte *bytes, Uint sz,
+                             Uint *num_built, Uint *num_eaten,
+                             Eterm tail);
 int erts_utf8_to_latin1(byte* dest, const byte* source, int slen);
 #define ERTS_UTF8_OK 0
 #define ERTS_UTF8_INCOMPLETE 1
@@ -1497,7 +1521,7 @@ int erts_utf8_to_latin1(byte* dest, const byte* source, int slen);
 
 void bin_write(fmtfn_t, void*, byte*, size_t);
 Sint intlist_to_buf(Eterm, char*, Sint); /* most callers pass plain char*'s */
-int erts_unicode_list_to_buf(Eterm list, byte *buf, Sint len, Sint* written);
+int erts_unicode_list_to_buf(Eterm list, byte *buf, Sint capacity, Sint len, Sint* written);
 Sint erts_unicode_list_to_buf_len(Eterm list);
 
 int Sint_to_buf(Sint num, int base, char **buf_p, size_t buf_size);
@@ -1705,8 +1729,10 @@ int erts_beam_jump_table(void);
 ERTS_GLB_INLINE void dtrace_pid_str(Eterm pid, char *process_buf);
 ERTS_GLB_INLINE void dtrace_proc_str(Process *process, char *process_buf);
 ERTS_GLB_INLINE void dtrace_port_str(Port *port, char *port_buf);
-ERTS_GLB_INLINE void dtrace_fun_decode(Process *process, ErtsCodeMFA *mfa,
-				       char *process_buf, char *mfa_buf);
+ERTS_GLB_INLINE void dtrace_fun_decode(Process *process,
+                                       const ErtsCodeMFA *mfa,
+                                       char *process_buf,
+                                       char *mfa_buf);
 
 #if ERTS_GLB_INLINE_INCL_FUNC_DEF
 
@@ -1739,7 +1765,7 @@ dtrace_port_str(Port *port, char *port_buf)
 }
 
 ERTS_GLB_INLINE void
-dtrace_fun_decode(Process *process, ErtsCodeMFA *mfa,
+dtrace_fun_decode(Process *process, const ErtsCodeMFA *mfa,
                   char *process_buf, char *mfa_buf)
 {
     if (process_buf) {

@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson 2017-2021. All Rights Reserved.
+ * Copyright Ericsson 2017-2022. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -65,11 +65,16 @@
 #define TICKS_PER_SECOND (10000000ULL)
 #define EPOCH_DIFFERENCE (11644473600LL)
 
+/* Note: some functions return a file time of -1 when the time is unavailable,
+ * rather than the documented 0, so we'll silently convert it to 0. */ \
 #define FILETIME_TO_EPOCH(epoch, ft) \
     do { \
         ULARGE_INTEGER ull; \
         ull.LowPart  = (ft).dwLowDateTime; \
         ull.HighPart = (ft).dwHighDateTime; \
+        if (ull.QuadPart == ~0ULL) { \
+            ull.QuadPart = 0; \
+        } \
         (epoch) = ((ull.QuadPart / TICKS_PER_SECOND) - EPOCH_DIFFERENCE); \
     } while(0)
 
@@ -85,7 +90,7 @@ typedef struct {
     efile_data_t common;
     HANDLE handle;
     /* The following field is only used when the handle has been
-       obtained from an already exisiting file descriptor (i.e.,
+       obtained from an already existing file descriptor (i.e.,
        prim_file:file_desc_to_ref/2). common.modes is set to
        EFILE_MODE_FROM_ALREADY_OPEN_FD when that is the case. It is
        needed because we can't close using handle in that case. */
@@ -428,7 +433,7 @@ static int is_path_root(const efile_path_t *path) {
         path_iterator++;
     }  while(path_iterator < path_end && !IS_SLASH(*path_iterator));
 
-    /* If we're past the end of the string and it didnt't end with a slash,
+    /* If we're past the end of the string and it didn't end with a slash,
      * then we're a root path. */
     return path_iterator >= path_end && !IS_SLASH(path_start[length - 1]);
 }

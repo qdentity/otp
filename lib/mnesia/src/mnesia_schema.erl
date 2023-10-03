@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2022. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -957,13 +957,13 @@ get_ext_types_disc_() ->
             []
     end.
 
-%% Convert attribute name to integer if neccessary
+%% Convert attribute name to integer if necessary
 attr_tab_to_pos(_Tab, Pos) when is_integer(Pos) ->
     Pos;
 attr_tab_to_pos(Tab, Attr) ->
     attr_to_pos(Attr, val({Tab, attributes})).
 
-%% Convert attribute name to integer if neccessary
+%% Convert attribute name to integer if necessary
 attr_to_pos({_} = P, _) -> P;
 attr_to_pos(Pos, _Attrs) when is_integer(Pos) ->
     Pos;
@@ -1024,14 +1024,14 @@ verify_cstruct(#cstruct{} = Cs) ->
 
 expand_index_attrs(#cstruct{index = Ix, attributes = Attrs,
 			    name = Tab} = Cs) ->
-    Prefered = prefered_index_types(Cs),
-    expand_index_attrs(Ix, Tab, Attrs, Prefered).
+    Preferred = prefered_index_types(Cs),
+    expand_index_attrs(Ix, Tab, Attrs, Preferred).
 
-expand_index_attrs(Ix, Tab, Attrs, Prefered) ->
+expand_index_attrs(Ix, Tab, Attrs, Preferred) ->
     lists:map(fun(P) when is_integer(P); is_atom(P) ->
-		      {attr_to_pos(P, Attrs), Prefered};
+		      {attr_to_pos(P, Attrs), Preferred};
 		 ({A} = P) when is_atom(A) ->
-		      {P, Prefered};
+		      {P, Preferred};
 		 ({P, Type}) ->
 		      {attr_to_pos(P, Attrs), Type};
 		 (_Other) ->
@@ -1186,7 +1186,7 @@ assert_correct_cstruct(Cs) when is_record(Cs, cstruct) ->
     verify(true, mnesia_snmp_hook:check_ustruct(Snmp),
 	   {badarg, Tab, {snmp, Snmp}}),
 
-    CheckProp = fun(Prop) when is_tuple(Prop), size(Prop) >= 1 -> ok;
+    CheckProp = fun(Prop) when tuple_size(Prop) >= 1 -> ok;
 		   (Prop) ->
 			mnesia:abort({bad_type, Tab,
 				      {user_properties, [Prop]}})
@@ -1352,7 +1352,7 @@ check_active([], _Expl, _Tab) ->
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% Function for definining an external backend type
+%% Function for defining an external backend type
 
 add_backend_type(Name, Module) ->
     case schema_transaction(fun() -> do_add_backend_type(Name, Module) end) of
@@ -2126,7 +2126,7 @@ make_change_table_majority(Tab, Majority) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-write_table_property(Tab, Prop) when is_tuple(Prop), size(Prop) >= 1 ->
+write_table_property(Tab, Prop) when tuple_size(Prop) >= 1 ->
     schema_transaction(fun() -> do_write_table_property(Tab, Prop) end);
 write_table_property(Tab, Prop) ->
     {aborted, {bad_type, Tab, Prop}}.
@@ -2472,6 +2472,7 @@ prepare_op(Tid, {op, add_table_copy, Storage, Node, TabDef}, _WaitFor) ->
 		{loaded, ok} ->
                     %% Tables are created by mnesia_loader get_network code
                     insert_cstruct(Tid, Cs, true),
+                    mnesia_controller:i_have_tab(Tab, Cs),
 		    {true, optional};
 		{not_loaded, ErrReason} ->
 		    Reason = {system_limit, Tab, {Node, ErrReason}},
@@ -2809,7 +2810,7 @@ transform_objs(Fun, Tab, RecName, Key, A, Storage, Type, Acc) ->
 transform_obj(Tab, RecName, Key, Fun, [Obj|Rest], NewArity, Type, Ws, Ds) ->
     NewObj = Fun(Obj),
     if
-        size(NewObj) /= NewArity ->
+        tuple_size(NewObj) /= NewArity ->
             exit({"Bad arity", Obj, NewObj});
 	NewObj == Obj ->
 	    transform_obj(Tab, RecName, Key, Fun, Rest, NewArity, Type, Ws, Ds);
@@ -3095,7 +3096,7 @@ ext_real_suffixes(Ext) ->
 		    [M || {_,M} <- Ext])
     catch
         error:E ->
-            verbose("Cant find real ext suffixes (~tp)~n", [E]),
+            verbose("Can't find real ext suffixes (~tp)~n", [E]),
             []
     end.
 
@@ -3104,7 +3105,7 @@ ext_tmp_suffixes(Ext) ->
 		    [M || {_,M} <- Ext])
     catch
         error:E ->
-            verbose("Cant find tmp ext suffixes (~tp)~n", [E]),
+            verbose("Can't find tmp ext suffixes (~tp)~n", [E]),
             []
     end.
 

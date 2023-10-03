@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1999-2021. All Rights Reserved.
+ * Copyright Ericsson AB 1999-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,6 +53,7 @@
 #include "erl_thr_progress.h"
 #include "erl_bif_unique.h"
 #include "erl_map.h"
+#include "erl_global_literals.h"
 
 #if 0
 #define DEBUG_PRINTOUTS
@@ -1121,7 +1122,7 @@ erts_call_trace(Process* p, ErtsCodeInfo *info, Binary *match_spec,
 	 *     use process flags
 	 */
 	tracee_flags = &ERTS_TRACE_FLAGS(p);
-        /* Is is not ideal at all to call this check twice,
+        /* It is not ideal at all to call this check twice,
            it should be optimized so that only one call is made. */
         if (!is_tracer_enabled(p, ERTS_PROC_LOCK_MAIN, &p->common, &tnif,
                                TRACE_FUN_ENABLED, am_trace_status)
@@ -1245,7 +1246,7 @@ erts_call_trace(Process* p, ErtsCodeInfo *info, Binary *match_spec,
     ASSERT(!ERTS_TRACER_IS_NIL(*tracer));
 
     /*
-     * Build the the {M,F,A} tuple in the local heap.
+     * Build the {M,F,A} tuple in the local heap.
      * (A is arguments or arity.)
      */
 
@@ -2472,7 +2473,7 @@ init_sys_msg_dispatcher(void)
 {
     erts_thr_opts_t thr_opts = ERTS_THR_OPTS_DEFAULT_INITER;
     thr_opts.detached = 1;
-    thr_opts.name = "sys_msg_dispatcher";
+    thr_opts.name = "erts_smsg_disp";
     init_smq_element_alloc();
     sys_message_queue = NULL;
     sys_message_queue_end = NULL;
@@ -2632,6 +2633,9 @@ lookup_tracer_nif(const ErtsTracer tracer)
 {
     ErtsTracerNif tnif_tmpl;
     ErtsTracerNif *tnif;
+    if (tracer == erts_tracer_nil) {
+        return NULL;
+    }
     tnif_tmpl.module = ERTS_TRACER_MODULE(tracer);
     ERTS_LC_ASSERT(erts_thr_progress_lc_is_delaying() || erts_get_scheduler_id() > 0);
     erts_rwmtx_rlock(&tracer_mtx);
@@ -2793,8 +2797,12 @@ send_to_tracer_nif_raw(Process *c_p, Process *tracee,
             map_values[map_elem_count++] = am_monotonic;
 
         map->size = map_elem_count;
-        map->keys = make_tuple(local_heap);
-        local_heap[0] = make_arityval(map_elem_count);
+        if (map_elem_count == 0) {
+            map->keys = ERTS_GLOBAL_LIT_EMPTY_TUPLE;
+        } else {
+            map->keys = make_tuple(local_heap);
+            local_heap[0] = make_arityval(map_elem_count);
+        }
 
 #undef MAP_SIZE
         erts_nif_call_function(c_p, tracee ? tracee : c_p,
@@ -3071,7 +3079,7 @@ erts_tracer_update(ErtsTracer *tracer, const ErtsTracer new_tracer)
     }
 }
 
-static void init_tracer_nif()
+static void init_tracer_nif(void)
 {
     erts_rwmtx_opt_t rwmtx_opt = ERTS_RWMTX_OPT_DEFAULT_INITER;
     rwmtx_opt.type = ERTS_RWMTX_TYPE_EXTREMELY_FREQUENT_READ;
@@ -3084,7 +3092,7 @@ static void init_tracer_nif()
 
 }
 
-int erts_tracer_nif_clear()
+int erts_tracer_nif_clear(void)
 {
 
     erts_rwmtx_rlock(&tracer_mtx);

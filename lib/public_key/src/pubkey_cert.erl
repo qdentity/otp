@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -72,7 +72,7 @@ verify_data(DerCert) ->
 -spec init_validation_state(#'OTPCertificate'{}, integer(), list()) ->
 				   #path_validation_state{}.
 %%
-%% Description: Creates inital version of path_validation_state for
+%% Description: Creates initial version of path_validation_state for
 %% basic path validation of x509 certificates.
 %%--------------------------------------------------------------------	 
 init_validation_state(#'OTPCertificate'{} = OtpCert, DefaultPathLen, 
@@ -134,7 +134,7 @@ prepare_for_next_cert(OtpCert, ValidationState = #path_validation_state{
      }.
 
  %%--------------------------------------------------------------------
--spec validate_time(#'OTPCertificate'{}, term(), fun()) -> term().
+-spec validate_time(#'OTPCertificate'{}, term(), fun()) -> term() | no_return().
 %%
 %% Description: Check that the certificate validity period includes the 
 %% current time.
@@ -144,8 +144,8 @@ validate_time(OtpCert, UserState, VerifyFun) ->
     {'Validity', NotBeforeStr, NotAfterStr} 
 	= TBSCert#'OTPTBSCertificate'.validity,
     Now = calendar:datetime_to_gregorian_seconds(calendar:universal_time()),
-    NotBefore = time_str_2_gregorian_sec(NotBeforeStr),
-    NotAfter = time_str_2_gregorian_sec(NotAfterStr),
+    NotBefore = time_str_2_gregorian_sec(notBefore, NotBeforeStr),
+    NotAfter = time_str_2_gregorian_sec(notAfter, NotAfterStr),
 
     case ((NotBefore =< Now) and (Now =< NotAfter)) of
 	true ->
@@ -154,7 +154,7 @@ validate_time(OtpCert, UserState, VerifyFun) ->
 	    verify_fun(OtpCert, {bad_cert, cert_expired}, UserState, VerifyFun)
     end.
 %%--------------------------------------------------------------------
--spec validate_issuer(#'OTPCertificate'{}, term(), term(), fun()) -> term().
+-spec validate_issuer(#'OTPCertificate'{}, term(), term(), fun()) -> term() | no_return().
 %%
 %% Description: Check that the certificate issuer name is the working_issuer_name
 %% in path_validation_state.
@@ -169,7 +169,7 @@ validate_issuer(OtpCert, Issuer, UserState, VerifyFun) ->
     end. 
 %%--------------------------------------------------------------------
 -spec validate_signature(#'OTPCertificate'{}, DER::binary(),
-			 term(),term(), term(), fun()) -> term().
+			 term(),term(), term(), fun()) -> term() | no_return().
 				
 %%
 %% Description: Check that the signature on the certificate can be verified using
@@ -187,7 +187,7 @@ validate_signature(OtpCert, DerCert, Key, KeyParams,
     end.
 %%--------------------------------------------------------------------
 -spec validate_names(#'OTPCertificate'{}, no_constraints | list(), list(),
-		     term(), term(), fun())-> term().
+		     term(), term(), fun())-> term() | no_return().
 %%
 %% Description: Validate Subject Alternative Name.
 %%--------------------------------------------------------------------	
@@ -247,7 +247,7 @@ validate_extensions(OtpCert, ValidationState, UserState, VerifyFun) ->
 -spec normalize_general_name({rdnSequence, term()}| binary()) -> {rdnSequence, term()}. 
 %%
 %% Description: Normalizes a general name so that it can be easily
-%%              compared to another genral name. 
+%%              compared to another general name. 
 %%--------------------------------------------------------------------	
 normalize_general_name({rdnSequence, Issuer}) ->    
     NormIssuer = do_normalize_general_name(Issuer),
@@ -333,7 +333,7 @@ is_fixed_dh_cert(#'OTPCertificate'{tbsCertificate =
 
 %%--------------------------------------------------------------------
 -spec verify_fun(#'OTPCertificate'{}, {bad_cert, atom()} | {extension, #'Extension'{}}|
-		 valid | valid_peer, term(), fun()) -> term().
+		 valid | valid_peer, term(), fun()) -> term() | no_return().
 %%
 %% Description: Gives the user application the opportunity handle path
 %% validation errors and unknown extensions and optional do other
@@ -370,6 +370,9 @@ select_extension(_, asn1_NOVALUE) ->
     undefined;
 select_extension(_, []) ->
     undefined;
+select_extension(Id, [#'Extension'{extnID = ?'id-ce-cRLDistributionPoints' = Id,
+                                   extnValue = Value} = Extension | _]) when is_binary(Value) ->
+    Extension#'Extension'{extnValue = public_key:der_decode('CRLDistributionPoints', Value)};
 select_extension(Id, [#'Extension'{extnID = Id} = Extension | _]) ->
     Extension;
 select_extension(Id, [_ | Extensions]) ->
@@ -408,9 +411,8 @@ match_name(emailAddress, Name, [PermittedName | Rest]) ->
 match_name(dNSName, Name, [PermittedName | Rest]) ->
     Fun = fun(Domain, [$.|Domain]) -> true;
 	     (Name1,Name2) ->
-		  lists:suffix(string:to_lower(Name2),
-			       string:to_lower(Name1))
-	  end,
+		  is_suffix(Name2, Name1)
+          end,
     match_name(Fun, Name, [$.|PermittedName], Rest);
 
 match_name(x400Address, OrAddress, [PermittedAddr | Rest]) ->
@@ -558,11 +560,11 @@ root_cert(Name, Opts) ->
 %%--------------------------------------------------------------------
 do_normalize_general_name(Issuer) ->
     Normalize = fun([{Description, Type, {printableString, Value}}]) ->
-			NewValue = string:to_lower(strip_spaces(Value)),
-			[{Description, Type, {printableString, NewValue}}];
-		   (Atter)  ->
-			Atter
-		end,
+            NewValue = string:casefold(strip_spaces(Value, false)),
+            [{Description, Type, {printableString, NewValue}}];
+           (Atter)  ->
+            Atter
+        end,
     lists:map(Normalize, Issuer).
 
 %% See rfc3280 4.1.2.6 Subject: regarding emails.
@@ -633,19 +635,44 @@ public_key_info(PublicKeyInfo,
 	end,
     {Algorithm, PublicKey, NewPublicKeyParams}.
 
-time_str_2_gregorian_sec({utcTime, [Y1,Y2,M1,M2,D1,D2,H1,H2,M3,M4,S1,S2,Z]}) ->
-    case list_to_integer([Y1,Y2]) of
-	N when N >= 50 ->
-	    time_str_2_gregorian_sec({generalTime, 
-				      [$1,$9,Y1,Y2,M1,M2,D1,D2,
-				       H1,H2,M3,M4,S1,S2,Z]});
-	_ ->
-	    time_str_2_gregorian_sec({generalTime, 
-				      [$2,$0,Y1,Y2,M1,M2,D1,D2,
-				       H1,H2,M3,M4,S1,S2,Z]}) 
-    end;
+%% time_str_2_gregorian_sec/2 is a wrapper (decorator pattern) over
+%% time_str_2_gregorian_sec/1. the decorator deals with notBefore and notAfter
+%% property differently when we pass utcTime because the data format is
+%% ambiguous YYMMDD. on generalTime the year ambiguity cannot happen because
+%% years are expressed in a 4-digit format, i.e., YYYYMMDD.
+-spec time_str_2_gregorian_sec(PeriodOfTime, Time) -> Seconds :: non_neg_integer() when
+      PeriodOfTime :: notBefore | notAfter,
+      Time :: {utcTime | generalTime, [non_neg_integer() | char()]}.
+time_str_2_gregorian_sec(notBefore, {utcTime, [FirstDigitYear | _]=UtcTime}) ->
+    %% To be compliant with PKITS Certification Path Validation,
+    %% we must accept certificates with notBefore = 50, meaning 1950.
+    %% Once the PKITS certification path validation is updated,
+    %% we must update this function body and test case
+    %% {"4.2.3", "Valid pre2000 UTC notBefore Date Test3 EE"}
+    %% in pkits_SUITE.erl
+    Y1 = erlang:list_to_integer([FirstDigitYear]),
+    YearPrefix = case (Y1 > 4 andalso Y1 =< 9) of
+                     true -> [$1, $9];
+                     false  ->
+                         {Y, _M, _D} = erlang:date(),
+                         integer_to_list(Y div 100)
+                 end,
+    time_str_2_gregorian_sec({generalTime, YearPrefix ++ UtcTime});
 
-time_str_2_gregorian_sec({_,[Y1,Y2,Y3,Y4,M1,M2,D1,D2,H1,H2,M3,M4,S1,S2,$Z]}) ->
+time_str_2_gregorian_sec(notAfter, {utcTime, UtcTime}) ->
+    SlidingDate = sliding_year_window(UtcTime),
+    time_str_2_gregorian_sec({generalTime, SlidingDate});
+
+time_str_2_gregorian_sec(_, {generalTime, _Time}=GeneralTime) ->
+    time_str_2_gregorian_sec(GeneralTime).
+
+%% converts 'Time' as a string into gregorian time in seconds.
+-spec time_str_2_gregorian_sec(Time) -> Seconds :: non_neg_integer() when
+      Time :: {generalTime | utcTime, string()}.
+time_str_2_gregorian_sec({utcTime, UtcTime}) ->
+    time_str_2_gregorian_sec(notAfter, {utcTime, UtcTime});
+
+time_str_2_gregorian_sec({generalTime,[Y1,Y2,Y3,Y4,M1,M2,D1,D2,H1,H2,M3,M4,S1,S2,$Z]}) ->
     Year  = list_to_integer([Y1, Y2, Y3, Y4]),
     Month = list_to_integer([M1, M2]),
     Day   = list_to_integer([D1, D2]),
@@ -654,6 +681,28 @@ time_str_2_gregorian_sec({_,[Y1,Y2,Y3,Y4,M1,M2,D1,D2,H1,H2,M3,M4,S1,S2,$Z]}) ->
     Sec   = list_to_integer([S1, S2]),
     calendar:datetime_to_gregorian_seconds({{Year, Month, Day},
 					    {Hour, Min, Sec}}).
+
+%% Sliding window algorithm to calculate the time.
+%% The value is set as taking {Y1, Y2} from the first two digits of
+%% current_date - 50 or current_date - 49.
+sliding_year_window([Y1,Y2,M1,M2,D1,D2,H1,H2,M3,M4,S1,S2,Z]) ->
+    {{CurrentYear,_, _}, _} = calendar:universal_time(),
+    LastTwoDigitYear = CurrentYear rem 100,
+    MinYear = mod(LastTwoDigitYear - 50, 100),
+    YearWindow = case list_to_integer([Y1,Y2]) of
+                     N when N < MinYear -> CurrentYear + 50;
+                     N when N >= MinYear -> CurrentYear - 49
+                 end,
+    [Year1, Year2] = integer_to_list(YearWindow div 100),
+    [Year1,Year2,Y1,Y2,M1,M2,D1,D2,H1,H2,M3,M4,S1,S2,Z].
+
+
+%% Helper function to perform modulo calculation for integer
+-spec mod(A :: integer(), B :: non_neg_integer()) -> non_neg_integer().
+mod(A, B) when A > 0 -> A rem B;
+mod(A, B) when A < 0 -> mod(A+B, B);
+mod(0, _) -> 0.
+
 
 is_dir_name([], [], _Exact) ->    true;
 is_dir_name([H|R1],[H|R2], Exact) -> is_dir_name(R1,R2, Exact);
@@ -668,14 +717,28 @@ is_dir_name(_,[],false) ->
 is_dir_name(_,_,_) ->
     false.
 
-is_dir_name2(Value, Value) -> true;
-is_dir_name2({printableString, Value1}, {printableString, Value2}) ->
-    string:to_lower(strip_spaces(Value1)) =:= 
-	string:to_lower(strip_spaces(Value2));
-is_dir_name2({utf8String, Value1}, String) ->
-    is_dir_name2({printableString, unicode:characters_to_list(Value1)}, String);
-is_dir_name2(String, {utf8String, Value1}) ->
-    is_dir_name2(String, {printableString, unicode:characters_to_list(Value1)});
+%% attribute values in types other than PrintableString are case
+%% sensitive (this permits matching of attribute values as binary
+%% objects); that is term comparison will compare. Rules origninate
+%% from RFC 3280 section 4.1.24. However fallback to case insensite
+%% matching also for utf8 strings, as this is done by the
+%% pkits_suite interop suite
+is_dir_name2(Str, Str) ->
+    true;
+is_dir_name2({T1, Str1}, Str2)
+  when T1 == printableString; T1 == utf8String ->
+    is_dir_name2(Str1, Str2);
+is_dir_name2(Str1, {T2, Str2})
+  when T2 == printableString; T2 == utf8String ->
+    is_dir_name2(Str1, Str2);
+is_dir_name2(Str1, Str2)
+  when (is_list(Str1) orelse is_binary(Str1)) andalso
+       (is_list(Str2) orelse is_binary(Str2)) ->
+    %%attribute values in PrintableString are compared after
+    %%removing leading and trailing white space and converting internal
+    %%substrings of one or more consecutive white space characters to a
+    %%single space. They are case insensetive.
+    string:equal(strip_spaces(Str1, true), strip_spaces(Str2, true), true);
 is_dir_name2(_, _) ->
     false.
 
@@ -693,13 +756,19 @@ decode_general_name([{directoryName, Issuer}]) ->
 decode_general_name([{_, Issuer}]) ->
     Issuer.
 
-%% Strip all leading and trailing spaces and make
-%% sure there is no double spaces in between. 
-strip_spaces(String) ->   
-    NewString = 
-	lists:foldl(fun(Char, Acc) -> Acc ++ Char ++ " " end, [], 
-		    string:tokens(String, " ")),
-    string:strip(NewString).
+strip_spaces(String0, KeepDeep) ->
+    Trimmed = string:trim(String0),
+    strip_many_spaces(string:split(Trimmed, "  ", all), KeepDeep).
+
+strip_many_spaces([OnlySingleSpace], _) ->
+    OnlySingleSpace;
+strip_many_spaces(Strings, KeepDeep) ->
+    Split = [string:trim(Str, leading, " ") || Str <- Strings, Str /= []],
+    DeepList = lists:join(" ", Split),
+    case KeepDeep of
+        true -> DeepList;
+        false -> unicode:characters_to_list(DeepList)
+    end.
 
 %% No extensions present
 validate_extensions(OtpCert, asn1_NOVALUE, ValidationState, ExistBasicCon,
@@ -1027,6 +1096,8 @@ is_permitted_ip([CandidatIp | CandidatIpRest],
 mask_cmp(Canditate, Permitted, Mask) ->
     (Canditate band Mask) == Permitted.
 
+is_valid_host_or_domain([], _) ->
+    false; %% Can happen if URI was not a HTTP URI
 is_valid_host_or_domain(Canditate, [$.|_] = Permitted) ->
     is_suffix(Permitted, Canditate);
 is_valid_host_or_domain(Canditate, Permitted) ->
@@ -1047,9 +1118,9 @@ is_valid_email_address(Canditate, Permitted, [_, _]) ->
     case_insensitive_match(Canditate, Permitted).
 
 is_suffix(Suffix, Str) ->
-    lists:suffix(string:to_lower(Suffix), string:to_lower(Str)).
+    lists:suffix(string:casefold(Suffix), string:casefold(Str)).
 case_insensitive_match(Str1, Str2) ->
-    string:to_lower(Str1) == string:to_lower(Str2).
+    string:equal(Str1, Str2, true).
 
 is_or_address(Address, Canditate) ->
     %% TODO: Is case_insensitive_match sufficient?
@@ -1301,7 +1372,7 @@ cert_chain(Role, IssuerCert, IssuerKey, [PeerOpts], _, Acc) ->
 cert_chain(Role, IssuerCert, IssuerKey, [CAOpts | Rest], N, Acc) ->
     Key = gen_key(proplists:get_value(key, CAOpts, default_key_gen())),
     Cert = cert(Role, public_key:pkix_decode_cert(IssuerCert, otp), IssuerKey, Key, "webadmin", 
-                " Intermidiate CA " ++ integer_to_list(N), CAOpts, ca),
+                " Intermediate CA " ++ integer_to_list(N), CAOpts, ca),
     cert_chain(Role, Cert, Key, Rest, N+1, [{IssuerCert, encode_key(IssuerKey)} | Acc]).
 
 cert(Role, #'OTPCertificate'{tbsCertificate = #'OTPTBSCertificate'{subject = Issuer}}, 

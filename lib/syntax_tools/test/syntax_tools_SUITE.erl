@@ -27,7 +27,7 @@
          revert_map_type/1,wrapped_subtrees/1,
          t_abstract_type/1,t_erl_parse_type/1,t_type/1,
          t_epp_dodger/1,t_epp_dodger_clever/1,
-         t_comment_scan/1,t_prettypr/1]).
+         t_comment_scan/1,t_prettypr/1,test_named_fun_bind_ann/1]).
 
 suite() -> [{ct_hooks,[ts_install_cth]}].
 
@@ -36,7 +36,7 @@ all() ->
      wrapped_subtrees,
      t_abstract_type,t_erl_parse_type,t_type,
      t_epp_dodger,t_epp_dodger_clever,
-     t_comment_scan,t_prettypr].
+     t_comment_scan,t_prettypr,test_named_fun_bind_ann].
 
 groups() -> 
     [].
@@ -106,7 +106,8 @@ revert(Config) when is_list(Config) ->
     test_server:timetrap_cancel(Dog).
 
 revert_file(File, Path) ->
-    case epp:parse_file(File, Path, []) of
+    case epp:parse_file(File, [{includes,Path},
+                               res_word_option()]) of
         {ok,Fs0} ->
             Fs1 = erl_syntax:form_list(Fs0),
             Fs2 = erl_syntax_lib:map(fun (Node) -> Node end, Fs1),
@@ -350,10 +351,36 @@ t_comment_scan(Config) when is_list(Config) ->
 t_prettypr(Config) when is_list(Config) ->
     DataDir   = ?config(data_dir, Config),
     PrivDir   = ?config(priv_dir, Config),
-    Filenames = ["type_specs.erl",
-                 "specs_and_funs.erl"],
+    Filenames = test_files(),
     ok = test_prettypr(Filenames,DataDir,PrivDir),
     ok.
+
+%% Test bug (#4733) fix for annotating bindings for named fun expressions
+test_named_fun_bind_ann(Config) when is_list(Config) ->
+    Fn = {named_fun,{6,5},
+            'F',
+            [{clause,{6,9},
+                [{var,{6,11},'Test'}],
+                [],
+                [{var,{7,13},'Test'}]}]},
+    AnnT = erl_syntax_lib:annotate_bindings(Fn, []),
+    [Env, Bound, Free] = erl_syntax:get_ann(AnnT),
+    {'env',[]} = Env,
+    {'bound',[]} = Bound,
+    {'free',[]} = Free,
+
+    NameVar = erl_syntax:named_fun_expr_name(AnnT),
+    Name = erl_syntax:variable_name(NameVar),
+    [NEnv, NBound, NFree] = erl_syntax:get_ann(NameVar),
+    {'env',[]} = NEnv,
+    {'bound',[Name]} = NBound,
+    {'free',[]} = NFree,
+
+    [Clause] = erl_syntax:named_fun_expr_clauses(AnnT),
+    [CEnv, CBound, CFree] = erl_syntax:get_ann(Clause),
+    {'env',[Name]} = CEnv,
+    {'bound',['Test']} = CBound,
+    {'free', []} = CFree.
 
 test_files(Config) ->
     DataDir = ?config(data_dir, Config),
@@ -391,15 +418,16 @@ test_comment_scan([File|Files],DataDir) ->
 test_prettypr([],_,_) -> ok;
 test_prettypr([File|Files],DataDir,PrivDir) ->
     Filename  = filename:join(DataDir,File),
+    Options = [res_word_option()],
     io:format("Parsing ~p~n", [Filename]),
-    {ok, Fs0} = epp:parse_file(Filename, [], []),
+    {ok, Fs0} = epp:parse_file(Filename, Options),
     Fs = erl_syntax:form_list(Fs0),
     PP = erl_prettypr:format(Fs, [{paper,  120}, {ribbon, 110}]),
     io:put_chars(PP),
     OutFile = filename:join(PrivDir, File),
     ok = file:write_file(OutFile,unicode:characters_to_binary(PP)),
     io:format("Parsing OutFile: ~ts~n", [OutFile]),
-    {ok, Fs2} = epp:parse_file(OutFile, [], []),
+    {ok, Fs2} = epp:parse_file(OutFile, Options),
     case [Error || {error, _} = Error <- Fs2] of
         [] ->
             ok;
@@ -408,22 +436,23 @@ test_prettypr([File|Files],DataDir,PrivDir) ->
     end,
     test_prettypr(Files,DataDir,PrivDir).
 
-
 test_epp_dodger([], _, _) -> ok;
 test_epp_dodger([Filename|Files],DataDir,PrivDir) ->
     io:format("Parsing ~p~n", [Filename]),
+    Options  = [{feature, maybe_expr, enable}],
     InFile   = filename:join(DataDir, Filename),
-    Parsers  = [{fun epp_dodger:parse_file/1,parse_file},
-		{fun epp_dodger:quick_parse_file/1,quick_parse_file},
+    Parsers  = [{fun(File) -> epp_dodger:parse_file(File, Options) end,parse_file},
+		{fun(File) -> epp_dodger:quick_parse_file(File,
+                                                          Options) end,quick_parse_file},
 		{fun (File) ->
 			{ok,Dev} = file:open(File,[read]),
-			Res = epp_dodger:parse(Dev),
+			Res = epp_dodger:parse(Dev, Options),
 			file:close(File),
 			Res
 		 end, parse},
 		{fun (File) ->
 			{ok,Dev} = file:open(File,[read]),
-			Res = epp_dodger:quick_parse(Dev),
+			Res = epp_dodger:quick_parse(Dev, Options),
 			file:close(File),
 			Res
 		 end, quick_parse}],
@@ -617,3 +646,9 @@ p_run_loop(Test, List, N, Refs0, Errors0) ->
 	    Refs = Refs0 -- [Ref],
 	    p_run_loop(Test, List, N, Refs, Errors)
     end.
+
+res_word_option() ->
+    Options = [{feature, maybe_expr, enable}],
+    {ok, {_Ftrs, ResWordFun}} =
+        erl_features:keyword_fun(Options, fun erl_scan:f_reserved_word/1),
+    {reserved_word_fun, ResWordFun}.

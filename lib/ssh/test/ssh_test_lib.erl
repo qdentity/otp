@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -484,7 +484,7 @@ receive_exec_result(Msgs) when is_list(Msgs) ->
                             receive_exec_result(Msgs);
                         Other ->
                             ct:log("~p:~p unexpected Other ~p", [?MODULE,?FUNCTION_NAME,Other]),
-                            {unexpected_msg, Other}
+                            receive_exec_result(Msgs)
                     end
             end
     after 
@@ -627,14 +627,14 @@ default_algorithms(sshc, DaemonOptions) ->
 	{hostport,Srvr,{_Host,Port}} ->
 	    spawn(fun()-> os:cmd(lists:concat(["ssh -o \"StrictHostKeyChecking no\" -p ",Port," localhost"])) end)
     after ?TIMEOUT ->
-	    ct:fail("No server respons (timeout) 1")
+	    ct:fail("No server response (timeout) 1")
     end,
 
     receive
 	{result,Srvr,L} ->
 	    L
     after ?TIMEOUT ->
-	    ct:fail("No server respons (timeout) 2")
+	    ct:fail("No server response (timeout) 2")
     end.
 
 run_fake_ssh({ok,InitialState}) ->
@@ -940,7 +940,7 @@ create_random_dir(Config) ->
 	    Name;
 	{error,eexist} ->
 	    %% The Name already denotes an existing file system object, try again.
-	    %% The likelyhood of always generating an existing file name is low
+	    %% The likelihood of always generating an existing file name is low
 	    create_random_dir(Config)
     end.
 

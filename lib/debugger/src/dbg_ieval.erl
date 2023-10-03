@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 1998-2021. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2023. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -84,7 +84,7 @@ exit_info(Int, AttPid, OrigPid, Reason, ExitInfo) ->
 %%--------------------------------------------------------------------
 %% eval_expr(Expr, Bs, Ieval) -> {value, Value, Bs}
 %%
-%% Evalute a shell expression in the real process.
+%% Evaluate a shell expression in the real process.
 %% Called (dbg_icmd) in response to a user request.
 %%--------------------------------------------------------------------
 eval_expr(Expr0, Bs, Ieval) ->
@@ -266,7 +266,7 @@ meta_loop(Debugged, Bs, #ieval{level=Le} = Ieval) ->
 			      end,
 		    do_exception(Class, Reason, MakeStk, Bs, Ieval);
 
-		%% Error must have occured within a re-entry to
+		%% Error must have occurred within a re-entry to
 		%% interpreted code, simply raise the exception
 		_ ->
 		    erlang:Class(Reason)
@@ -620,8 +620,12 @@ seq([E|Es], Bs0, Ieval) ->
 	{skip,Bs} ->
 	    seq(Es, Bs, Ieval);
 	Bs1 ->
-	    {value,_,Bs} = expr(E, Bs1, Ieval#ieval{top=false}),
-	    seq(Es, Bs, Ieval)
+	    case expr(E, Bs1, Ieval#ieval{top=false}) of
+                {value,_,Bs} ->
+                    seq(Es, Bs, Ieval);
+                {bad_maybe_match,_}=Bad ->
+                    Bad
+            end
     end;
 seq([], Bs, _) ->
     {value,true,Bs}.
@@ -669,7 +673,7 @@ expr({map,Line,E0,Fs0}, Bs0, Ieval0) ->
 
 %% Record update
 expr({record_update,Line,Es},Bs,#ieval{level=Le}=Ieval0) ->
-    %% Incr Level, we don't need to step (next) trough temp
+    %% Incr Level, we don't need to step (next) through temp
     %% variables creation and matching
     Ieval = Ieval0#ieval{top=false, line=Line, level=Le+1},
     Seq = fun(E, {_, _, Bs1}) -> expr(E, Bs1, Ieval) end,
@@ -755,6 +759,24 @@ expr({'orelse',Line,E1,E2}, Bs0, Ieval) ->
             exception(error, {badarg,Val}, Bs, Ieval)
     end;
 
+%% Maybe statement without else
+expr({'maybe',Line,Es}, Bs, Ieval) ->
+    case seq(Es, Bs, Ieval#ieval{line=Line}) of
+        {bad_maybe_match,Val} ->
+            {value,Val,Bs};
+        {value,_,_}=Other ->
+            Other
+    end;
+
+%% Maybe statement with else
+expr({'maybe',Line,Es,Cs}, Bs, Ieval) ->
+    case seq(Es, Bs, Ieval#ieval{line=Line}) of
+        {bad_maybe_match,Val} ->
+            case_clauses(Val, Cs, Bs, else_clause, Ieval#ieval{line=Line});
+        {value,_,_}=Other ->
+            Other
+    end;
+
 %% Matching expression
 expr({match,Line,Lhs,Rhs0}, Bs0, Ieval0) ->
     Ieval = Ieval0#ieval{line=Line},
@@ -764,6 +786,17 @@ expr({match,Line,Lhs,Rhs0}, Bs0, Ieval0) ->
 	    {value,Rhs,Bs};
 	nomatch ->
 	    exception(error, {badmatch,Rhs}, Bs1, Ieval)
+    end;
+
+%% Conditional match expression (?=)
+expr({maybe_match,Line,Lhs,Rhs0}, Bs0, Ieval0) ->
+    Ieval = Ieval0#ieval{line=Line},
+    {value,Rhs,Bs1} = expr(Rhs0, Bs0, Ieval#ieval{top=false}),
+    case match(Lhs, Rhs, Bs1) of
+	{match,Bs} ->
+	    {value,Rhs,Bs};
+	nomatch ->
+            {bad_maybe_match,Rhs}
     end;
 
 %% Construct a fun
@@ -1043,9 +1076,7 @@ expr({bin,Line,Fs}, Bs0, Ieval0) ->
     Ieval = Ieval0#ieval{line=Line,top=false},
     try
 	eval_bits:expr_grp(Fs, Bs0,
-			   fun (E, B) -> expr(E, B, Ieval) end,
-			   [],
-			   false)
+			   fun (E, B) -> expr(E, B, Ieval) end)
     catch
 	Class:Reason ->
 	    exception(Class, Reason, Bs0, Ieval)
@@ -1504,7 +1535,7 @@ guard_expr({bin,_,Flds}, Bs) ->
 			   fun(E,B) ->
 				   {value,V} = guard_expr(E,B),
 				   {value,V,B}
-			   end, [], false),
+			   end),
     {value,V}.
 
 
@@ -1583,8 +1614,7 @@ match1({map,_,Fields}, Map, Bs, BBs) when is_map(Map) ->
 match1({bin,_,Fs}, B, Bs0, BBs) when is_bitstring(B) ->
     try eval_bits:match_bits(Fs, B, Bs0, BBs,
 			     match_fun(BBs),
-			     fun(E, Bs) -> expr(E, Bs, #ieval{}) end,
-			     false)
+			     fun(E, Bs) -> expr(E, Bs, #ieval{}) end)
     catch
 	_:_ -> throw(nomatch)
     end;

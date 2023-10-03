@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 1999-2021. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2023. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@
          call_purged_fun_code_gone/1,
          call_purged_fun_code_reload/1,
          call_purged_fun_code_there/1,
+         call_purged_fun_code_altered/1,
          multi_proc_purge/1, t_check_old_code/1,
          external_fun/1,get_chunk/1,module_md5/1,
          constant_pools/1,constant_refc_binaries/1,
@@ -33,8 +34,9 @@
          false_dependency/1,coverage/1,fun_confusion/1,
          t_copy_literals/1, t_copy_literals_frags/1,
          erl_544/1, max_heap_size/1,
-	 check_process_code_signal_order/1,
-	 check_process_code_dirty_exec_proc/1]).
+         check_process_code_signal_order/1,
+         check_process_code_dirty_exec_proc/1,
+         call_fun_before_load/1]).
 
 -define(line_trace, 1).
 -include_lib("common_test/include/ct.hrl").
@@ -46,13 +48,14 @@ all() ->
      bad_beam_file, literal_leak,
      call_purged_fun_code_gone,
      call_purged_fun_code_reload, call_purged_fun_code_there,
+     call_purged_fun_code_altered,
      multi_proc_purge, t_check_old_code, external_fun, get_chunk,
      module_md5,
      constant_pools, constant_refc_binaries, fake_literals,
      false_dependency,
      coverage, fun_confusion, t_copy_literals, t_copy_literals_frags,
      erl_544, max_heap_size, check_process_code_signal_order,
-     check_process_code_dirty_exec_proc].
+     check_process_code_dirty_exec_proc, call_fun_before_load].
 
 init_per_suite(Config) ->
     erts_debug:set_internal_state(available_internal_state, true),
@@ -249,6 +252,18 @@ call_purged_fun_code_there_test(Config) when is_list(Config) ->
     call_purged_fun_test(Priv, Data, code_there),
     ok.
 
+%% GH-7288: calling a fun defined by a module that had been purged after
+%% loading a different version of the same module (and therefore did not
+%% inherit the old fun entries) could cause the emulator to crash.
+call_purged_fun_code_altered(Config) when is_list(Config) ->
+    run_sys_proc_test(fun call_purged_fun_code_altered_test/1, Config).
+
+call_purged_fun_code_altered_test(Config) when is_list(Config) ->
+    Priv = proplists:get_value(priv_dir, Config),
+    Data = proplists:get_value(data_dir, Config),
+    call_purged_fun_test(Priv, Data, code_altered),
+    ok.
+
 call_purged_fun_test(Priv, Data, Type) ->
     SrcFile = filename:join(Data, "call_purged_fun_tester.erl"),
     ObjFile = filename:join(Priv, "call_purged_fun_tester.beam"),
@@ -256,7 +271,6 @@ call_purged_fun_test(Priv, Data, Type) ->
     {module,Mod} = code:load_binary(Mod, ObjFile, Code),
 
     call_purged_fun_tester:do(Priv, Data, Type, []).
-
 
 multi_proc_purge(Config) when is_list(Config) ->
     run_sys_proc_test(fun multi_proc_purge_test/1, Config).
@@ -746,11 +760,11 @@ verify_lit_terms([], _) ->
     ok.
 
 get_external_terms() ->
-    {ok,Node} =	test_server:start_node(?FUNCTION_NAME, slave, []),
+    {ok, Peer, Node}= ?CT_PEER(),
     Ref = rpc:call(Node, erlang, make_ref, []),
     Ports = rpc:call(Node, erlang, ports, []),
     Pid = rpc:call(Node, erlang, self, []),
-    _ = test_server:stop_node(Node),
+    peer:stop(Peer),
     {Ref,hd(Ports),Pid}.
 
 %% OTP-7559: c_p->cp could contain garbage and create a false dependency
@@ -1096,9 +1110,9 @@ erl_544(Config) when is_list(Config) ->
                 File = proplists:get_value(file, Info2),
                 StackFun = fun(_, _, _) -> false end,
                 FormatFun = fun (Term, _) -> io_lib:format("~tp", [Term]) end,
-                Formated =
+                Formatted =
                     erl_error:format_stacktrace(1, Stack, StackFun, FormatFun),
-                true = is_list(Formated),
+                true = is_list(Formatted),
                 ok
             after
                 ok = file:set_cwd(CWD)
@@ -1182,6 +1196,29 @@ check_process_code_dirty_exec_proc(Config) when is_list(Config) ->
     {status, running} = process_info(Pid, status),
     exit(Pid, kill),
     false = is_process_alive(Pid),
+    ok.
+
+%% OTP-18016: When loading a module over itself, a race in fun loading made it
+%% possible to call a local fun before the module was fully reloaded.
+call_fun_before_load(Config) ->
+    Priv = proplists:get_value(priv_dir, Config),
+    Data = proplists:get_value(data_dir, Config),
+    Path = code:get_path(),
+    true = code:add_path(Priv),
+    try
+        SrcFile = filename:join(Data, "call_fun_before_load.erl"),
+        ObjFile = filename:join(Priv, "call_fun_before_load.beam"),
+        {ok,Mod,Code} = compile:file(SrcFile, [binary, report]),
+        {module,Mod} = code:load_binary(Mod, ObjFile, Code),
+
+        ok = call_fun_before_load:run(ObjFile, Code),
+
+        code:purge(call_fun_before_load)
+    after
+        code:set_path(Path),
+        code:delete(call_fun_before_load),
+        code:purge(call_fun_before_load)
+    end,
     ok.
 
 %% Utilities.

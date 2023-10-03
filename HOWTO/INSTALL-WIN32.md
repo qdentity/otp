@@ -31,7 +31,7 @@ to make the Erlang/OTP distribution for Windows better. Please submit
 any suggestions or patches to our [git project] [1] to let
 them find their way into the next version of Erlang. If making changes
 to the build system (like makefiles etc) please bear in mind that the
-same makefiles are used on Unix/VxWorks, so that your changes
+same makefiles are used on Unix, so that your changes
 don't break other platforms. That of course goes for C-code too; system
 specific code resides in the `$ERL_TOP/erts/emulator/sys/win32` and
 `$ERL_TOP/erts/etc/win32` directories mostly. The
@@ -61,14 +61,14 @@ This is the short story though, for the experienced and impatient:
     *   Get, build and install OpenSSL v1.1.1d or later (up to 1.1.1d
         tried & working) with static libs.
 
-    *   Get, build and install wxWidgets-3.1.3 or later (up to 3.1.3
-        tried & working) with static libs.
+    *   Get, build and install wxWidgets-3.2.2.1 or later (up to that
+        version tried & working) with static libs.
 
     *   Get the Erlang source distribution (from
         <http://www.erlang.org/download.html>) and unpack with `tar`
         to the windows disk for example to: /mnt/c/src/
 
-    *   Install mingw-gcc, and make: `sudo apt install g++-mingw-w64 gcc-mingw-w64 make`
+    *   Install mingw-gcc, and make: `sudo apt update && sudo apt install g++-mingw-w64 gcc-mingw-w64 make`
 
     *   `$ cd UNPACK_DIR`
 
@@ -143,29 +143,29 @@ the different tools:
     You need this to build crypto, ssh and ssl libs.
 
     We recommend v1.1.1d or later.
-    There are prebuilt avaiable binaries, which you can just
+    There are prebuilt available binaries, which you can just
     download and install, available here:
     URL: <http://wiki.openssl.org/index.php/Binaries>
 
     Install into `C:/OpenSSL-Win64` (or `C:/OpenSSL-Win32`)
 
 *   wxWidgets (optional)
-    You need this to build wx and use gui's in debugger and observer.
+    You need this to build wx to use gui's in debugger and observer.
 
-    We recommend v3.1.4 or later.
-    Unpack into `c:/opt/local64/pgm/wxWidgets-3.1.4`
+    We recommend v3.2.2.1 or later.
+    Unpack into `c:/opt/local64/pgm/wxWidgets-3.2.2.1`
 
-    If the `wxUSE_POSTSCRIPT` isn't enabled in  `c:/opt/local64/pgm/wxWidgets-3.1.4/include/wx/msw/setup.h`,
+    If the `wxUSE_POSTSCRIPT` isn't enabled in  `c:/opt/local64/pgm/wxWidgets-3.2.2.1/include/wx/msw/setup.h`,
     enable it.
 
     We recommend to enable for wxWebView wxUSE_WEBVIEW_EDGE.
     *   Download the nuget package 'Microsoft.Web.WebView2' (Version 0.9.488 or newer)
     *   Extract the package (it's a zip archive) to wxWidgets/3rdparty/webview2 (you should have 3rdparty/webview2/build/native/include/WebView2.h file after unpacking it)
-    *   Enable wxUSE_WEBVIEW_EDGE in `c:/opt/local64/pgm/wxWidgets-3.1.4/include/wx/msw/setup.h`
+    *   Enable wxUSE_WEBVIEW_EDGE in `c:/opt/local64/pgm/wxWidgets-3.2.2.1/include/wx/msw/setup.h`
 
     Build with:
 
-        C:\...\> cd c:\opt\local64\pgm\wxWidgets-3.1.4\build\msw
+        C:\...\> cd c:\opt\local64\pgm\wxWidgets-3.2.2.1\build\msw
         C:\...\> nmake TARGET_CPU=amd64 BUILD=release SHARED=0 DIR_SUFFIX_CPU= -f makefile.vc
 
     Remove the `TARGET_CPU=amd64` for 32bit build.

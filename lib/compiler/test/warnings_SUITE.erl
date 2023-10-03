@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2003-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2003-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -43,7 +43,8 @@
          redundant_boolean_clauses/1,
 	 underscore/1,no_warnings/1,
 	 bit_syntax/1,inlining/1,tuple_calls/1,
-         recv_opt_info/1,opportunistic_warnings/1]).
+         recv_opt_info/1,opportunistic_warnings/1,
+         eep49/1,inline_list_funcs/1]).
 
 init_per_testcase(_Case, Config) ->
     Config.
@@ -66,7 +67,8 @@ groups() ->
        maps_bin_opt_info,
        redundant_boolean_clauses,
        underscore,no_warnings,bit_syntax,inlining,
-       tuple_calls,recv_opt_info,opportunistic_warnings]}].
+       tuple_calls,recv_opt_info,opportunistic_warnings,
+       eep49,inline_list_funcs]}].
 
 init_per_suite(Config) ->
     test_lib:recompile(?MODULE),
@@ -156,10 +158,15 @@ pattern3(Config) when is_list(Config) ->
             f({A,_}) -> {ok,A};
             f([_|_]=B) -> {ok,B};
             f({urk,nisse}) -> urka_glurka.
+            word(<<\"AND\">>) -> <<\"and\">>;
+            word(<<\"AS\">>) -> <<\"as\">>;
+            word(<<\"A\">>) -> <<\"a\">>;
+            word(<<\"AS\">>) -> <<\"as\">>.
            ">>,
 	   [nowarn_unused_vars],
 	   {warnings,
-            [{{4,13},v3_kernel,{nomatch,{shadow,2}}}]}}],
+            [{{4,13},v3_kernel,{nomatch,{shadow,2}}},
+             {{8,13},v3_kernel,{nomatch,{shadow,6}}}]}}],
     [] = run(Config, Ts),
 
     ok.
@@ -1223,6 +1230,57 @@ opportunistic_warnings(Config) ->
 
 
     ok.
+
+%% Test value-based error handling (EEP 49).
+eep49(Config) ->
+    Ts = [{basic,
+           <<"foo(X) ->
+                  maybe
+                      %% There should be no warning.
+                      Always ?= X,
+                      Always
+                  end.
+           ">>,
+           [{feature,maybe_expr,enable}],
+           []},
+          {disabled,
+           <<"foo() -> maybe.                        %Atom maybe.
+           ">>,
+           [{feature,maybe_expr,disable}],
+           []}
+	 ],
+    run(Config, Ts),
+    ok.
+
+%% GH-6158: There would be a warning for a clause that could not match.
+inline_list_funcs(Config) ->
+    Ts = [{basic,
+           <<"all(L) ->
+                  lists:all(fun erlang:is_integer/1, L).
+              any(L) ->
+                  lists:any(fun erlang:is_integer/1, L).
+              foreach(L) ->
+                  lists:foreach(fun erlang:is_integer/1, L).
+              map(L) ->
+                  lists:map(fun erlang:abs/1, L).
+              filter(L) ->
+                  lists:map(fun erlang:is_integer/1, L).
+              foldl(L) ->
+                  lists:foldl(fun erlang:is_function/2, L).
+              foldr(L) ->
+                  lists:foldl(fun erlang:is_function/2, L).
+              mapfoldl(L) ->
+                  lists:mapfoldl(fun erlang:is_function/2, L).
+              mapfoldr(L) ->
+                  lists:mapfoldr(fun erlang:is_function/2, L).
+              ">>,
+           [inline_list_funcs],
+           []}
+         ],
+    run(Config, Ts),
+
+    ok.
+
 
 %%%
 %%% End of test cases.

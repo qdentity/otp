@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2021-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
 -module(ssl_reject_SUITE).
 
 -include_lib("common_test/include/ct.hrl").
--include_lib("ssl/src/ssl_record.hrl").
+-include("ssl_record.hrl").
 -include_lib("ssl/src/ssl_alert.hrl").
 -include_lib("ssl/src/ssl_handshake.hrl").
 
@@ -48,15 +48,15 @@
          accept_sslv3_record_hello/1
         ]).
 
--define(TLS_MAJOR, 3).
--define(SSL_3_0_MAJOR, 3).
--define(SSL_3_0_MINOR, 0).
--define(TLS_1_0_MINOR, 1).
--define(TLS_1_1_MINOR, 2).
--define(TLS_1_2_MINOR, 3).
--define(TLS_1_3_MINOR, 4).
--define(SSL_2_0_MAJOR, 0).
--define(SSL_2_0_MINOR, 1).
+-define(TLS_MAJOR,     (element(1, ?TLS_1_2))).
+-define(SSL_3_0_MAJOR, (element(1, ?SSL_3_0))).
+-define(SSL_3_0_MINOR, (element(2, ?SSL_3_0))).
+-define(TLS_1_0_MINOR, (element(2, ?TLS_1_0))).
+-define(TLS_1_1_MINOR, (element(2, ?TLS_1_1))).
+-define(TLS_1_2_MINOR, (element(2, ?TLS_1_2))).
+-define(TLS_1_3_MINOR, (element(2, ?TLS_1_3))).
+-define(SSL_2_0_MAJOR, (element(1, ?SSL_2_0))).
+-define(SSL_2_0_MINOR, (element(2, ?SSL_2_0))).
 
 %%--------------------------------------------------------------------
 %% Common Test interface functions -----------------------------------
@@ -131,12 +131,12 @@ reject_sslv2(Config) when is_list(Config) ->
                                               {options, ServerOpts}]),
     Port = ssl_test_lib:inet_port(Server),
 
-    %% SSL-2.0 Hello 
+    %% SSL-2.0 Hello
     ClientHello = <<128,43,?CLIENT_HELLO, ?SSL_2_0_MAJOR, ?SSL_2_0_MINOR,
                     0,18,0,0,0,16,7,0,192,3,0,128,1,0,128,6,0,64,4,0,
                     128,2,0,128,115,245,33,148,17,175,69,226,204,214,132,216,182,
                     41,238,196>>,
-    
+
     {ok, Socket} = gen_tcp:connect(Hostname, Port, [{active, false}]),
 
     gen_tcp:send(Socket, ClientHello),
@@ -159,7 +159,7 @@ reject_sslv3(Config) when is_list(Config) ->
 
     %% SSL-3.0 Hello
     ClientHello =
-        <<?HANDSHAKE, ?SSL_3_0_MAJOR, ?SSL_3_0_MINOR,0,162, ?CLIENT_HELLO, 0,0,158, 
+        <<?HANDSHAKE, ?SSL_3_0_MAJOR, ?SSL_3_0_MINOR,0,162, ?CLIENT_HELLO, 0,0,158,
           ?TLS_MAJOR, ?SSL_3_0_MINOR, 97,160,130,59,226,182,64,143,134,112,117,
           64,10,57,164,101,182,215,0,199,145,232,172,194,45,242,48,176,5,153,
           101,54,0,0,26,0,255,192,10,192,20,192,5,192,15,192,9,192,19,192,4,192,
@@ -184,9 +184,12 @@ accept_sslv3_record_hello(Config) when is_list(Config) ->
 
     Allversions = all_versions(),
 
+    AllSigAlgs = ssl:signature_algs(all, 'tlsv1.3'),
+
     Server = ssl_test_lib:start_server([{node, ServerNode}, {port, 0},
                                         {from, self()},
-                                        {options, [{versions, Allversions} | ServerOpts]}]),
+                                        {options, [{versions, Allversions}, 
+                                                   {signature_algs, AllSigAlgs} | ServerOpts]}]),
     Port = ssl_test_lib:inet_port(Server),
 
     %% TLS-1.X Hello with SSL-3.0 record version
@@ -194,18 +197,20 @@ accept_sslv3_record_hello(Config) when is_list(Config) ->
 
     {ok, Socket} = gen_tcp:connect(Hostname, Port, [{active, false}]),
     gen_tcp:send(Socket, ClientHello),
+    TLS_Major = ?TLS_MAJOR,
     case gen_tcp:recv(Socket, 3, 5000) of
-        %% Minor needs to be a TLS version that is a version 
-        %% above SSL-3.0 
-        {ok, [?HANDSHAKE, ?TLS_MAJOR, Minor]} when Minor > ?SSL_3_0_MINOR ->
+        %% Minor needs to be a TLS version that is a version
+        %% above SSL-3.0
+        {ok, [?HANDSHAKE, TLS_Major, Minor]} when Minor > ?SSL_3_0_MINOR ->
             ok;
-        {error, timeout} ->       
+        {error, timeout} ->
             ct:fail(ssl3_record_not_accepted)
     end.
 
 
 reject_prev() ->
-    [{doc,"Test that prev version is rejected, for all version where there exists possible support a previous version, that is not configured"}].
+    [{doc,"Test that prev version is rejected, for all version where there"
+      "exists possible support a previous version, that is not configured"}].
 
 reject_prev(Config) when is_list(Config) ->
     ServerOpts = ssl_test_lib:ssl_options(server_rsa_opts, Config),

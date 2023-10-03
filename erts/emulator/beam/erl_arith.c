@@ -710,7 +710,7 @@ erts_mixed_times(Process* p, Eterm arg1, Eterm arg2)
 			    return res;
 			} else {
 			    /*
-			     * The result is a a big number.
+			     * The result is a big number.
 			     * Allocate a heap fragment and copy the result.
 			     * Be careful to allocate exactly what we need
 			     * to not leave any holes.
@@ -1318,6 +1318,6 @@ Eterm erts_bnot(Process* p, Eterm arg)
 } 
 
 /* Needed to remove compiler optimization */
-double erts_get_positive_zero_float() {
+double erts_get_positive_zero_float(void) {
     return 0.0f;
 }

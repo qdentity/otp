@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -652,21 +652,20 @@ string_to_handle(Str, Options, Bindings) when is_list(Str) ->
                 {ok, Tokens, _} ->
                     ScanRes =
                         case erl_eval:extended_parse_exprs(Tokens) of
-                            {ok, [Expr0], SBs} ->
-                                {ok, Expr0, SBs};
-                            {ok, _ExprList, _SBs} ->
+                            {ok, [Expr0]} ->
+                                {ok, Expr0};
+                            {ok, _ExprList} ->
                                 erlang:error(badarg,
                                              [Str, Options, Bindings]);
                             E ->
                                 E
                         end,
                     case ScanRes of
-                        {ok, Expr, XBs} ->
-                            Bs1 = merge_binding_structs(Bindings, XBs),
-                            case qlc_pt:transform_expression(Expr, Bs1) of
+                        {ok, Expr} ->
+                            case qlc_pt:transform_expression(Expr, Bindings) of
                                 {ok, {call, _, _QlcQ,  Handle}} ->
                                     {value, QLC_lc, _} = 
-                                        erl_eval:exprs(Handle, Bs1),
+                                        erl_eval:exprs(Handle, Bindings),
                                     O = #qlc_opt{unique = Unique, 
                                                  cache = Cache,
                                                  max_lookup = MaxLookup, 
@@ -791,10 +790,6 @@ all_selections([{I,Cs} | ICs]) ->
 %%%
 %%% Local functions
 %%%
-
-merge_binding_structs(Bs1, Bs2) ->
-    lists:foldl(fun({N, V}, Bs) -> erl_eval:add_binding(N, V, Bs)
-                end, Bs1, erl_eval:bindings(Bs2)).
 
 aux_name1(Name, N, AllNames) ->
     SN = name_suffix(Name, N),
@@ -1208,9 +1203,7 @@ abstract1({table, TableDesc}, _NElements, _Depth, _A) ->
         true ->
             {ok, Tokens, _} =
                 erl_scan:string(lists:flatten(TableDesc++"."), 1, [text]),
-            {ok, Es, Bs} =
-                erl_eval:extended_parse_exprs(Tokens),
-            [Expr] = erl_eval:subst_values_for_vars(Es, Bs),
+            {ok, [Expr]} = erl_eval:extended_parse_exprs(Tokens),
             special(Expr);
         false -> % abstract expression
             TableDesc
@@ -1333,7 +1326,7 @@ abstr_term(PPR, Anno) when is_pid(PPR); is_port(PPR); is_reference(PPR) ->
 abstr_term(Map, Anno) when is_map(Map) ->
     {map,Anno,
      [{map_field_assoc,Anno,abstr_term(K, Anno),abstr_term(V, Anno)} ||
-         {K,V} <- maps:to_list(Map)]};
+         K := V <- Map]};
 abstr_term(Simple, Anno) ->
     erl_parse:abstract(Simple, erl_anno:line(Anno)).
 

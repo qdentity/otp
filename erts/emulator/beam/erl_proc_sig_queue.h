@@ -91,6 +91,9 @@
 #if 0
 #  define ERTS_PROC_SIG_HARD_DEBUG_RECV_MARKER
 #endif
+#if 0
+#  define ERTS_PROC_SIG_HARD_DEBUG_SIGQ_BUFFERS
+#endif
 
 struct erl_mesg;
 struct erl_dist_external;
@@ -107,7 +110,7 @@ typedef struct {
  * Note that not all signal are handled using this functionality!
  */
 
-#define ERTS_SIG_Q_OP_MAX 18
+#define ERTS_SIG_Q_OP_MAX 19
 
 #define ERTS_SIG_Q_OP_EXIT                      0  /* Exit signal due to bif call */
 #define ERTS_SIG_Q_OP_EXIT_LINKED               1  /* Exit signal due to link break*/
@@ -127,7 +130,8 @@ typedef struct {
 #define ERTS_SIG_Q_OP_ALIAS_MSG                 15
 #define ERTS_SIG_Q_OP_RECV_MARK                 16
 #define ERTS_SIG_Q_OP_UNLINK_ACK                17
-#define ERTS_SIG_Q_OP_ADJ_MSGQ                  ERTS_SIG_Q_OP_MAX
+#define ERTS_SIG_Q_OP_ADJ_MSGQ                  18
+#define ERTS_SIG_Q_OP_FLUSH			ERTS_SIG_Q_OP_MAX
 
 #define ERTS_SIG_Q_TYPE_MAX (ERTS_MON_LNK_TYPE_MAX + 10)
 
@@ -201,23 +205,25 @@ extern Eterm erts_old_recv_marker_id;
 #endif
 
 #ifdef ERTS_PROC_SIG_HARD_DEBUG
-#  define ERTS_HDBG_CHECK_SIGNAL_IN_QUEUE(P)       \
-    ERTS_HDBG_CHECK_SIGNAL_IN_QUEUE__((P), "")
+#  define ERTS_HDBG_CHECK_SIGNAL_IN_QUEUE(P, B) \
+    ERTS_HDBG_CHECK_SIGNAL_IN_QUEUE__((P), (B), "")
 #  define ERTS_HDBG_CHECK_SIGNAL_PRIV_QUEUE(P, QL) \
     ERTS_HDBG_CHECK_SIGNAL_PRIV_QUEUE__((P), (QL), "")
-#  define ERTS_HDBG_CHECK_SIGNAL_IN_QUEUE__(P, What)   \
-    erts_proc_sig_hdbg_check_in_queue((P), (What), __FILE__, __LINE__)
+#  define ERTS_HDBG_CHECK_SIGNAL_IN_QUEUE__(P, B , What) \
+    erts_proc_sig_hdbg_check_in_queue((P), (B), (What), __FILE__, __LINE__)
 #  define ERTS_HDBG_CHECK_SIGNAL_PRIV_QUEUE__(P, QL, What)              \
     erts_proc_sig_hdbg_check_priv_queue((P), (QL), (What), __FILE__, __LINE__)
 struct process;
 void erts_proc_sig_hdbg_check_priv_queue(struct process *c_p, int qlock,
                                          char *what, char *file, int line);
-void erts_proc_sig_hdbg_check_in_queue(struct process *c_p, char *what,
-                                       char *file, int line);
+struct ErtsSignalInQueue_;
+void erts_proc_sig_hdbg_check_in_queue(struct process *c_p,
+                                       struct ErtsSignalInQueue_ *buffer,
+                                       char *what, char *file, int line);
 #else
-#  define ERTS_HDBG_CHECK_SIGNAL_IN_QUEUE(P)
+#  define ERTS_HDBG_CHECK_SIGNAL_IN_QUEUE(P, B)
 #  define ERTS_HDBG_CHECK_SIGNAL_PRIV_QUEUE(P, QL)
-#  define ERTS_HDBG_CHECK_SIGNAL_IN_QUEUE__(P, What)
+#  define ERTS_HDBG_CHECK_SIGNAL_IN_QUEUE__(P, B, What)
 #define ERTS_HDBG_CHECK_SIGNAL_PRIV_QUEUE__(P, QL, What)
 #endif
 
@@ -237,6 +243,25 @@ void erl_proc_sig_hdbg_chk_recv_marker_block(struct process *c_p);
 
 #include "erl_process.h"
 #include "erl_bif_unique.h"
+
+
+void erts_proc_sig_queue_maybe_install_buffers(Process* p, erts_aint32_t state);
+void erts_proc_sig_queue_flush_and_deinstall_buffers(Process* proc);
+void erts_proc_sig_queue_flush_buffers(Process* proc);
+void erts_proc_sig_queue_lock(Process* proc);
+ERTS_GLB_INLINE ErtsSignalInQueueBufferArray*
+erts_proc_sig_queue_get_buffers(Process* p, int *need_unread);
+ERTS_GLB_INLINE void
+erts_proc_sig_queue_unget_buffers(ErtsSignalInQueueBufferArray* buffers,
+                                  int need_unget);
+int erts_proc_sig_queue_try_enqueue_to_buffer(Eterm from,
+                                              Process* receiver,
+                                              ErtsProcLocks receiver_locks,
+                                              ErtsMessage* first,
+                                              ErtsMessage** last,
+                                              ErtsMessage** last_next,
+                                              Uint len);
+int erts_proc_sig_queue_force_buffers(Process*);
 
 #define ERTS_SIG_Q_OP_BITS      8                      
 #define ERTS_SIG_Q_OP_SHIFT     0
@@ -293,7 +318,9 @@ struct dist_entry_;
 
 #define ERTS_PROC_HAS_INCOMING_SIGNALS(P)                               \
     (!!(erts_atomic32_read_nob(&(P)->state)                             \
-        & (ERTS_PSFLG_SIG_Q|ERTS_PSFLG_SIG_IN_Q)))
+        & (ERTS_PSFLG_SIG_Q                                             \
+           | ERTS_PSFLG_NMSG_SIG_IN_Q                                   \
+           | ERTS_PSFLG_MSG_SIG_IN_Q)))
 
 /*
  * Send operations of currently supported process signals follow...
@@ -304,8 +331,10 @@ struct dist_entry_;
  * @brief Send an exit signal to a process.
  *
  *
- * @param[in]     c_p           Pointer to process struct of
- *                              currently executing process.
+ * @param[in]     sender        Pointer to the sending process/port,
+ *                              if any, as it may not be possible to
+ *                              resolve the sender (e.g. after it's
+ *                              dead).
  *
  * @param[in]     from          Identifier of sender.
  *
@@ -322,7 +351,7 @@ struct dist_entry_;
  *
  */
 void
-erts_proc_sig_send_exit(Process *c_p, Eterm from, Eterm to,
+erts_proc_sig_send_exit(ErtsPTabElementCommon *sender, Eterm from, Eterm to,
                         Eterm reason, Eterm token, int normal_kills);
 
 /**
@@ -359,11 +388,26 @@ erts_proc_sig_send_dist_exit(DistEntry *dep,
 
 /**
  *
+ * @brief Send an exit signal due to a link to a process being
+ * broken by connection loss.
+ *
+ * @param[in]     lnk           Pointer to link structure
+ *                              from the sending side. It
+ *                              should contain information
+ *                              about receiver.
+ */
+void
+erts_proc_sig_send_link_exit_noconnection(ErtsLink *lnk);
+
+/**
+ *
  * @brief Send an exit signal due to broken link to a process.
  *
  *
- * @param[in]     c_p           Pointer to process struct of
- *                              currently executing process.
+ * @param[in]     sender        Pointer to the sending process/port,
+ *                              if any, as it may not be possible to
+ *                              resolve the sender (e.g. after it's
+ *                              dead).
  *
  * @param[in]     from          Identifier of sender.
  *
@@ -378,16 +422,18 @@ erts_proc_sig_send_dist_exit(DistEntry *dep,
  *
  */
 void
-erts_proc_sig_send_link_exit(Process *c_p, Eterm from, ErtsLink *lnk,
-                             Eterm reason, Eterm token);
+erts_proc_sig_send_link_exit(ErtsPTabElementCommon *sender, Eterm from,
+                             ErtsLink *lnk, Eterm reason, Eterm token);
 
 /**
  *
  * @brief Send an link signal to a process.
  *
  *
- * @param[in]     c_p           Pointer to process struct of
- *                              currently executing process.
+ * @param[in]     sender        Pointer to the sending process/port,
+ *                              if any, as it may not be possible to
+ *                              resolve the sender (e.g. after it's
+ *                              dead).
  *
  * @param[in]     to            Identifier of receiver.
  *
@@ -405,7 +451,8 @@ erts_proc_sig_send_link_exit(Process *c_p, Eterm from, ErtsLink *lnk,
  *
  */
 int
-erts_proc_sig_send_link(Process *c_p, Eterm to, ErtsLink *lnk);
+erts_proc_sig_send_link(ErtsPTabElementCommon *sender, Eterm from,
+                        Eterm to, ErtsLink *lnk);
 
 /**
  *
@@ -414,15 +461,15 @@ erts_proc_sig_send_link(Process *c_p, Eterm to, ErtsLink *lnk);
  * The newly created unlink identifier is to be used in an
  * unlink operation.
  *
- * @param[in]     c_p           Pointer to process struct of
- *                              currently executing process.
+ * @param[in]     sender        Pointer to the sending process/port.
  *
  * @return                      A new 64-bit unlink identifier
  *                              unique in context of the
  *                              calling process. The identifier
  *                              may be any value but zero.
  */
-ERTS_GLB_INLINE Uint64 erts_proc_sig_new_unlink_id(Process *c_p);
+ERTS_GLB_INLINE
+Uint64 erts_proc_sig_new_unlink_id(ErtsPTabElementCommon *sender);
 
 /**
  *
@@ -431,13 +478,10 @@ ERTS_GLB_INLINE Uint64 erts_proc_sig_new_unlink_id(Process *c_p);
  * The structure will contain a newly created unlink
  * identifier to be used in the operation.
  *
- * @param[in]     c_p           Pointer to process struct of
- *                              currently executing process
- *                              ('from' is a process
- *                              identifier), or NULL if not
- *                              called in the context of an
- *                              executing process ('from' is
- *                              a port identifier).
+ * @param[in]     sender        Pointer to the sending process/port,
+ *                              if any, as it may not be possible to
+ *                              resolve the sender (e.g. after it's
+ *                              dead).
  *
  * @param[in]     from          Id (as an erlang term) of
  *                              entity sending the unlink
@@ -447,7 +491,7 @@ ERTS_GLB_INLINE Uint64 erts_proc_sig_new_unlink_id(Process *c_p);
  *                              structure.
  */
 ErtsSigUnlinkOp *
-erts_proc_sig_make_unlink_op(Process *c_p, Eterm from);
+erts_proc_sig_make_unlink_op(ErtsPTabElementCommon *sender, Eterm from);
 
 /**
  *
@@ -464,8 +508,10 @@ erts_proc_sig_destroy_unlink_op(ErtsSigUnlinkOp *sulnk);
  * @brief Send an unlink signal to a process.
  *
  *
- * @param[in]     c_p           Pointer to process struct of
- *                              currently executing process.
+ * @param[in]     sender        Pointer to the sending process/port,
+ *                              if any, as it may not be possible to
+ *                              resolve the sender (e.g. after it's
+ *                              dead).
  *
  * @param[in]     from          Id (as an erlang term) of
  *                              entity sending the unlink
@@ -477,15 +523,18 @@ erts_proc_sig_destroy_unlink_op(ErtsSigUnlinkOp *sulnk);
  *                              receiver.
  */
 Uint64
-erts_proc_sig_send_unlink(Process *c_p, Eterm from, ErtsLink *lnk);
+erts_proc_sig_send_unlink(ErtsPTabElementCommon *sender, Eterm from,
+                          ErtsLink *lnk);
 
 /**
  *
  * @brief Send an unlink acknowledgment signal to a process.
  *
- *
- * @param[in]     c_p           Pointer to process struct of
- *                              currently executing process.
+ * 
+ * @param[in]     sender        Pointer to the sending process/port,
+ *                              if any, as it may not be possible to
+ *                              resolve the sender (e.g. after it's
+ *                              dead).
  *
  * @param[in]     from          Id (as an erlang term) of
  *                              entity sending the unlink
@@ -498,7 +547,7 @@ erts_proc_sig_send_unlink(Process *c_p, Eterm from, ErtsLink *lnk);
  *                              signal.
  */
 void
-erts_proc_sig_send_unlink_ack(Process *c_p, Eterm from,
+erts_proc_sig_send_unlink_ack(ErtsPTabElementCommon *sender, Eterm from,
                               ErtsSigUnlinkOp *sulnk);
 
 /**
@@ -560,11 +609,6 @@ erts_proc_sig_send_dist_unlink(DistEntry *dep, Uint32 conn_id,
  * This function is used instead of erts_proc_sig_send_unlink_ack()
  * when the signal arrives via the distribution.
  *
- * @param[in]     c_p           Pointer to process struct of
- *                              currently executing process or
- *                              NULL if not called in the context
- *                              of an executing process.
- *
  * @param[in]     dep           Distribution entry of channel
  *                              that the signal arrived on.
  *
@@ -575,13 +619,21 @@ erts_proc_sig_send_dist_unlink(DistEntry *dep, Uint32 conn_id,
  * @param[in]     id            Identifier of unlink operation.
  */
 void
-erts_proc_sig_send_dist_unlink_ack(Process *c_p, DistEntry *dep,
+erts_proc_sig_send_dist_unlink_ack(DistEntry *dep,
                                    Uint32 conn_id, Eterm from, Eterm to,
                                    Uint64 id);
 
 /**
  *
  * @brief Send a monitor down signal to a process.
+ *
+ * @param[in]     sender        Pointer to the sending process/port,
+ *                              if any, as it may not be possible to
+ *                              resolve the sender (e.g. after it's
+ *                              dead).
+ *
+ * @param[in]     from          Sending entity, must be provided
+ *                              to maintain signal order.
  *
  * @param[in]     mon           Pointer to target monitor
  *                              structure from the sending
@@ -592,26 +644,47 @@ erts_proc_sig_send_dist_unlink_ack(Process *c_p, DistEntry *dep,
  *
  */
 void
-erts_proc_sig_send_monitor_down(ErtsMonitor *mon, Eterm reason);
+erts_proc_sig_send_monitor_down(ErtsPTabElementCommon *sender, Eterm from,
+                                ErtsMonitor *mon, Eterm reason);
 
 /**
  *
  * @brief Send a demonitor signal to a process.
  *
- * @param[in]     mon           Pointer to origin monitor
- *                              structure from the sending
- *                              side. It should contain
- *                              information about receiver.
+ * @param[in]     sender            Pointer to the sending process/port,
+ *                                  if any, as it may not be possible to
+ *                                  resolve the sender (e.g. after it's
+ *                                  dead).
  *
- * @param[in]     reason        Exit reason.
+ * @param[in]     from              Sending entity, must be provided
+ *                                  to maintain signal order.
+ *
+ * @param[in]     system            Whether the sender is considered a
+ *                                  system service, e.g. a NIF monitor,
+ *                                  and it's okay to order by `from`
+ *                                  even when it's not a pid or port.
+ *
+ * @param[in]     mon               Pointer to origin monitor
+ *                                  structure from the sending
+ *                                  side. It should contain
+ *                                  information about receiver.
  *
  */
 void
-erts_proc_sig_send_demonitor(ErtsMonitor *mon);
+erts_proc_sig_send_demonitor(ErtsPTabElementCommon *sender, Eterm from,
+                             int system, ErtsMonitor *mon);
 
 /**
  *
  * @brief Send a monitor signal to a process.
+ *
+ * @param[in]     sender        Pointer to the sending process/port,
+ *                              if any, as it may not be possible to
+ *                              resolve the sender (e.g. after it's
+ *                              dead).
+ *
+ * @param[in]     from          Sending entity, must be provided
+ *                              to maintain signal order.
  *
  * @param[in]     mon           Pointer to target monitor
  *                              structure to insert on
@@ -630,7 +703,8 @@ erts_proc_sig_send_demonitor(ErtsMonitor *mon);
  *
  */
 int
-erts_proc_sig_send_monitor(ErtsMonitor *mon, Eterm to);
+erts_proc_sig_send_monitor(ErtsPTabElementCommon *sender, Eterm from,
+                           ErtsMonitor *mon, Eterm to);
 
 /**
  *
@@ -673,26 +747,21 @@ erts_proc_sig_send_dist_monitor_down(DistEntry *dep, Eterm ref,
  * when the signal arrives via the distribution and
  * no monitor structure is available.
  *
+ * @param[in]     from          Identifier of sender.
+ *
  * @param[in]     to            Identifier of receiver.
  *
  * @param[in]     ref           Reference identifying the monitor.
  *
  */
 void
-erts_proc_sig_send_dist_demonitor(Eterm to, Eterm ref);
+erts_proc_sig_send_dist_demonitor(Eterm from, Eterm to, Eterm ref);
 
 /**
  *
- * @brief Send a persistent monitor triggered signal to a process.
- *
- * Used by monitors that are not auto disabled such as for
- * example 'time_offset' monitors.
- *
- * @param[in]     type          Monitor type.
+ * @brief Send a persistent "node down" monitor signal to a process
  *
  * @param[in]     key           Monitor key.
- *
- * @param[in]     from          Identifier of sender.
  *
  * @param[in]     to            Identifier of receiver.
  *
@@ -702,27 +771,25 @@ erts_proc_sig_send_dist_demonitor(Eterm to, Eterm ref);
  *
  */
 void
-erts_proc_sig_send_persistent_monitor_msg(Uint16 type, Eterm key,
-                                          Eterm from, Eterm to,
-                                          Eterm msg, Uint msg_sz);
+erts_proc_sig_send_monitor_nodes_msg(Eterm key, Eterm to,
+                                     Eterm msg, Uint msg_sz);
 
 /**
  *
- * @brief Send a trace change signal to a process.
+ * @brief Send a persistent "time offset changed" monitor signal to a process
+ *
+ * @param[in]     key           Monitor key.
  *
  * @param[in]     to            Identifier of receiver.
  *
- * @param[in]     on            Trace flags to enable.
+ * @param[in]     msg           Message template.
  *
- * @param[in]     off           Trace flags to disable.
- *
- * @param[in]     tracer        Tracer to set. If the non-value,
- *                              tracer will not be changed.
+ * @param[in]     msg_sz        Heap size of message template.
  *
  */
 void
-erts_proc_sig_send_trace_change(Eterm to, Uint on, Uint off,
-                                Eterm tracer);
+erts_proc_sig_send_monitor_time_offset_msg(Eterm key, Eterm to,
+                                           Eterm msg, Uint msg_sz);
 
 /**
  *
@@ -799,7 +866,7 @@ erts_proc_sig_send_is_alive_request(Process *c_p, Eterm to,
  * @param[in]     item_ix       Info index array to pass to
  *                              erts_process_info()
  *
- * @param[in]     len           Lenght of info index array
+ * @param[in]     len           Length of info index array
  *
  * @param[in]     need_msgq_len Non-zero if message queue
  *                              length is needed; otherwise,
@@ -1043,14 +1110,11 @@ erts_proc_sig_send_cla_request(Process *c_p, Eterm to, Eterm req_id);
  *
  * When received, all on heap messages will be moved off heap.
  *
- * @param[in]     c_p           Pointer to process struct of
- *                              currently executing process.
- *
  * @param[in]     to            Identifier of receiver.
  *
  */
 void
-erts_proc_sig_send_move_msgq_off_heap(Process *c_p, Eterm to);
+erts_proc_sig_send_move_msgq_off_heap(Eterm to);
 
 /*
  * End of send operations of currently supported process signals.
@@ -1072,6 +1136,9 @@ erts_proc_sig_send_move_msgq_off_heap(Process *c_p, Eterm to);
  *
  * @param[out]    statep        Pointer to process state after
  *                              signal handling. May not be NULL.
+ *                              The state should recently have
+ *                              been updated before calling
+ *                              this function.
  *
  * @param[in,out] redsp         Pointer to an integer containing
  *                              reductions. On input, the amount
@@ -1192,6 +1259,58 @@ erts_proc_sig_receive_helper(Process *c_p, int fcalls,
                              int neg_o_reds, ErtsMessage **msgpp,
                              int *get_outp);
 
+/*
+ * CLEAN_SIGQ - Flush until middle queue is empty, i.e.
+ *              the content of inner+middle queue equals
+ *              the message queue.
+ */
+#define ERTS_PROC_SIG_FLUSH_FLG_CLEAN_SIGQ          (1 << 0)
+/*
+ * FROM_ALL   - Flush signals from all local senders (processes
+ *              and ports).
+ */
+#define ERTS_PROC_SIG_FLUSH_FLG_FROM_ALL            (1 << 1)
+/*
+ * FROM_ID    - Flush signals from process or port identified
+ *              by 'id'.
+ */
+#define ERTS_PROC_SIG_FLUSH_FLG_FROM_ID             (1 << 2)
+
+/*
+ * All erts_proc_sig_init_flush_signals() flags.
+ */
+#define ERTS_PROC_SIG_FLUSH_FLGS                                \
+    (ERTS_PROC_SIG_FLUSH_FLG_CLEAN_SIGQ                         \
+     | ERTS_PROC_SIG_FLUSH_FLG_FROM_ALL                         \
+     | ERTS_PROC_SIG_FLUSH_FLG_FROM_ID)
+
+/**
+ *
+ * @brief Initialize flush of signals from another process or port
+ *
+ * Inserts a flush signal in the outer signal queue of
+ * current process and sets the FS_FLUSHING_SIGS flag in
+ * 'c_p->sig_qs.flags'. When the flush signal has been
+ * handled the FS_FLUSHED_SIGS flag is set as well.
+ *
+ * While the flushing is ongoing the process *should* only
+ * handle incoming signals and not execute Erlang code. When
+ * the functionality that initiated the flush detects that
+ * the flush is done by the FS_FLUSHED_SIGS flag being set,
+ * it should clear both the FS_FLUSHED_SIGS flag and the
+ * FS_FLUSHING_SIGS flag.
+ *
+ * @param[in]   c_p             Pointer to process struct of
+ *                              currently executing process.
+ *              flags           Flags indicating how to flush.
+ *                              (see above).
+ *              from            Identifier of sender to flush
+ *                              signals from in case the
+ *                              FROM_ID flag is set.
+ */
+void
+erts_proc_sig_init_flush_signals(Process *c_p, int flags, Eterm from);
+
 /**
  *
  * @brief Fetch signals from the outer queue
@@ -1229,25 +1348,29 @@ ERTS_GLB_INLINE Sint erts_proc_sig_fetch(Process *p);
 Sint
 erts_proc_sig_privqs_len(Process *c_p);
 
-
 /**
- * @brief Enqueue list of signals on process.
+ * @brief Enqueue a sequence of signals on an in signal queue of
+ *        a process
  *
- * Message queue must be locked on receiving process.
+ * The *only* valid scenarios:
+ * * One or more message signals and no non-message signals.
+ * * One non-message signal followed by one or more message signals
  *
- * @param rp                Receiving process.
- * @param first             First signal in list.
- * @param last              Last signal in list.
- * @param last_next         Pointer to next-pointer to last non-message signal
- *                          or NULL if no non-message signal after 'first'.
- * @param msg_cnt           Number of message signals in list.
- * @param in_state          'state' of rp.
+ * @param rp[in]                 Process to which the in signal queue
+ *                               belong.
+ * @param first[in]              Pointer to the first signal in signal
+ *                               sequence.
+ * @param last[in]               Pointer to the next pointer of the
+ *                               last signal in the sequence. This
+ *                               next pointer should equal NULL.
+ * @param msg_cnt[in]            Number of message signals in seqence
+ * @param in_state[in]           state of rp upon call.
  *
- * @return                  'state' of rp.
+ * @return                       Possibly changed state of rp.
  */
 erts_aint32_t
 erts_enqueue_signals(Process *rp, ErtsMessage *first,
-                     ErtsMessage **last, ErtsMessage **last_next,
+                     ErtsMessage **last,
                      Uint msg_cnt,
                      erts_aint32_t in_state);
 
@@ -1257,7 +1380,7 @@ erts_enqueue_signals(Process *rp, ErtsMessage *first,
  *
  */
 void
-erts_proc_sig_send_pending(ErtsSchedulerData* esdp);
+erts_proc_sig_send_pending(Process *c_p, ErtsSchedulerData* esdp);
 
 
 void
@@ -1265,7 +1388,8 @@ erts_proc_sig_send_to_alias(Process *c_p, Eterm from, Eterm to,
                             Eterm msg, Eterm token);
 
 void
-erts_proc_sig_send_dist_to_alias(Eterm alias, ErtsDistExternal *edep,
+erts_proc_sig_send_dist_to_alias(Eterm from, Eterm alias,
+                                 ErtsDistExternal *edep,
                                  ErlHeapFragment *hfrag, Eterm token);
 
 /**
@@ -1279,10 +1403,14 @@ erts_proc_sig_send_dist_to_alias(Eterm alias, ErtsDistExternal *edep,
  */
 ERTS_GLB_INLINE void erts_proc_notify_new_sig(Process* rp, erts_aint32_t state,
                                               erts_aint32_t enable_flag);
+ERTS_GLB_INLINE void erts_proc_notify_new_message(Process *p,
+                                                  ErtsProcLocks locks);
 
-void erts_make_dirty_proc_handled(Eterm pid, erts_aint32_t state,
-                                  erts_aint32_t prio);
-
+void
+erts_ensure_dirty_proc_signals_handled(Process *proc,
+                                       erts_aint32_t state,
+                                       erts_aint32_t prio,
+                                       ErtsProcLocks locks);
 
 typedef struct {
     Uint size;
@@ -1308,12 +1436,16 @@ typedef struct {
  *
  * @param[in]   mip             Pointer to array of
  *                              ErtsMessageInfo structures.
+ *
+ * @param[out]  msgq_lenp       Pointer to integer containing
+ *                              amount of messages.
  */
 Uint erts_proc_sig_prep_msgq_for_inspection(Process *c_p,
                                             Process *rp,
                                             ErtsProcLocks rp_locks,
                                             int info_on_self,
-                                            ErtsMessageInfo *mip);
+                                            ErtsMessageInfo *mip,
+                                            Sint *msgq_lenp);
 
 /**
  *
@@ -1623,8 +1755,12 @@ extern Process *erts_dirty_process_signal_handler_high;
 extern Process *erts_dirty_process_signal_handler_max;
 
 /* Helpers... */
-void erts_proc_sig_fetch__(Process *proc);
-Sint erts_proc_sig_fetch_msgq_len_offs__(Process *proc);
+void erts_proc_sig_fetch__(Process *proc,
+                           ErtsSignalInQueueBufferArray* buffers,
+                           int need_unget_buffers);
+Sint erts_proc_sig_fetch_msgq_len_offs__(Process *proc,
+                                         ErtsSignalInQueueBufferArray* buffers,
+                                         int need_unget_buffers);
 ERTS_GLB_INLINE int erts_msgq_eq_recv_mark_id__(Eterm term1, Eterm term2);
 ERTS_GLB_INLINE void erts_msgq_recv_marker_set_save__(Process *c_p,
 				 ErtsRecvMarkerBlock *blkp,
@@ -1634,7 +1770,7 @@ Eterm erts_msgq_recv_marker_create_insert(Process *c_p, Eterm id);
 void erts_msgq_recv_marker_create_insert_set_save(Process *c_p, Eterm id);
 ErtsMessage **erts_msgq_pass_recv_markers(Process *c_p,
 					  ErtsMessage **markpp);
-void erts_msgq_remove_leading_recv_markers(Process *c_p);
+void erts_msgq_remove_leading_recv_markers_set_save_first(Process *c_p);
 
 #define ERTS_RECV_MARKER_IX__(BLKP, MRKP) \
     ((int) ((MRKP) - &(BLKP)->marker[0]))
@@ -1642,15 +1778,73 @@ void erts_msgq_remove_leading_recv_markers(Process *c_p);
 #if ERTS_GLB_INLINE_INCL_FUNC_DEF
 
 ERTS_GLB_INLINE Uint64
-erts_proc_sig_new_unlink_id(Process *c_p)
+erts_proc_sig_new_unlink_id(ErtsPTabElementCommon *sender)
 {
     Uint64 id;
-    ASSERT(c_p);
 
-    id = (Uint64) c_p->uniq++;
-    if (id == 0)
+    ASSERT(sender);
+
+    if (is_internal_pid(sender->id)) {
+        Process *c_p = ErtsContainerStruct(sender, Process, common);
         id = (Uint64) c_p->uniq++;
+
+        if (id == 0) {
+            id = (Uint64) c_p->uniq++;
+        }
+    } else {
+        ASSERT(is_internal_port(sender->id));
+
+        id = (Uint64) erts_raw_get_unique_monotonic_integer();
+        if (id == 0) {
+            id = (Uint64) erts_raw_get_unique_monotonic_integer();
+        }
+    }
+
+    ASSERT(id != 0);
+
     return id;
+}
+
+ERTS_GLB_INLINE ErtsSignalInQueueBufferArray*
+erts_proc_sig_queue_get_buffers(Process* p, int *need_unread)
+{
+    ErtsThrPrgrDelayHandle dhndl = erts_thr_progress_unmanaged_delay();
+    ErtsSignalInQueueBufferArray* buffers =
+        (ErtsSignalInQueueBufferArray*)erts_atomic_read_acqb(&p->sig_inq_buffers);
+    *need_unread = 0;
+    if (ERTS_THR_PRGR_DHANDLE_MANAGED == dhndl) {
+        erts_thr_progress_unmanaged_continue(dhndl);
+        return buffers;
+    }
+    if (buffers == NULL) {
+        erts_thr_progress_unmanaged_continue(dhndl);
+        return NULL;
+    }
+    erts_refc_inc(&buffers->dirty_refc, 2);
+    erts_thr_progress_unmanaged_continue(dhndl);
+    *need_unread = 1;
+    return buffers;
+}
+
+ERTS_GLB_INLINE void
+erts_proc_sig_queue_unget_buffers(ErtsSignalInQueueBufferArray* buffers,
+                                  int need_unget)
+{
+    if (!need_unget) {
+        return;
+    } else {
+        int i;
+        erts_aint_t refc = erts_refc_dectest(&buffers->dirty_refc, 0);
+        if (refc != 0) {
+            return;
+        }
+        ASSERT(!buffers->alive);
+        for (i = 0; i < ERTS_PROC_SIG_INQ_BUFFERED_NR_OF_BUFFERS; i++) {
+            ASSERT(!buffers->slots[i].b.alive);
+            erts_mtx_destroy(&buffers->slots[i].b.lock);
+        }
+        erts_free(ERTS_ALC_T_SIGQ_BUFFERS, buffers);
+    }
 }
 
 ERTS_GLB_INLINE Sint
@@ -1658,25 +1852,41 @@ erts_proc_sig_fetch(Process *proc)
 {
     Sint res = 0;
     ErtsSignal *sig;
+    ErtsSignalInQueueBufferArray* buffers;
+    int need_unget_buffers;
+    ERTS_LC_ASSERT((erts_proc_lc_my_proc_locks(proc)
+                    & (ERTS_PROC_LOCK_MAIN
+                       | ERTS_PROC_LOCK_MSGQ))
+                   == (ERTS_PROC_LOCK_MAIN
+                       | ERTS_PROC_LOCK_MSGQ));
 
-    ERTS_LC_ASSERT(ERTS_PROC_IS_EXITING(proc)
-                   || ((erts_proc_lc_my_proc_locks(proc)
-                        & (ERTS_PROC_LOCK_MAIN
-                           | ERTS_PROC_LOCK_MSGQ))
-                       == (ERTS_PROC_LOCK_MAIN
-                           | ERTS_PROC_LOCK_MSGQ)));
+    ASSERT(!(proc->sig_qs.flags & FS_FLUSHING_SIGS)
+           || ERTS_PROC_IS_EXITING(proc)
+           || ERTS_IS_CRASH_DUMPING);
 
     ASSERT(!(proc->sig_qs.flags & FS_HANDLING_SIGS));
 
-    ERTS_HDBG_CHECK_SIGNAL_IN_QUEUE(proc);
+    ERTS_HDBG_CHECK_SIGNAL_IN_QUEUE(proc, &proc->sig_inq);
     ERTS_HDBG_CHECK_SIGNAL_PRIV_QUEUE(proc, !0);
 
+    proc->sig_qs.flags &= ~FS_NON_FETCH_CNT_MASK;
+
+    buffers = erts_proc_sig_queue_get_buffers(proc, &need_unget_buffers);
+
     sig = (ErtsSignal *) proc->sig_inq.first;
-    if (sig) {
-        if (ERTS_LIKELY(sig->common.tag != ERTS_PROC_SIG_MSGQ_LEN_OFFS_MARK))
-            erts_proc_sig_fetch__(proc);
-        else
-            res = erts_proc_sig_fetch_msgq_len_offs__(proc);
+
+    if (!sig) {
+        if (buffers)
+            goto fetch;
+    }
+    else if (ERTS_UNLIKELY(sig->common.tag
+                           == ERTS_PROC_SIG_MSGQ_LEN_OFFS_MARK)) {
+        res = erts_proc_sig_fetch_msgq_len_offs__(proc, buffers,
+                                                  need_unget_buffers);
+    }
+    else {
+    fetch:
+        erts_proc_sig_fetch__(proc, buffers, need_unget_buffers);
     }
 
     res += proc->sig_qs.len;
@@ -1703,10 +1913,8 @@ ERTS_GLB_INLINE void
 erts_proc_notify_new_sig(Process* rp, erts_aint32_t state,
                          erts_aint32_t enable_flag)
 {
-    if (~(state & (ERTS_PSFLG_EXITING
-                   | ERTS_PSFLG_ACTIVE_SYS
-                   | ERTS_PSFLG_SIG_IN_Q))
-        | (~state & enable_flag)) {
+    if ((!(state & (ERTS_PSFLG_EXITING
+                    | ERTS_PSFLG_ACTIVE_SYS))) | (~state & enable_flag)) {
         /* Schedule process... */
         state = erts_proc_sys_schedule(rp, state, enable_flag);
     }
@@ -1717,9 +1925,27 @@ erts_proc_notify_new_sig(Process* rp, erts_aint32_t state,
          * more info see erts_execute_dirty_system_task()
          * in erl_process.c.
          */
-        erts_make_dirty_proc_handled(rp->common.id, state, -1);
+        erts_ensure_dirty_proc_signals_handled(rp, state, -1, 0);
     }
 }
+
+ERTS_GLB_INLINE void
+erts_proc_notify_new_message(Process *p, ErtsProcLocks locks)
+{
+    /* No barrier needed, due to msg lock */
+    erts_aint32_t state = erts_atomic32_read_nob(&p->state);
+    if (!(state & ERTS_PSFLG_ACTIVE))
+	erts_schedule_process(p, state, locks);
+    if (state & ERTS_PSFLG_DIRTY_RUNNING) {
+        /*
+         * We ignore ERTS_PSFLG_DIRTY_RUNNING_SYS. For
+         * more info see erts_execute_dirty_system_task()
+         * in erl_process.c.
+         */
+        erts_ensure_dirty_proc_signals_handled(p, state, -1, locks);
+    }
+}
+
 
 #undef ERTS_PROC_SIG_RECV_MARK_CLEAR_PENDING_SET_SAVE__
 #define ERTS_PROC_SIG_RECV_MARK_CLEAR_PENDING_SET_SAVE__(BLKP) 		\
@@ -1857,7 +2083,7 @@ ERTS_GLB_INLINE Eterm
 erts_msgq_recv_marker_insert(Process *c_p)
 {
     ASSERT(!(c_p->sig_qs.flags & FS_HANDLING_SIGS));
-    erts_proc_lock(c_p, ERTS_PROC_LOCK_MSGQ);
+    erts_proc_sig_queue_lock(c_p);
     erts_proc_sig_fetch(c_p);
     erts_proc_unlock(c_p, ERTS_PROC_LOCK_MSGQ);
 
@@ -1908,7 +2134,7 @@ erts_msgq_recv_marker_insert_bind(Process *c_p, Eterm id)
 	    ERTS_PROC_SIG_RECV_MARK_CLEAR_OLD_MARK__(blkp);
 #endif
 
-	erts_proc_lock(c_p, ERTS_PROC_LOCK_MSGQ);
+        erts_proc_sig_queue_lock(c_p);
 	erts_proc_sig_fetch(c_p);
 	erts_proc_unlock(c_p, ERTS_PROC_LOCK_MSGQ);
 
@@ -1983,8 +2209,9 @@ erts_msgq_set_save_first(Process *c_p)
      * anymore...
      */
     if (c_p->sig_qs.first && ERTS_SIG_IS_RECV_MARKER(c_p->sig_qs.first))
-	erts_msgq_remove_leading_recv_markers(c_p);
-    c_p->sig_qs.save = &c_p->sig_qs.first;
+	erts_msgq_remove_leading_recv_markers_set_save_first(c_p);
+    else
+        c_p->sig_qs.save = &c_p->sig_qs.first;
 }
 
 ERTS_GLB_INLINE void
@@ -2022,7 +2249,7 @@ erts_msgq_set_save_end(Process *c_p)
     /* Set save pointer to end of message queue... */
     ASSERT(!(c_p->sig_qs.flags & FS_HANDLING_SIGS));
 
-    erts_proc_lock(c_p, ERTS_PROC_LOCK_MSGQ);
+    erts_proc_sig_queue_lock(c_p);
     erts_proc_sig_fetch(c_p);
     erts_proc_unlock(c_p, ERTS_PROC_LOCK_MSGQ);
 

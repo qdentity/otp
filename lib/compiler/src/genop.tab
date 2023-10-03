@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 1998-2021. All Rights Reserved.
+# Copyright Ericsson AB 1998-2022. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -170,7 +170,7 @@ BEAM_FORMAT_NUMBER=0
 ##       receive loop at Label.
 25: wait/1
 
-## @spec wait_timeout Lable Time
+## @spec wait_timeout Label Time
 ## @doc  Sets up a timeout of Time milliseconds and saves the address of the
 ##       following instruction as the entry point if the timeout triggers.
 26: wait_timeout/2
@@ -192,7 +192,7 @@ BEAM_FORMAT_NUMBER=0
 38: -int_bnot/3
 
 #
-# Comparision operators.
+# Comparison operators.
 #
 
 ## @spec is_lt Lbl Arg1 Arg2
@@ -332,8 +332,8 @@ BEAM_FORMAT_NUMBER=0
 #
 68: -put_string/3
 69: put_list/3
-70: put_tuple/2
-71: put/1
+70: -put_tuple/2
+71: -put/1
 
 #
 # Raising errors.
@@ -438,14 +438,14 @@ BEAM_FORMAT_NUMBER=0
 
 # New bit syntax matching in R11B.
 
-116: bs_start_match2/5
+116: -bs_start_match2/5
 117: bs_get_integer2/7
 118: bs_get_float2/7
 119: bs_get_binary2/7
 120: bs_skip_bits2/5
 121: bs_test_tail2/3
-122: bs_save2/2
-123: bs_restore2/2
+122: -bs_save2/2
+123: -bs_restore2/2
 
 # New GC bifs introduced in R11B.
 
@@ -478,7 +478,7 @@ BEAM_FORMAT_NUMBER=0
 129: is_bitstr/2
 
 # R12B
-130: bs_context_to_binary/1
+130: -bs_context_to_binary/1
 131: bs_test_unit/3
 132: bs_match_string/4
 133: bs_init_writable/0
@@ -647,3 +647,54 @@ BEAM_FORMAT_NUMBER=0
 ## @doc  Sets the current receive cursor to the marker associated with
 ##       the given Reference.
 176: recv_marker_use/1
+
+# OTP 25
+
+## @spec bs_create_bin Fail Alloc Live Unit Dst OpList
+## @doc  Builda a new binary using the binary syntax.
+177: bs_create_bin/6
+
+## @spec call_fun2 Tag Arity Func
+## @doc Calls the fun Func with arity Arity. Assume arguments in registers x(0)
+##      to x(Arity-1). Tag can be one of:
+##
+##      * FunIndex      - `Func` is always a local fun identified by `FunIndex`
+##      * {atom,safe}   - `Func` is known to be a fun of correct arity.
+##      * {atom,unsafe} - Nothing is known about `Func`.
+178: call_fun2/3
+
+## @spec nif_start
+## @doc  No-op at start of each function declared in -nifs().
+179: nif_start/0
+
+## @spec badrecord Value
+## @doc Raises a {badrecord,Value} error exception.
+180: badrecord/1
+
+# OTP 26
+
+## @spec update_record Hint Size Src Dst Updates=[Index, Value]
+## @doc  Sets Dst to a copy of Src with the update list applied. Hint can be
+##       one of:
+##
+##       * {atom,copy}        - The result will always differ from Src, so
+##                              don't bother checking if it can be reused.
+##       * {atom,reuse}       - Reuse Src if a runtime check deduces that it's
+##                              equal to the result.
+##
+##       Note that these are just hints and the implementation is free to
+##       ignore them. More hints may be added in the future.
+181: update_record/5
+
+## @spec bs_match Fail Ctx {commands,Commands}
+## @doc  Match one or more binary segments of fixed size. Commands
+##       can be one of the following:
+##
+##       * {ensure_at_least,Stride,Unit}
+##       * {ensure_exactly,Stride}
+##       * {binary,Live,Flags,Size,Unit,Dst}
+##       * {integer,Live,Flags,Size,Unit,Dst}
+##       * {skip,Stride}
+##       * {get_tail,Live,Unit,Dst}
+##       * {'=:=',Live,Size,Value}.
+182: bs_match/3

@@ -54,8 +54,8 @@
 
   [;;4m[;;4mObject[0m[0m:
     The monitored entity, which triggered the event. When
-    monitoring a local process or port, [;;4mObject[0m will be equal to
-    the [;;4mpid()[0m or [;;4mport()[0m that was being monitored. When
+    monitoring a process or a local port, [;;4mObject[0m will be equal
+    to the [;;4mpid()[0m or [;;4mport()[0m that was being monitored. When
     monitoring process or port by name, [;;4mObject[0m will have format [;;4m[0m
     [;;4m{RegisteredName, Node}[0m where [;;4mRegisteredName[0m is the name
     which has been used with [;;4mmonitor/2[0m call and [;;4mNode[0m is local
@@ -74,7 +74,7 @@
     remote), an atom [;;4mRegisteredName[0m or a tuple [;;4m{RegisteredName,[0m
     [;;4mNode}[0m for a registered process, located elsewhere.
 
-    Note:
+    Change:
       Before ERTS 10.0 (OTP 21.0), monitoring a process could
       fail with [;;4mbadarg[0m if the monitored process resided on a
       primitive node (such as erl_interface or jinterface),
@@ -151,3 +151,8 @@
     If or when [;;4mmonitor/2[0m is extended, other possible values for [;;4m[0m
     [;;4mTag[0m, [;;4mObject[0m, and [;;4mInfo[0m in the monitor message will be
     introduced.
+
+  Note:
+    For some important information about distributed signals, see
+    the Blocking Signaling Over Distribution section in the 
+    Processes chapter of the Erlang Reference Manual.

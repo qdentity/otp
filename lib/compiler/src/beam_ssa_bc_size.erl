@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2020-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2020-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -44,7 +44,7 @@
 
 -spec opt(st_map()) -> st_map().
 
-opt(StMap) ->
+opt(StMap) when is_map(StMap) ->
     opt(maps:keys(StMap), StMap).
 
 opt([Id|Ids], StMap0) ->
@@ -71,7 +71,8 @@ opt_function(Id, StMap) ->
 opt_blks([{L,#b_blk{is=Is}=Blk}|Blks], ParamInfo, StMap, AnyChange, Count0, Acc0) ->
     case Is of
         [#b_set{op=bs_init_writable,dst=Dst}] ->
-            Bs = #{st_map => StMap, Dst => {writable,#b_literal{val=0}}},
+            Bs = #{st_map => StMap, Dst => {writable,#b_literal{val=0}},
+                   seen => sets:new([{version,2}])},
             try opt_writable(Bs, L, Blk, Blks, ParamInfo, Count0, Acc0) of
                 {Acc,Count} ->
                     opt_blks(Blks, ParamInfo, StMap, changed, Count, Acc)
@@ -94,7 +95,7 @@ opt_writable(Bs0, L, Blk, Blks, ParamInfo, Count0, Acc0) ->
                        last=CallLast}}|_]} ->
             ensure_not_match_context(Call, ParamInfo),
 
-            ArgTypes = maps:from_list([{Arg,{arg,Arg}} || Arg <- Args]),
+            ArgTypes = #{Arg => {arg,Arg} || Arg <- Args},
             Bs = maps:merge(ArgTypes, Bs0),
             Result = map_get(Dst, call_size_func(Call, Bs)),
             {Expr,Annos} = make_expr_tree(Result),
@@ -153,10 +154,32 @@ call_size_func(#b_set{anno=Anno,op=call,args=[Name|Args],dst=Dst}, Bs) ->
                     %% and there is no need to analyze it.
                     Bs#{Dst => any};
                 true ->
-                    NewBs = NewBs0#{Name => self, st_map => StMap},
-                    Map0 = #{0 => NewBs},
-                    Result = calc_size(Linear, Map0),
-                    Bs#{Dst => Result}
+                    Seen0 = map_get(seen, Bs),
+                    case sets:is_element(Name, Seen0) of
+                        true ->
+                            %% This can happen if there is a call such as:
+                            %%
+                            %%     foo(<< 0 || false >>)
+                            %%
+                            %% Essentially, this is reduced to:
+                            %%
+                            %%     foo(<<>>)
+                            %%
+                            %% This sub pass will then try to analyze
+                            %% the code in foo/1 and everything it
+                            %% calls. To prevent an infinite loop in
+                            %% case there is mutual recursion between
+                            %% some of the functions called by foo/1,
+                            %% give up if function that has already
+                            %% been analyzed is called again.
+                            throw(not_possible);
+                        false ->
+                            Seen = sets:add_element(Name, Seen0),
+                            NewBs = NewBs0#{Name => self, st_map => StMap, seen => Seen},
+                            Map0 = #{0 => NewBs},
+                            Result = calc_size(Linear, Map0),
+                            Bs#{Dst => Result}
+                    end
             end;
         #{} ->
             case Name of
@@ -199,7 +222,7 @@ setup_call_bs([], [], #{}, NewBs) -> NewBs.
 
 calc_size([{L,#b_blk{is=Is,last=Last}}|Blks], Map0) ->
     case maps:take(L, Map0) of
-        {Bs0,Map1} ->
+        {Bs0,Map1} when is_map(Bs0) ->
             Bs1 = calc_size_is(Is, Bs0),
             Map2 = update_successors(Last, Bs1, Map1),
             case get_ret(Last, Bs1) of
@@ -239,6 +262,8 @@ update_successors(#b_br{bool=Bool,succ=Succ,fail=Fail}, Bs0, Map0) ->
     case get_value(Bool, Bs0) of
         #b_literal{val=true} ->
             update_successor(Succ, Bs0, Map0);
+        #b_literal{val=false} ->
+            update_successor(Fail, Bs0, Map0);
         {succeeded,Var} ->
             Map = update_successor(Succ, Bs0, Map0),
             update_successor(Fail, maps:remove(Var, Bs0), Map);
@@ -276,32 +301,13 @@ calc_size_is([I|Is], Bs0) ->
     calc_size_is(Is, Bs);
 calc_size_is([], Bs) -> Bs.
 
-calc_size_instr(#b_set{op=bs_add,args=[A,B,U],dst=Dst}, Bs) ->
-    %% We must make sure that the value of bs_add only depends on literals
-    %% and arguments passed from the function that created the writable
-    %% binary.
-    case {get_value(A, Bs),get_arg_value(B, Bs)} of
-        {#b_literal{}=Lit,Val} ->
-            Bs#{Dst => {expr,{{bif,'+'},[Lit,{{bif,'*'},[Val,U]}]}}};
-        {{expr,Expr},Val} ->
-            Bs#{Dst => {expr,{{bif,'+'},[Expr,{{bif,'*'},[Val,U]}]}}};
-        {_,_} ->
-            %% The value depends on a variable of which we know nothing.
-            Bs#{Dst => any}
-    end;
-calc_size_instr(#b_set{op=bs_init,args=[#b_literal{val=private_append},
-                                        Writable,Size,Unit],
+calc_size_instr(#b_set{op=bs_create_bin,
+                       args=[#b_literal{val=private_append},_,Writable,_|Args],
                        dst=Dst}, Bs) ->
-    case get_value(Size, Bs) of
-        {arg,SizeOrigin} ->
-            Expr = {{bif,'*'},[SizeOrigin,Unit]},
-            update_writable(Dst, Writable, Expr, Bs);
-        #b_literal{} ->
-            Expr = {{bif,'*'},[Size,Unit]},
-            update_writable(Dst, Writable, Expr, Bs);
+    case calc_create_bin_size(Args, Bs) of
         {expr,Expr} ->
             update_writable(Dst, Writable, Expr, Bs);
-        _ ->
+        any ->
             Bs#{Dst => any}
     end;
 calc_size_instr(#b_set{op=bs_match,args=[_Type,Ctx,_Flags,
@@ -346,6 +352,26 @@ calc_size_instr(#b_set{op={succeeded,_},args=[Arg],dst=Dst}, Bs) ->
     Bs#{Dst => {succeeded,Arg}};
 calc_size_instr(#b_set{dst=Dst}, Bs) ->
     Bs#{Dst => any}.
+
+calc_create_bin_size(Args, Bs) ->
+    calc_create_bin_size(Args, Bs, #b_literal{val=0}).
+
+calc_create_bin_size([_,#b_literal{val=[0|_]},_,_|_], _Bs, _Acc) ->
+    %% Construction without size (utf8/utf16/utf32).
+    any;
+calc_create_bin_size([_,#b_literal{val=[U|_]},_,Size|T], Bs, Acc0) when is_integer(U) ->
+    case get_value(Size, Bs) of
+        #b_literal{val=Val} when is_integer(Val) ->
+            Acc = {{bif,'+'},[Acc0,#b_literal{val=U*Val}]},
+            calc_create_bin_size(T, Bs, Acc);
+        {arg,Var} ->
+            Acc = {{bif,'+'},[Acc0,{{bif,'*'},[Var,#b_literal{val=U}]}]},
+            calc_create_bin_size(T, Bs, Acc);
+        _ ->
+            any
+    end;
+calc_create_bin_size([], _Bs, Acc) ->
+    {expr,Acc}.
 
 update_writable(Dst, Writable, Expr, Bs) ->
     case get_value(Writable, Bs) of
@@ -585,7 +611,8 @@ cg_bad_generator([Arg|_], Annos, CallLast, FailBlk, Count) ->
 cg_bad_generator_1(Anno, Arg, CallLast, FailBlk, Count0) ->
     {L,Count1} = new_block(Count0),
     {TupleDst,Count2} = new_var('@ssa_tuple', Count1),
-    {Ret,Count3} = new_var('@ssa_ret', Count2),
+    {SuccDst,Count3} = new_var('@ssa_bool', Count2),
+    {Ret,Count4} = new_var('@ssa_ret', Count3),
     MFA = #b_remote{mod=#b_literal{val=erlang},
                     name=#b_literal{val=error},
                     arity=1},
@@ -593,21 +620,18 @@ cg_bad_generator_1(Anno, Arg, CallLast, FailBlk, Count0) ->
                     args=[#b_literal{val=bad_generator},Arg],
                     dst=TupleDst},
     CallI = #b_set{anno=Anno,op=call,args=[MFA,TupleDst],dst=Ret},
-    Is = [TupleI,CallI],
+    SuccI = #b_set{op={succeeded,body},args=[Ret],dst=SuccDst},
+    Is = [TupleI,CallI,SuccI],
 
-    %% When the generator is called within try/catch, the `bad_generator` call
-    %% must refer to the same landing pad or else we'll break optimizations
-    %% that assume exceptions are always reflected in the control flow.
-    Last = case CallLast of
-               #b_br{fail=CatchLbl} when CatchLbl =/= ?EXCEPTION_BLOCK ->
-                   #b_br{bool=#b_literal{val=true},
-                         succ=CatchLbl,fail=CatchLbl};
-               _ ->
-                   #b_ret{arg=Ret}
-           end,
+    %% The `bad_generator` call must refer to the same fail label (either a
+    %% landing pad or ?EXCEPTION_BLOCK) as the caller, or else we'll break
+    %% optimizations that assume exceptions are always reflected in the control
+    %% flow.
+    #b_br{fail=FailLbl} = CallLast,             %Assertion.
+    Last = #b_br{bool=SuccDst,succ=FailLbl,fail=FailLbl},
 
     Blk = #b_blk{is=Is,last=Last},
-    {L,[{L,Blk}|FailBlk],Count3}.
+    {L,[{L,Blk}|FailBlk],Count4}.
 
 cg_succeeded(#b_set{dst=OpDst}=I, Succ, Fail, Count0) ->
     {Bool,Count} = new_var('@ssa_bool', Count0),

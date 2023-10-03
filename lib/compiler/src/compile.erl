@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2021. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -49,9 +49,7 @@
 
 -type abstract_code() :: [erl_parse:abstract_form()].
 
-%% Internal representations used for 'from_asm' compilation can also be valid,
-%% but have no relevant types defined.
--type forms() :: abstract_code() | cerl:c_module().
+-type forms() :: abstract_code() | cerl:c_module() | beam_disasm:asm_form().
 
 -type option() :: atom() | {atom(), term()} | {'d', atom(), term()}.
 
@@ -264,25 +262,22 @@ expand_opt(report, Os) ->
     [report_errors,report_warnings|Os];
 expand_opt(return, Os) ->
     [return_errors,return_warnings|Os];
-expand_opt(no_bsm3, Os) ->
-    %% The new bsm pass requires bsm3 instructions.
-    [no_bsm3,no_bsm_opt|expand_opt(no_bsm4, Os)];
 expand_opt(no_bsm4, Os) ->
     %% bsm4 instructions are only used when type optimization has determined
     %% that a match instruction won't fail.
     expand_opt(no_type_opt, Os);
-expand_opt(r18, Os) ->
-    expand_opt_before_21(Os);
-expand_opt(r19, Os) ->
-    expand_opt_before_21(Os);
-expand_opt(r20, Os) ->
-    expand_opt_before_21(Os);
-expand_opt(r21, Os) ->
-    expand_opt(r22, [no_put_tuple2 | expand_opt(no_bsm3, Os)]);
 expand_opt(r22, Os) ->
-    expand_opt(r23, [no_shared_fun_wrappers, no_swap | expand_opt(no_bsm4, Os)]);
+    expand_opt(r23, [no_bs_create_bin, no_shared_fun_wrappers,
+                     no_swap | expand_opt(no_bsm4, Os)]);
 expand_opt(r23, Os) ->
-    expand_opt(no_make_fun3, [no_ssa_opt_float, no_recv_opt, no_init_yregs | Os]);
+    expand_opt(no_make_fun3, [no_bs_create_bin, no_ssa_opt_float,
+                              no_recv_opt, no_init_yregs |
+                              expand_opt(r24, Os)]);
+expand_opt(r24, Os) ->
+    expand_opt(no_type_opt, [no_bs_create_bin, no_ssa_opt_ranges |
+                             expand_opt(r25, Os)]);
+expand_opt(r25, Os) ->
+    [no_ssa_opt_update_tuple, no_bs_match, no_min_max_bifs | Os];
 expand_opt(no_make_fun3, Os) ->
     [no_make_fun3, no_fun_opt | Os];
 expand_opt({debug_info_key,_}=O, Os) ->
@@ -296,17 +291,14 @@ expand_opt(no_type_opt=O, Os) ->
      no_ssa_opt_type_finish | Os];
 expand_opt(no_module_opt=O, Os) ->
     [O,no_recv_opt | Os];
+expand_opt({check_ssa,Tag}, Os) ->
+    [check_ssa, Tag | Os];
 expand_opt(O, Os) -> [O|Os].
-
-expand_opt_before_21(Os) ->
-    [no_init_yregs, no_make_fun3, no_fun_opt,
-     no_shared_fun_wrappers, no_swap,
-     no_put_tuple2, no_get_hd_tl, no_ssa_opt_record,
-     no_utf8_atoms, no_recv_opt | expand_opt(no_bsm3, Os)].
-
 
 -spec format_error(error_description()) -> iolist().
 
+format_error({obsolete_option,Ver}) ->
+    io_lib:fwrite("the ~p option is no longer supported", [Ver]);
 format_error(no_crypto) ->
     "this system is not configured with crypto support.";
 format_error(bad_crypto_key) ->
@@ -783,6 +775,16 @@ select_list_passes_1([P|Ps], Opts, Acc) ->
 select_list_passes_1([], _, Acc) ->
     {not_done,reverse(Acc)}.
 
+make_ssa_check_pass(PassFlag) ->
+    F = fun (Code, St) ->
+                case beam_ssa_check:module(Code, PassFlag) of
+                    ok -> {ok, Code, St};
+                    {error, Errors} ->
+                        {error, St#compile{errors=St#compile.errors++Errors}}
+                end
+        end,
+    {iff, PassFlag, {PassFlag, F}}.
+
 %% The standard passes (almost) always run.
 
 standard_passes() ->
@@ -817,6 +819,7 @@ abstr_passes(AbstrStatus) ->
 
          ?pass(expand_records),
          {iff,'dexp',{listing,"expand"}},
+         {iff,'E',?pass(legalize_vars)},
          {iff,'E',{src_listing,"E"}},
          {iff,'to_exp',{done,"E"}},
 
@@ -885,11 +888,8 @@ kernel_passes() ->
        {iff,dssabsm,{listing,"ssabsm"}},
        {unless,no_bsm_opt,{iff,ssalint,{pass,beam_ssa_lint}}},
 
-       {unless,no_fun_opt,{pass,beam_ssa_funs}},
-       {iff,dssafuns,{listing,"ssafuns"}},
-       {unless,no_fun_opt,{iff,ssalint,{pass,beam_ssa_lint}}},
-
        {unless,no_ssa_opt,{pass,beam_ssa_opt}},
+       make_ssa_check_pass(post_ssa_opt),
        {iff,dssaopt,{listing,"ssaopt"}},
        {unless,no_ssa_opt,{iff,ssalint,{pass,beam_ssa_lint}}},
 
@@ -916,8 +916,6 @@ asm_passes() ->
 	 {iff,dblk,{listing,"block"}},
 	 {unless,no_jopt,{pass,beam_jump}},
 	 {iff,djmp,{listing,"jump"}},
-	 {unless,no_peep_opt,{pass,beam_peep}},
-	 {iff,dpeep,{listing,"peep"}},
 	 {pass,beam_clean},
 	 {iff,dclean,{listing,"clean"}},
 	 {unless,no_stack_trimming,{pass,beam_trim}},
@@ -936,7 +934,8 @@ asm_passes() ->
        {iff,'S',{listing,"S"}},
        {iff,'to_asm',{done,"S"}}]},
      ?pass(beam_validator_weak),
-     ?pass(beam_asm)
+     ?pass(beam_asm),
+     {iff,strip_types,?pass(beam_strip_types)}
      | binary_passes()].
 
 binary_passes() ->
@@ -1019,8 +1018,13 @@ parse_module(_Code, St) ->
 do_parse_module(DefEncoding, #compile{ifile=File,options=Opts,dir=Dir}=St) ->
     SourceName0 = proplists:get_value(source, Opts, File),
     SourceName = case member(deterministic, Opts) of
-                     true -> filename:basename(SourceName0);
-                     false -> SourceName0
+                     true ->
+                         filename:basename(SourceName0);
+                     false ->
+                         case member(absolute_source, Opts) of
+                             true -> paranoid_absname(SourceName0);
+                             false -> SourceName0
+                         end
                  end,
     StartLocation = case with_columns(Opts) of
                         true ->
@@ -1028,27 +1032,71 @@ do_parse_module(DefEncoding, #compile{ifile=File,options=Opts,dir=Dir}=St) ->
                         false ->
                             1
                     end,
-    R = epp:parse_file(File,
-                       [{includes,[".",Dir|inc_paths(Opts)]},
-                        {source_name, SourceName},
-                        {macros,pre_defs(Opts)},
-                        {default_encoding,DefEncoding},
-                        {location,StartLocation},
-                        extra]),
-    case R of
-	{ok,Forms0,Extra} ->
-	    Encoding = proplists:get_value(encoding, Extra),
-            Forms = case with_columns(Opts ++ compile_options(Forms0)) of
-                        true ->
-                            Forms0;
-                        false ->
-                            strip_columns(Forms0)
-                    end,
-            {ok,Forms,St#compile{encoding=Encoding}};
-	{error,E} ->
-	    Es = [{St#compile.ifile,[{none,?MODULE,{epp,E}}]}],
-	    {error,St#compile{errors=St#compile.errors ++ Es}}
+    case erl_features:keyword_fun(Opts, fun erl_scan:f_reserved_word/1) of
+        {ok, {Features, ResWordFun}} ->
+            R = epp:parse_file(File,
+                               [{includes,[".",Dir|inc_paths(Opts)]},
+                                {source_name, SourceName},
+                                {deterministic, member(deterministic, Opts)},
+                                {macros,pre_defs(Opts)},
+                                {default_encoding,DefEncoding},
+                                {location,StartLocation},
+                                {reserved_word_fun, ResWordFun},
+                                {features, Features},
+                                extra|
+                                case member(check_ssa, Opts) of
+                                    true ->
+                                        [{compiler_internal,[ssa_checks]}];
+                                    false ->
+                                        []
+                                end]),
+            case R of
+                %% FIXME Extra should include used features as well
+                {ok,Forms0,Extra} ->
+                    Encoding = proplists:get_value(encoding, Extra),
+                    %% Get features used in the module, indicated by
+                    %% enabling features with
+                    %% -compile({feature, .., enable}).
+                    UsedFtrs = proplists:get_value(features, Extra),
+                    St1 = metadata_add_features(UsedFtrs, St),
+                    Forms = case with_columns(Opts ++ compile_options(Forms0)) of
+                                true ->
+                                    Forms0;
+                                false ->
+                                    strip_columns(Forms0)
+                            end,
+                    {ok,Forms,St1#compile{encoding=Encoding}};
+                {error,E} ->
+                    Es = [{St#compile.ifile,[{none,?MODULE,{epp,E}}]}],
+                    {error,St#compile{errors=St#compile.errors ++ Es}}
+            end;
+        {error, {Mod, Reason}} ->
+            Es = [{St#compile.ifile,[{none, Mod, Reason}]}],
+            {error, St#compile{errors = St#compile.errors ++ Es}}
     end.
+
+%% The atom to be used in the proplist of the meta chunk indicating
+%% the features used when compiling the module.
+-define(META_USED_FEATURES, enabled_features).
+-define(META_CHUNK_NAME, <<"Meta">>).
+
+metadata_add_features(Ftrs, #compile{extra_chunks = Extra} = St) ->
+    MetaData =
+        case proplists:get_value(?META_CHUNK_NAME, Extra) of
+            undefined ->
+                [];
+            Bin ->
+                erlang:binary_to_term(Bin)
+        end,
+    OldFtrs = proplists:get_value(?META_USED_FEATURES, MetaData, []),
+    NewFtrs = (Ftrs -- OldFtrs) ++ OldFtrs,
+    MetaData1 =
+        proplists:from_map(maps:put(?META_USED_FEATURES, NewFtrs,
+                                    proplists:to_map(MetaData))),
+    Extra1 = proplists:from_map(maps:put(?META_CHUNK_NAME,
+                                         erlang:term_to_binary(MetaData1),
+                                         proplists:to_map(Extra))),
+    St#compile{extra_chunks = Extra1}.
 
 with_columns(Opts) ->
     case proplists:get_value(error_location, Opts, column) of
@@ -1406,7 +1454,7 @@ makedep_output(Code, #compile{options=Opts,ofile=Ofile}=St) ->
 
     if
         is_list(Output) ->
-            %% Write the depedencies to a file.
+            %% Write the dependencies to a file.
             case file:write_file(Output, Code) of
                 ok ->
                     {ok,Code,St};
@@ -1415,7 +1463,7 @@ makedep_output(Code, #compile{options=Opts,ofile=Ofile}=St) ->
                     {error,St#compile{errors=St#compile.errors++[Err]}}
             end;
         true ->
-            %% Write the depedencies to a device.
+            %% Write the dependencies to a device.
             try io:fwrite(Output, "~ts", [Code]) of
                 ok ->
                     {ok,Code,St}
@@ -1430,9 +1478,43 @@ expand_records(Code0, #compile{options=Opts}=St) ->
     Code = erl_expand_records:module(Code0, Opts),
     {ok,Code,St}.
 
-compile_directives(Forms, #compile{options=Opts0}=St) ->
-    Opts = expand_opts(flatten([C || {attribute,_,compile,C} <- Forms])),
-    {ok, Forms, St#compile{options=Opts ++ Opts0}}.
+legalize_vars(Code0, St) ->
+    Code = map(fun(F={function,_,_,_,_}) ->
+                       erl_pp:legalize_vars(F);
+                  (F) ->
+                       F
+               end, Code0),
+    {ok,Code,St}.
+
+compile_directives(Forms, #compile{options=Opts0}=St0) ->
+    Opts1 = expand_opts(flatten([C || {attribute,_,compile,C} <- Forms])),
+    Opts = Opts1 ++ Opts0,
+    St1 = St0#compile{options=Opts},
+    case any_obsolete_option(Opts) of
+        {yes,Opt} ->
+            Error = {St1#compile.ifile,[{none,?MODULE,{obsolete_option,Opt}}]},
+            St = St1#compile{errors=[Error|St1#compile.errors]},
+            {error,St};
+        no ->
+            {ok,Forms,St1}
+    end.
+
+any_obsolete_option([Opt|Opts]) ->
+    case is_obsolete(Opt) of
+        true -> {yes,Opt};
+        false -> any_obsolete_option(Opts)
+    end;
+any_obsolete_option([]) -> no.
+
+is_obsolete(r18) -> true;
+is_obsolete(r19) -> true;
+is_obsolete(r20) -> true;
+is_obsolete(r21) -> true;
+is_obsolete(no_bsm3) -> true;
+is_obsolete(no_get_hd_tl) -> true;
+is_obsolete(no_put_tuple2) -> true;
+is_obsolete(no_utf8_atoms) -> true;
+is_obsolete(_) -> false.
 
 core(Forms, #compile{options=Opts}=St) ->
     {ok,Core,Ws} = v3_core:module(Forms, Opts),
@@ -1616,6 +1698,13 @@ beam_asm(Code0, #compile{ifile=File,extra_chunks=ExtraChunks,options=CompilerOpt
 	{error,Es} ->
 	    {error,St#compile{errors=St#compile.errors ++ [{File,Es}]}}
     end.
+
+beam_strip_types(Beam0, #compile{}=St) ->
+    {ok,_Module,Chunks0} = beam_lib:all_chunks(Beam0),
+    Chunks = [{Tag,Contents} || {Tag,Contents} <- Chunks0,
+                                Tag =/= "Type"],
+    {ok,Beam} = beam_lib:build_module(Chunks),
+    {ok,Beam,St}.
 
 compile_info(File, CompilerOpts, Opts) ->
     IsSlim = member(slim, CompilerOpts),
@@ -1870,9 +1959,8 @@ output_encoding(F, #compile{encoding = Encoding}) ->
 
 diffable(Code0, St) ->
     {Mod,Exp,Attr,Fs0,NumLabels} = Code0,
-    EntryLabels0 = [{Entry,{Name,Arity}} ||
-                       {function,Name,Arity,Entry,_} <- Fs0],
-    EntryLabels = maps:from_list(EntryLabels0),
+    EntryLabels = #{Entry => {Name,Arity} ||
+                      {function,Name,Arity,Entry,_} <- Fs0},
     Fs = [diffable_fix_function(F, EntryLabels) || F <- Fs0],
     Code = {Mod,Exp,Attr,Fs,NumLabels},
     {ok,Code,St}.
@@ -2020,16 +2108,16 @@ pre_load() ->
 	 beam_jump,
 	 beam_kernel_to_ssa,
 	 beam_opcodes,
-	 beam_peep,
 	 beam_ssa,
+	 beam_ssa_alias,
 	 beam_ssa_bc_size,
 	 beam_ssa_bool,
 	 beam_ssa_bsm,
 	 beam_ssa_codegen,
 	 beam_ssa_dead,
-         beam_ssa_funs,
 	 beam_ssa_opt,
 	 beam_ssa_pre_codegen,
+	 beam_ssa_private_append,
 	 beam_ssa_recv,
 	 beam_ssa_share,
 	 beam_ssa_throw,
@@ -2046,6 +2134,7 @@ pre_load() ->
 	 epp,
 	 erl_bifs,
 	 erl_expand_records,
+         erl_features,
 	 erl_lint,
 	 erl_parse,
 	 erl_scan,

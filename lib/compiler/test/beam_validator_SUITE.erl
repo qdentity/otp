@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -38,10 +38,12 @@
          infer_on_eq/1,infer_dead_value/1,infer_on_ne/1,
          branch_to_try_handler/1,call_without_stack/1,
          receive_marker/1,safe_instructions/1,
-         missing_return_type/1,will_bif_succeed/1,
+         missing_return_type/1,will_succeed/1,
          bs_saved_position_units/1,parent_container/1,
          container_performance/1,
-         not_equal_inference/1]).
+         infer_relops/1,
+         not_equal_inference/1,bad_bin_unit/1,singleton_inference/1,
+         inert_update_type/1,range_inference/1]).
 
 -include_lib("common_test/include/ct.hrl").
 
@@ -74,10 +76,11 @@ groups() ->
        infer_on_eq,infer_dead_value,infer_on_ne,
        branch_to_try_handler,call_without_stack,
        receive_marker,safe_instructions,
-       missing_return_type,will_bif_succeed,
+       missing_return_type,will_succeed,
        bs_saved_position_units,parent_container,
-       container_performance,
-       not_equal_inference]}].
+       container_performance,infer_relops,
+       not_equal_inference,bad_bin_unit,singleton_inference,
+       inert_update_type,range_inference]}].
 
 init_per_suite(Config) ->
     test_lib:recompile(?MODULE),
@@ -181,9 +184,11 @@ call_without_stack(Config) when is_list(Config) ->
 merge_undefined(Config) when is_list(Config) ->
     Errors = do_val(merge_undefined, Config),
     [{{t,undecided,2},
-      {{call_ext,2,{extfunc,debug,filter,2}},
-       22,
-       {allocated,undecided}}},
+      {{label,11},
+       19,
+       {unsafe_stack,{y,1},
+        #{{y,0} := uninitialized,
+          {y,1} := uninitialized}}}},
      {{t,uninitialized,2},
       {{call_ext,2,{extfunc,io,format,2}},
        17,
@@ -322,7 +327,7 @@ state_after_fault_in_catch(Config) when is_list(Config) ->
 no_exception_in_catch(Config) when is_list(Config) ->
     Errors = do_val(no_exception_in_catch, Config),
     [{{no_exception_in_catch,nested_of_1,4},
-      {{try_case_end,{x,0}},180,ambiguous_catch_try_state}}] = Errors,
+      {{try_case_end,{x,0}},166,ambiguous_catch_try_state}}] = Errors,
     ok.
 
 undef_label(Config) when is_list(Config) ->
@@ -520,13 +525,8 @@ destroy_reg({Tag,N}) ->
 bad_tuples(Config) ->
     Errors = do_val(bad_tuples, Config),
     [{{bad_tuples,heap_overflow,1},
-      {{put,{x,0}},9,{heap_overflow,{left,0},{wanted,1}}}},
-     {{bad_tuples,long,2},
-      {{put,{atom,too_long}},9,not_building_a_tuple}},
-     {{bad_tuples,self_referential,1},
-      {{put,{x,1}},8,{unfinished_tuple,{x,1}}}},
-     {{bad_tuples,short,1},
-      {{move,{x,1},{x,0}},8,{unfinished_tuple,{x,1}}}}] = Errors,
+      {{put_tuple2,{x,0},{list,[{atom,ok},{x,0}]}},6,
+       {heap_overflow,{left,2},{wanted,3}}}}] = Errors,
 
     ok.
 
@@ -553,7 +553,7 @@ receive_stacked(Config) ->
       {{test_heap,3,0},11,{fragile_message_reference,{y,_}}}},
      {{receive_stacked,f5,0},
       {{loop_rec_end,{f,23}},
-       24,
+       22,
        {fragile_message_reference,{y,_}}}},
      {{receive_stacked,f6,0},
       {{gc_bif,byte_size,{f,29},0,[{y,_}],{x,0}},
@@ -573,7 +573,7 @@ receive_stacked(Config) ->
        {fragile_message_reference,{y,_}}}},
      {{receive_stacked,m2,0},
       {{loop_rec_end,{f,48}},
-       34,
+       32,
        {fragile_message_reference,{y,_}}}}] = Errors,
 
     %% Compile the original source code as a smoke test.
@@ -807,7 +807,7 @@ bs_saved_position_units(Config) when is_list(Config) ->
                {'%',
                    {var_info,
                        {x,0},
-                       [{type,{t_bs_context,8,0,0}},accepts_match_context]}},
+                       [{type,{t_bs_context,8}},accepts_match_context]}},
                {move,nil,{x,0}},
                return]},
           {function,no_errors,1,4,
@@ -868,8 +868,8 @@ bs_saved_position_units(Config) when is_list(Config) ->
       {{call_only,1,{f,2}},
        14,
        {bad_arg_type,{x,0},
-                     {t_bs_context,12,0,0},
-                     {t_bs_context,8,0,0}}}}] = Errors,
+                     {t_bs_context,12},
+                     {t_bs_context,8}}}}] = Errors,
 
     ok.
 
@@ -932,22 +932,56 @@ night(Turned) ->
 
 participating(_, _, _, _) -> ok.
 
+will_succeed(_Config) ->
+    ok = will_succeed_1(body),
+
+    self() ! whatever,
+    error = will_succeed_2(),
+
+    self() ! whatever,
+    error = will_succeed_3(),
+
+    ok.
+
 %% map_get was known as returning 'none', but 'will_succeed' still returned
 %% 'maybe' causing validation to continue, eventually exploding when the 'none'
 %% value was used.
-will_bif_succeed(_Config) ->
-    ok = f1(body).
-
+%%
 %% +no_ssa_opt
-f1(body) when map_get(girl, #{friend => node()}); [], community ->
+will_succeed_1(body) when map_get(girl, #{friend => node()}); [], community ->
     case $q and $K of
         _V0 ->
             0.1825965401179273;
         0 ->
             state#{[] => 0.10577334580729858, $J => 0}
     end;
-f1(body) ->
+will_succeed_1(body) ->
     ok.
+
+%% The apply of 42:name/0 was known to fail, but 'will_succeed' still
+%% returned 'maybe', causing validation to continue and fail because
+%% of the jump to the try_case instruction.
+will_succeed_2() ->
+    try
+        receive
+            _ ->
+                42
+        end:name()
+    catch
+        _:_ ->
+            error
+    end.
+
+will_succeed_3() ->
+    try
+        receive
+            _ ->
+                42
+        end:name(a, b)
+    catch
+        _:_ ->
+            error
+    end.
 
 %% ERL-1426: When a value was extracted from a tuple, subsequent type tests did
 %% not update the type of said tuple.
@@ -1003,6 +1037,25 @@ container_performance(Config) ->
         _ -> ok
     end.
 
+%% Type inference was half-broken for relational operators, being implemented
+%% for is_lt/is_ge instructions but not the {bif,RelOp} form.
+infer_relops(_Config) ->
+    [lt = infer_relops_1(N) || N <- lists:seq(0,3)],
+    [ge = infer_relops_1(N) || N <- lists:seq(4,7)],
+    ok.
+
+infer_relops_1(N) ->
+    true = N >= 0,
+    Below4 = N < 4,
+    id(N), %% Force Below4 to use the {bif,'<'} form instead of is_lt
+    case Below4 of
+        true -> infer_relops_true(Below4, N);
+        false -> infer_relops_false(Below4, N)
+    end.
+
+infer_relops_true(_, _) -> lt.
+infer_relops_false(_, _) -> ge.
+
 %% OTP-18365: A brainfart in inference for '=/=' inverted the results.
 not_equal_inference(_Config) ->
     {'EXIT', {function_clause, _}} = (catch not_equal_inference_1(id([0]))),
@@ -1010,6 +1063,88 @@ not_equal_inference(_Config) ->
 
 not_equal_inference_1(X) when (X /= []) /= is_port(0 div 0) ->
     [X || _ <- []].
+
+bad_bin_unit(_Config) ->
+    {'EXIT', {function_clause,_}} = catch bad_bin_unit_1(<<1:1>>),
+    [] = bad_bin_unit_2(),
+    ok.
+
+bad_bin_unit_1(<<X:((ok > {<<(true andalso ok)>>}) orelse 1)>>) ->
+    try
+        bad_bin_unit_1_a()
+    after
+        -(X + bad_bin_unit_1_b(not ok)),
+        try
+            ok
+        catch
+            _ ->
+                ok;
+            _ ->
+                ok;
+            _ ->
+                ok;
+            _ ->
+                ok;
+            _ ->
+                ok;
+            _ ->
+                ok
+        end
+    end.
+
+bad_bin_unit_1_a() -> ok.
+bad_bin_unit_1_b(_) -> ok.
+
+bad_bin_unit_2() ->
+   [
+       ok
+       || <<X:(is_number(<<(<<(0 bxor 0)>>)>>) orelse 1)>> <= <<>>,
+       #{X := _} <- ok
+   ].
+
+%% GH-6962: Type inference with singleton types in registers was weaker than
+%% inference on their corresponding literals.
+singleton_inference(Config) ->
+    Mod = ?FUNCTION_NAME,
+
+    Data = proplists:get_value(data_dir, Config),
+    File = filename:join(Data, "singleton_inference.erl"),
+
+    {ok, Mod} = compile:file(File, [no_copt, no_bool_opt, no_ssa_opt]),
+
+    ok = Mod:test(),
+
+    ok.
+
+%% GH-6969: A type was made concrete even though that added no additional
+%% information.
+inert_update_type(_Config) ->
+    hello(<<"string">>, id(42)).
+
+hello(A, B) ->
+    mike([{sys_period, {A, B}}, {some_atom, B}]).
+
+mike([Head | _Rest]) -> joe(Head).
+
+joe({Name, 42}) -> Name;
+joe({sys_period, {A, _B}}) -> {41, 42, A}.
+
+range_inference(_Config) ->
+    ok = range_inference_1(id(<<$a>>)),
+    ok = range_inference_1(id(<<0>>)),
+    ok = range_inference_1(id(<<1114111/utf8>>)),
+
+    ok.
+
+range_inference_1(<<X/utf8>>) ->
+    case 9223372036854775807 - abs(X) of
+        Y when X < Y ->
+            ok;
+        9223372036854775807 ->
+            ok;
+        -2147483648 ->
+            ok
+    end.
 
 id(I) ->
     I.

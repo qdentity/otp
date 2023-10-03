@@ -6,7 +6,7 @@ Introduction
 
 This document describes how to build and install Erlang/OTP-%OTP-REL%.
 Erlang/OTP should be possible to build from source on any Unix/Linux system,
-including OS X. You are advised to read the whole document
+including macOS. You are advised to read the whole document
 before attempting to build and install Erlang/OTP.
 
 The source code can be downloaded from the official site of Erlang/OTP or GitHub.
@@ -38,7 +38,7 @@ These are the tools you need in order to unpack and build Erlang/OTP.
 
 Build the same way as when building the unpacked tar file.
 
-#### Building on OS X ####
+#### Building on macOS ####
 
 *   Xcode -- Download and install via the Mac App Store.
     Read about [Building on a Mac][] before proceeding.
@@ -46,7 +46,6 @@ Build the same way as when building the unpacked tar file.
 ### Installing ###
 
 *   An `install` program that can take multiple file names.
-
 
 Optional Utilities
 ------------------
@@ -85,8 +84,6 @@ also find the utilities needed for building the documentation.
 
     Further instructions on wxWidgets, read [Building with wxErlang][].
 
-
-
 ### Building Documentation ###
 
 *   `xsltproc` -- A command line XSLT processor.
@@ -97,8 +94,6 @@ also find the utilities needed for building the documentation.
 
 *   `fop` -- Apache FOP print formatter (requires Java). Can be downloaded
     from <http://xmlgraphics.apache.org/fop>.
-
-
 
 How to Build and Install Erlang/OTP
 -----------------------------------
@@ -137,13 +132,11 @@ set. If you get errors when building, try setting the LANG variable:
 
     $ export LANG=C   # Assuming bash/sh
 
-
 ### Building ###
 
 Build the Erlang/OTP release.
 
     $ make
-
 
 ### Testing ###
 
@@ -173,12 +166,10 @@ The following command will install the release on your system.
 
     $ make install
 
-
 ### Running ###
 
 You should now have a working release of Erlang/OTP!
 Jump to [System Principles][] for instructions on running Erlang/OTP.
-
 
 ### How to Build the Documentation ###
 
@@ -396,11 +387,10 @@ Some of the available `configure` options are:
     that do not support dynamic linking of libraries it is possible to statically
     link nifs and drivers with the main Erlang VM binary. This is done by passing
     a comma separated list to the archives that you want to statically link. e.g.
-    `--enable-static-nifs=/home/$USER/my_nif.a`. The path has to be absolute and the
-    name of the archive has to be the same as the module, i.e. `my_nif` in the
-    example above. This is also true for drivers, but then it is the driver name
-    that has to be the same as the filename. You also have to define
-    `STATIC_ERLANG_{NIF,DRIVER}` when compiling the .o files for the nif/driver.
+    `--enable-static-nifs=/home/$USER/my_nif.a`. The paths have to be absolute.
+    For drivers, the driver name has to be the same as the filename. You also
+    have to define `STATIC_ERLANG_NIF_LIBNAME` (see `erl_nif` documentation) or
+    `STATIC_ERLANG_DRIVER` when compiling the .o files for the nif/driver.
     If your nif/driver depends on some other dynamic library, you now have to link
     that to the Erlang VM binary. This is easily achieved by passing `LIBS=-llibname`
     to configure.
@@ -409,7 +399,7 @@ Some of the available `configure` options are:
 	should be compiled without one or more applications, i.e. `--without-wx`. There is
 	no automatic dependency handling between applications. If you disable
 	an application that another application depends on, you also have to disable the
-	dependant application.
+	dependent application.
 *   `--enable-gettimeofday-as-os-system-time` - Force usage of `gettimeofday()` for
     OS system time.
 *   `--enable-prefer-elapsed-monotonic-time-during-suspend` - Prefer an OS monotonic
@@ -543,7 +533,7 @@ Other useful information can be found at our GitHub wiki:
 
 Build the same way as when building the unpacked tar file.
 
-#### OS X (Darwin) ####
+#### macOS (Darwin) ####
 
 Make sure that the command `hostname` returns a valid fully qualified host
 name (this is configured in `/etc/hostconfig`). Otherwise you might experience
@@ -559,21 +549,24 @@ If you have Xcode 4.3, or later, you will also need to download
 
 #### Building with wxErlang ####
 
-If you want to build the `wx` application, you will need to get wxWidgets-3.0
-(`wxWidgets-3.0.3.tar.bz2` from <https://github.com/wxWidgets/wxWidgets/releases/download/v3.0.3/wxWidgets-3.0.3.tar.bz2>) or get it from github with bug fixes:
+wxWidgets-3.2.x is recommended for building the `wx` application
+(wxWidgets-3.0.x will also work). Download it from
+<https://www.wxwidgets.org/downloads> or from
+<https://github.com/wxWidgets/wxWidgets>. It is recommended to use the
+latest release in the 3.2 series, which at the time of writing
+is 3.2.2.1.
 
-    $ git clone --branch WX_3_0_BRANCH git@github.com:wxWidgets/wxWidgets.git
+Note that the wxWidgets-3.3 versions are experimental, but they should
+also work if 3.0 compatibility is enabled by adding
+`--enable-compat30` to the `configure` commands below.
 
-The wxWidgets-3.1 version should also work if 2.8 compatibility is enabled,
-add `--enable-compat28` to configure commands below.
-
-Configure and build wxWidgets (shared library on linux):
+On all other platforms, a shared library is built as follows:
 
     $ ./configure --prefix=/usr/local
     $ make && sudo make install
     $ export PATH=/usr/local/bin:$PATH
 
-Configure and build wxWidgets (static library on linux):
+On Linux, a static library is built as follows:
 
     $ export CFLAGS=-fPIC
     $ export CXXFLAGS=-fPIC
@@ -581,26 +574,28 @@ Configure and build wxWidgets (static library on linux):
     $ make && sudo make install
     $ export PATH=/usr/local/bin:$PATH
 
-Configure and build wxWidgets (on Mavericks - 10.9):
+On macOs, a static library compatible with macOS 13 (Ventura) and later is built
+as follows:
 
-    $ ./configure --with-cocoa --prefix=/usr/local
-    or without support for old versions and with static libs
-    $ ./configure --with-cocoa --prefix=/usr/local --with-macosx-version-min=10.9 --disable-shared
+    $ ./configure --prefix=/usr/local --with-macosx-version-min=13.0 --disable-shared
     $ make
     $ sudo make install
     $ export PATH=/usr/local/bin:$PATH
 
-Check that you got the correct wx-config
+Verify that the build and installation succeeded:
 
     $ which wx-config && wx-config --version-full
 
-Build Erlang/OTP
+Expected output is `/usr/local/bin/wx-config` on one line, followed by the full
+version number. For example, if you built version 3.2.2.1, the expected output is:
 
-    $ export PATH=/usr/local/bin:$PATH
-    $ cd $ERL_TOP
-    $ ./configure
-    $ make
-    $ sudo make install
+    /usr/local/bin/wx-config
+    3.2.2.1
+
+Build Erlang/OTP in the usual way. To verify that `wx` application is
+working run the following command:
+
+    $ erl -run wx demo
 
 
 #### Pre-built Source Release ####
@@ -751,33 +746,9 @@ passed to `configure`. One can force relative, or absolute links by passing
 phase. Note that such a request might cause a failure if the request cannot
 be satisfied.
 
+## Erlang/OTP test architectures ##
 
-### Running ###
-
-   [$ERL_TOP/HOWTO/INSTALL-CROSS.md]: INSTALL-CROSS.md
-   [$ERL_TOP/HOWTO/INSTALL-WIN32.md]: INSTALL-WIN32.md
-   [DESTDIR]: http://www.gnu.org/prep/standards/html_node/DESTDIR.html
-   [Building in Git]: #Advanced-configuration-and-build-of-ErlangOTP_Building_Within-Git
-   [Advanced Configure]: #Advanced-configuration-and-build-of-ErlangOTP_Configuring
-   [Pre-built Source Release]: #Advanced-configuration-and-build-of-ErlangOTP_Building_Prebuilt-Source-Release
-   [make and $ERL_TOP]: #Advanced-configuration-and-build-of-ErlangOTP_make-and-ERLTOP
-   [html documentation]: http://www.erlang.org/download/otp_doc_html_%OTP-VSN%.tar.gz
-   [man pages]: http://www.erlang.org/download/otp_doc_man_%OTP-VSN%.tar.gz
-   [the released source tar ball]: http://www.erlang.org/download/otp_src_%OTP-VSN%.tar.gz
-   [System Principles]: system/system_principles:system_principles
-   [native build]: #How-to-Build-and-Install-ErlangOTP
-   [cross build]: INSTALL-CROSS.md
-   [Required Utilities]: #Required-Utilities
-   [Optional Utilities]: #Optional-Utilities
-   [Building on a Mac]: #Advanced-configuration-and-build-of-ErlangOTP_Building_OS-X-Darwin
-   [Building with wxErlang]: #Advanced-configuration-and-build-of-ErlangOTP_Building_Building-with-wxErlang
-   [libatomic_ops]: https://github.com/ivmai/libatomic_ops/
-
-
-### Erlang/OTP test architectures ###
-
-
-Erlang/OTP are currently tested on the following hardware and Opererating systems.
+Erlang/OTP are currently tested on the following hardware and operating systems.
 This is not an exhaustive list, but we try to keep it as up to date as possible.
 
 Architecture
@@ -786,7 +757,7 @@ Architecture
 * Aarch32, Aarch64
 * powerpc, powerpc64le
 
-Operating System
+Operating system
 
 * Fedora 31
 * FreeBSD
@@ -799,3 +770,21 @@ Operating System
 * Ubuntu 10.04 - 20.04
 * Windows 10, Windows Server 2019
 
+   [$ERL_TOP/HOWTO/INSTALL-CROSS.md]: INSTALL-CROSS.md
+   [$ERL_TOP/HOWTO/INSTALL-WIN32.md]: INSTALL-WIN32.md
+   [DESTDIR]: http://www.gnu.org/prep/standards/html_node/DESTDIR.html
+   [Building in Git]: #Advanced-configuration-and-build-of-ErlangOTP_Building_Within-Git
+   [Advanced Configure]: #Advanced-configuration-and-build-of-ErlangOTP_Configuring
+   [Pre-built Source Release]: #Advanced-configuration-and-build-of-ErlangOTP_Building_Prebuilt-Source-Release
+   [make and $ERL_TOP]: #Advanced-configuration-and-build-of-ErlangOTP_make-and-ERLTOP
+   [html documentation]: https://github.com/erlang/otp/releases/download/OTP-%OTP-VSN%/otp_doc_html_%OTP-VSN%.tar.gz
+   [man pages]: https://github.com/erlang/otp/releases/download/OTP-%OTP-VSN%/otp_doc_man_%OTP-VSN%.tar.gz
+   [the released source tar ball]: https://github.com/erlang/otp/releases/download/OTP-%OTP-VSN%/otp_src_%OTP-VSN%.tar.gz
+   [System Principles]: system/system_principles:system_principles
+   [native build]: #How-to-Build-and-Install-ErlangOTP
+   [cross build]: INSTALL-CROSS.md
+   [Required Utilities]: #Required-Utilities
+   [Optional Utilities]: #Optional-Utilities
+   [Building on a Mac]: #Advanced-configuration-and-build-of-ErlangOTP_Building_macOS-Darwin
+   [Building with wxErlang]: #Advanced-configuration-and-build-of-ErlangOTP_Building_Building-with-wxErlang
+   [libatomic_ops]: https://github.com/ivmai/libatomic_ops/

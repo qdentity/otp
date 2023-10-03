@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2020-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2020-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@
 %%
 
 -module(erl_erts_errors).
--export([format_error/2]).
+-export([format_error/2, format_bs_fail/2]).
 
 -spec format_error(Reason, StackTrace) -> ErrorMap when
       Reason :: term(),
@@ -42,6 +42,26 @@ format_error(Reason, [{M,F,As,Info}|_]) ->
                   []
           end,
     format_error_map(Res, 1, #{}).
+
+-spec format_bs_fail(Reason, StackTrace) -> ErrorMap when
+      Reason :: term(),
+      StackTrace :: erlang:stacktrace(),
+      ErrorMap :: #{'general' => unicode:chardata()}.
+
+format_bs_fail(Reason, [{_,_,_,Info}|_]) ->
+    ErrorInfoMap = proplists:get_value(error_info, Info, #{}),
+    case ErrorInfoMap of
+        #{cause := {Segment0,Type,Error,Value}} ->
+            Segment1 = maps:get(override_segment_position, ErrorInfoMap, Segment0),
+            PrettyPrinter = maps:get(pretty_printer, ErrorInfoMap, fun possibly_truncated/1),
+            Str0 = do_format_bs_fail(Reason, Type, Error, Value, PrettyPrinter),
+            Str1 = io_lib:format("segment ~p of type '~ts': ~ts",
+                                 [Segment1,Type,Str0]),
+            Str = iolist_to_binary(Str1),
+            #{general => Str, reason => <<"construction of binary failed">>};
+        #{} ->
+            #{}
+    end.
 
 format_atomics_error(new, [Size,Options], Reason, Cause) ->
     case Reason of
@@ -332,8 +352,19 @@ format_erlang_error(demonitor, [_], _) ->
 format_erlang_error(demonitor, [Ref,Options], _) ->
     Arg1 = must_be_ref(Ref),
     [Arg1,maybe_option_list_error(Options, Arg1)];
-format_erlang_error(display_string, [_], _) ->
+format_erlang_error(display_string, [_], none) ->
     [not_string];
+format_erlang_error(display_string, [_], Cause) ->
+    maybe_posix_message(Cause, false);
+format_erlang_error(display_string, [Device, _], none) ->
+    case lists:member(Device,[stdin,stdout,stderr]) of
+        true ->
+            [[],not_string];
+        false ->
+            [not_device,[]]
+    end;
+format_erlang_error(display_string, [_, _], Cause) ->
+    maybe_posix_message(Cause, true);
 format_erlang_error(element, [Index, Tuple], _) ->
     [if
          not is_integer(Index) ->
@@ -575,7 +606,7 @@ format_erlang_error(monitor_node, [Node,Flag], _) ->
 format_erlang_error(monitor_node, [Node,Flag,Options], Cause) ->
     Arg3 = case Cause of
                badopt -> bad_option;
-               true -> []
+               _ -> []
            end,
     case format_erlang_error(monitor_node, [Node,Flag], Cause) of
         [[],[]] ->
@@ -587,8 +618,56 @@ format_erlang_error(monotonic_time, [_], _) ->
     [bad_time_unit];
 format_erlang_error(node, [_], _) ->
     [not_pid];
-format_erlang_error(nodes, [_], _) ->
+format_erlang_error(nodes, [NTVal], _) when is_atom(NTVal) ->
     [<<"not a valid node type">>];
+format_erlang_error(nodes, [NTVal], _) when is_list(NTVal) ->
+    [<<"not a list of valid node types">>];
+format_erlang_error(nodes, [_NTVal], _) ->
+    [<<"not a valid node type or list of valid node types">>];
+format_erlang_error(nodes, [NTVal, Opts], _) ->
+    ValidNodeTypes = [this, connected, visible, hidden, known],
+    [if is_atom(NTVal) ->
+             case lists:member(NTVal, ValidNodeTypes) of
+                 true -> [];
+                 false -> <<"not a valid node type">>
+             end;
+        is_list(NTVal) ->
+             try
+                 lists:foreach(
+                   fun (NT) ->
+                           case lists:member(NT, ValidNodeTypes) of
+                               true -> [];
+                               false -> throw(invalid)
+                           end
+                   end,
+                   NTVal),
+                 []
+             catch
+                 throw:invalid ->
+                     <<"not a list of valid node types">>
+             end;
+        true ->
+             <<"not a valid node type or list of valid node types">>
+     end,
+     if is_map(Opts) ->
+             try
+                 maps:foreach(
+                   fun (connection_id, Bool) when is_boolean(Bool) ->
+                           ok;
+                       (node_type, Bool) when is_boolean(Bool) ->
+                           ok;
+                       (_, _) ->
+                           throw(invalid)
+                   end,
+                   Opts),
+                 []
+             catch
+                 throw:invalid ->
+                     <<"invalid options in map">>
+             end;
+        true ->
+             not_map
+     end];
 format_erlang_error(open_port, [Name, Settings], Cause) ->
     case Cause of
         badopt ->
@@ -734,7 +813,7 @@ format_erlang_error(send, [_,_,Options], Cause) ->
     case Cause of
         badopt ->
             [[],[],must_be_list(Options, bad_option)];
-        true ->
+        _ ->
             [bad_destination]
     end;
 format_erlang_error(send_after, Args, Cause) ->
@@ -1034,6 +1113,76 @@ format_erlang_error(whereis, [_], _) ->
 format_erlang_error(_, _, _) ->
     [].
 
+do_format_bs_fail(system_limit, binary, binary, size, _PrettyPrinter) ->
+    %% On a 32-bit system, the size of the binary is 256 MiB or
+    %% more, which is not supported because the size in bits does not
+    %% fit in a 32-bit signed integer. In practice, an application
+    %% that uses any binaries of that size is likely to quickly run
+    %% out of memory.
+    io_lib:format(<<"the size of the binary/bitstring is too large (exceeding ~p bits)">>,
+                  [(1 bsl 31) - 1]);
+do_format_bs_fail(system_limit, _Type, size, Value, _PrettyPrinter) ->
+    io_lib:format(<<"the size ~p is too large">>, [Value]);
+do_format_bs_fail(badarg, Type, Info, Value, PrettyPrinter) ->
+    do_format_bs_fail(Type, Info, Value, PrettyPrinter).
+
+do_format_bs_fail(float, invalid, Value, _PrettyPrinter) ->
+    io_lib:format(<<"expected one of the supported sizes 16, 32, or 64 but got: ~p">>,
+                  [Value]);
+do_format_bs_fail(float, no_float, Value, PrettyPrinter) ->
+    io_lib:format(<<"the value ~ts is outside the range expressible as a float">>,
+                  [PrettyPrinter(Value)]);
+do_format_bs_fail(binary, unit, Value, PrettyPrinter) ->
+    io_lib:format(<<"the size of the value ~ts is not a multiple of the unit for the segment">>,
+                  [PrettyPrinter(Value)]);
+do_format_bs_fail(_Type, short, Value, PrettyPrinter) ->
+    io_lib:format(<<"the value ~ts is shorter than the size of the segment">>,
+                  [PrettyPrinter(Value)]);
+do_format_bs_fail(_Type, size, Value, PrettyPrinter) ->
+    io_lib:format(<<"expected a non-negative integer as size but got: ~ts">>,
+                  [PrettyPrinter(Value)]);
+do_format_bs_fail(Type, type, Value, PrettyPrinter) ->
+    F = <<"expected a",
+          (case Type of
+               binary ->
+                   <<" binary">>;
+               float ->
+                   <<" float or an integer">>;
+           integer ->
+                   <<"n integer">>;
+               _ ->
+                   <<" non-negative integer encodable as ", (atom_to_binary(Type))/binary>>
+           end)/binary, " but got: ~ts">>,
+    io_lib:format(F, [PrettyPrinter(Value)]).
+
+possibly_truncated(Int) when is_integer(Int) ->
+    Bin = integer_to_binary(Int),
+    case byte_size(Bin) of
+        Size when Size < 48 ->
+            Bin;
+        Size ->
+            <<Prefix:12/binary, _:(Size-24)/binary, Suffix/binary>> = Bin,
+            [Prefix, <<"...">>, Suffix]
+    end;
+possibly_truncated(Bin) when is_bitstring(Bin) ->
+    case byte_size(Bin) of
+        Size when Size < 16 ->
+            io_lib:format("~p", [Bin]);
+        Size ->
+            <<Prefix0:8/binary, _:(Size-10)/binary, Suffix0/bitstring>> = Bin,
+            Prefix1 = iolist_to_binary(io_lib:format("~w", [Prefix0])),
+            <<Prefix:(byte_size(Prefix1)-2)/binary,_/binary>> = Prefix1,
+            <<_:2/unit:8,Suffix/binary>> = iolist_to_binary(io_lib:format("~w", [Suffix0])),
+            [Prefix, <<"...,">>, Suffix]
+    end;
+%% possibly_truncated(Value) when is_bitstring(Value) ->
+possibly_truncated(Value) ->
+    io_lib:format("~P", [Value,20]).
+
+%%%
+%%% Utility functions.
+%%%
+
 list_to_something(List, Error) ->
     try length(List) of
         _ ->
@@ -1292,8 +1441,23 @@ is_flat_char_list([H|T]) ->
 is_flat_char_list([]) -> true;
 is_flat_char_list(_) -> false.
 
+maybe_posix_message(Cause, HasDevice) ->
+    case erl_posix_msg:message(Cause) of
+        "unknown POSIX error" ++ _ ->
+            unknown;
+        PosixStr when HasDevice ->
+            [unicode:characters_to_binary(
+               io_lib:format("~ts (~tp)",[PosixStr, Cause]))];
+        PosixStr when not HasDevice ->
+            [{general,
+              unicode:characters_to_binary(
+                io_lib:format("~ts (~tp)",[PosixStr, Cause]))}]
+    end.
+
 format_error_map([""|Es], ArgNum, Map) ->
     format_error_map(Es, ArgNum + 1, Map);
+format_error_map([{general, E}|Es], ArgNum, Map) ->
+    format_error_map(Es, ArgNum, Map#{ general => expand_error(E)});
 format_error_map([E|Es], ArgNum, Map) ->
     format_error_map(Es, ArgNum + 1, Map#{ArgNum => expand_error(E)});
 format_error_map([], _, Map) ->
@@ -1381,6 +1545,8 @@ expand_error(not_ref) ->
     <<"not a reference">>;
 expand_error(not_string) ->
     <<"not a list of characters">>;
+expand_error(not_device) ->
+    <<"not a valid device type">>;
 expand_error(not_tuple) ->
     <<"not a tuple">>;
 expand_error(range) ->

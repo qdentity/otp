@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 1999-2021. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2023. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,19 +21,23 @@
 -module(match_spec_SUITE).
 
 -export([all/0, suite/0]).
--export([test_1/1, test_2/1, test_3/1, caller_and_return_to/1, bad_match_spec_bin/1,
+-export([init_per_testcase/2, end_per_testcase/2]).
+-export([test_1/1, test_2/1, test_3/1, test_4a/1, test_4b/1, test_5a/1,
+         test_5b/1, test_6/1, caller_and_return_to/1, bad_match_spec_bin/1,
 	 trace_control_word/1, silent/1, silent_no_ms/1, silent_test/1,
 	 ms_trace2/1, ms_trace3/1, ms_trace_dead/1, boxed_and_small/1,
 	 destructive_in_test_bif/1, guard_exceptions/1,
 	 empty_list/1,
-	 unary_plus/1, unary_minus/1, moving_labels/1]).
+	 unary_plus/1, unary_minus/1, moving_labels/1,
+         guard_bifs/1]).
 -export([fpe/1]).
 -export([otp_9422/1]).
 -export([faulty_seq_trace/1, do_faulty_seq_trace/0]).
 -export([maps/1]).
--export([runner/2, loop_runner/3]).
+-export([runner/2, loop_runner/3, fixed_runner/2]).
 -export([f1/1, f2/2, f3/2, fn/1, fn/2, fn/3]).
 -export([do_boxed_and_small/0]).
+-export([f1_test4/1, f2_test4/2, f3_test4/2]).
 
 % This test suite assumes that tracing in general works. What we test is
 % the match spec functionality.
@@ -45,7 +49,8 @@ suite() ->
      {timetrap, {minutes, 1}}].
 
 all() ->
-    [test_1, test_2, test_3, caller_and_return_to, bad_match_spec_bin,
+    [test_1, test_2, test_3, test_4a, test_4b, test_5a, test_5b, test_6,
+     caller_and_return_to, bad_match_spec_bin,
      trace_control_word, silent, silent_no_ms, silent_test, ms_trace2,
      ms_trace3, ms_trace_dead, boxed_and_small, destructive_in_test_bif,
      guard_exceptions, unary_plus, unary_minus, fpe,
@@ -53,7 +58,13 @@ all() ->
      faulty_seq_trace,
      empty_list,
      otp_9422,
-     maps].
+     maps,
+     guard_bifs].
+
+init_per_testcase(_TestCase, Config) ->
+    Config.
+end_per_testcase(_TestCase, Config) ->
+    erts_test_utils:ept_check_leaked_nodes(Config).
 
 test_1(Config) when is_list(Config) ->
     tr(fun() -> ?MODULE:f1(a) end,
@@ -173,10 +184,148 @@ test_3(Config) when is_list(Config) ->
     collect(P1, [{trace, P1, call, {?MODULE, f2, [a, b]}, [true]}]),
     ok.
 
+%% Test `caller_line` trace with `call` and `global`
+test_4a(Config) when is_list(Config) ->
+    Fun = fun() -> ?MODULE:f3_test4(a, b) end,
+    Pat = [{'_', [],[{message, {caller_line}}]}],
+    P = spawn(?MODULE, runner, [self(), Fun]),
+    erlang:trace(P, true, [call]),
+    %% `global` is implied but we still mention explicitly
+    erlang:trace_pattern({?MODULE, f2_test4, 2}, Pat, [global]),
+    erlang:trace_pattern({?MODULE, f1_test4, 1}, Pat, [global]),
+    collect(P, [{trace, P, call, {?MODULE, f2_test4, [a, b]}, {?MODULE, f3_test4, 2, {"test4.erl", 3}}},
+                {trace, P, call, {?MODULE, f1_test4, [a]}, {?MODULE, f3_test4, 2, {"test4.erl", 3}}}]),
+    ok.
+
+%% Test `caller_line` trace with `return_trace`, `call` and `global`
+test_4b(Config) when is_list(Config) ->
+    Fun = fun() -> ?MODULE:f3_test4(a, b) end,
+    P = spawn(?MODULE, runner, [self(), Fun]),
+    Pat = [{'_', [], [{return_trace}, {message, {caller_line}}]}],
+    erlang:trace(P, true, [call]),
+    %% `global` is implied but we still mention explicitly
+    erlang:trace_pattern({?MODULE, f2_test4, 2}, Pat, [global]),
+    erlang:trace_pattern({?MODULE, f1_test4, 1}, Pat, [global]),
+    collect(P, [{trace, P, call, {?MODULE, f2_test4, [a, b]}, {?MODULE, f3_test4, 2, {"test4.erl", 3}}},
+                {trace, P, call, {?MODULE, f1_test4, [a]}, {?MODULE, f3_test4, 2, {"test4.erl", 3}}},
+                {trace, P, return_from, {?MODULE, f1_test4, 1}, {a}},
+                {trace, P, return_from, {?MODULE, f2_test4, 2}, {a}}
+               ]),
+    ok.
+
+%% Test `caller_line` trace with `call` and `local`
+test_5a(Config) when is_list(Config) ->
+    Fun = fun() -> f3_test5(a, b) end,
+    Pat = [{'_', [],[{message, {caller_line}}]}],
+    P = spawn(?MODULE, runner, [self(), Fun]),
+    erlang:trace(P, true, [call]),
+    %% Notice `local` function tracing
+    erlang:trace_pattern({?MODULE, f2_test5, 2}, Pat, [local]),
+    erlang:trace_pattern({?MODULE, f1_test5, 1}, Pat, [local]),
+    collect(P, [{trace, P, call, {?MODULE, f2_test5, [a, b]}, {?MODULE, f3_test5, 2, {"test5.erl", 3}}},
+                {trace, P, call, {?MODULE, f1_test5, [a]}, {?MODULE, f3_test5, 2, {"test5.erl", 3}}}]),
+    ok.
+
+%% Test `caller_line` trace with `return_trace`, `call` and `local`
+test_5b(Config) when is_list(Config) ->
+    Fun = fun() -> f3_test5(a, b) end,
+    P = spawn(?MODULE, runner, [self(), Fun]),
+    Pat = [{'_', [], [{return_trace}, {message, {caller_line}}]}],
+    erlang:trace(P, true, [call]),
+    %% Notice `local` function tracing
+    erlang:trace_pattern({?MODULE, f2_test5, 2}, Pat, [local]),
+    erlang:trace_pattern({?MODULE, f1_test5, 1}, Pat, [local]),
+    collect(P, [{trace, P, call, {?MODULE, f2_test5, [a, b]}, {?MODULE, f3_test5, 2, {"test5.erl", 3}}},
+                {trace, P, call, {?MODULE, f1_test5, [a]}, {?MODULE, f3_test5, 2, {"test5.erl", 3}}},
+                {trace, P, return_from, {?MODULE, f1_test5, 1}, {a}},
+                {trace, P, return_from, {?MODULE, f2_test5, 2}, {a}}
+               ]),
+    ok.
+
+%% Test current_stacktrace/[0,1]
+test_6(Config) when is_list(Config) ->
+    %% Test non small argument
+    case catch erlang:trace_pattern({?MODULE, f2_test6, '_'},
+                                    [{'_', [], [{message, {current_stacktrace, a}}]}]) of
+        {'EXIT', {badarg, _}} -> ok;
+        Other1 -> ct:fail({noerror, Other1})
+    end,
+
+    %% Test negative
+    case catch erlang:trace_pattern({?MODULE, f2_test6, '_'},
+                                    [{'_', [], [{message, {current_stacktrace, -1}}]}]) of
+        {'EXIT', {badarg, _}} -> ok;
+        Other2 -> ct:fail({noerror, Other2})
+    end,
+
+    Fun = fun() -> f5_test6() end,
+    Pat = [{'_', [], [{message, {current_stacktrace}}]}],
+    P = spawn(?MODULE, fixed_runner, [self(), Fun]),
+    erlang:trace(P, true, [call]),
+    erlang:trace_pattern({?MODULE, f2_test6, 1}, Pat, [local]),
+    erlang:trace_pattern({?MODULE, f1_test6, 0}, Pat, [local]),
+    collect(P, [{trace, P, call, {?MODULE, f2_test6, [f1]},
+                   [
+                    {?MODULE, f3_test6, 0, [{file, "test6.erl"}, {line, 21}]},
+                    {?MODULE, f5_test6, 0, [{file, "test6.erl"}, {line, 14}]},
+                    {?MODULE, fixed_runner, 2, [{file, "test6.erl"}, {line, 7}]}
+                   ]},
+                {trace, P, call, {?MODULE, f1_test6, []},
+                   [
+                    {?MODULE, f2_test6, 1, [{file, "test6.erl"}, {line, 25}]},
+                    {?MODULE, f3_test6, 0, [{file, "test6.erl"}, {line, 21}]},
+                    {?MODULE, f5_test6, 0, [{file, "test6.erl"}, {line, 14}]},
+                    {?MODULE, fixed_runner, 2, [{file, "test6.erl"}, {line, 7}]}
+                   ]}
+               ]),
+
+    Pat2 = [{'_', [], [{message, {current_stacktrace, 3}}]}],
+    P2 = spawn(?MODULE, fixed_runner, [self(), Fun]),
+    erlang:trace(P2, true, [call]),
+    erlang:trace_pattern({?MODULE, f2_test6, 1}, Pat2, [local]),
+    erlang:trace_pattern({?MODULE, f1_test6, 0}, Pat2, [local]),
+    collect(P2, [{trace, P2, call, {?MODULE, f2_test6, [f1]},
+                   [
+                    {?MODULE, f3_test6, 0, [{file, "test6.erl"}, {line, 21}]},
+                    {?MODULE, f5_test6, 0, [{file, "test6.erl"}, {line, 14}]},
+                    {?MODULE, fixed_runner, 2, [{file, "test6.erl"}, {line, 7}]}
+                   ]},
+                {trace, P2, call, {?MODULE, f1_test6, []},
+                   [
+                    {?MODULE, f2_test6, 1, [{file, "test6.erl"}, {line, 25}]},
+                    {?MODULE, f3_test6, 0, [{file, "test6.erl"}, {line, 21}]},
+                    {?MODULE, f5_test6, 0, [{file, "test6.erl"}, {line, 14}]}
+                   ]}
+               ]),
+
+    %% Test when erts_backtrace_depth is less than depth
+    OldDepth = erlang:system_flag(backtrace_depth, 2),
+    try
+        P3 = spawn(?MODULE, fixed_runner, [self(), Fun]),
+        erlang:trace(P3, true, [call]),
+        erlang:trace_pattern({?MODULE, f2_test6, 1}, Pat2, [local]),
+        erlang:trace_pattern({?MODULE, f1_test6, 0}, Pat2, [local]),
+        collect(P3, [{trace, P3, call, {?MODULE, f2_test6, [f1]},
+                       [
+                        {?MODULE, f3_test6, 0, [{file, "test6.erl"}, {line, 21}]},
+                        {?MODULE, f5_test6, 0, [{file, "test6.erl"}, {line, 14}]}
+                       ]},
+                    {trace, P3, call, {?MODULE, f1_test6, []},
+                       [
+                        {?MODULE, f2_test6, 1, [{file, "test6.erl"}, {line, 25}]},
+                        {?MODULE, f3_test6, 0, [{file, "test6.erl"}, {line, 21}]}
+                       ]}
+                   ])
+    after
+        erlang:system_flag(backtrace_depth, OldDepth)
+    end,
+
+    ok.
+
 %% Test that caller and return to work as they should
 %% There was a bug where caller would be undefined when return_to was set
 %% for r the bif erlang:put().
-caller_and_return_to(Config) ->
+caller_and_return_to(Config) when is_list(Config) ->
     tr(
       fun do_put_wrapper/0,
       fun (Tracee) ->
@@ -686,10 +835,9 @@ destructive_in_test_bif(Config) when is_list(Config) ->
 
 %% Test that the comparison between boxed and small does not crash emulator
 boxed_and_small(Config) when is_list(Config) ->
-    {ok, Node} = start_node(match_spec_suite_other),
+    {ok, Peer, Node} = ?CT_PEER(),
     ok = rpc:call(Node,?MODULE,do_boxed_and_small,[]),
-    stop_node(Node),
-    ok.
+    peer:stop(Peer).
 
 do_boxed_and_small() ->
     {ok, false, _, _} = erlang:match_spec_test({0,3},[{{1.47,'_'},[],['$_']}],table),
@@ -700,10 +848,9 @@ do_boxed_and_small() ->
 
 %% Test that faulty seq_trace_call does not crash emulator
 faulty_seq_trace(Config) when is_list(Config) ->
-    {ok, Node} = start_node(match_spec_suite_other),
+    {ok, Peer, Node} = ?CT_PEER(),
     ok = rpc:call(Node,?MODULE,do_faulty_seq_trace,[]),
-    stop_node(Node),
-    ok.
+    peer:stop(Peer).
 
 do_faulty_seq_trace() ->
     {ok,'EXIT',_,_} = erlang:match_spec_test([],[{'_',[],[{message,{set_seq_token,yxa,true}}]}],trace),
@@ -1000,7 +1147,36 @@ moving_labels(Config) when is_list(Config) ->
 	erlang:match_spec_test({true,false}, Ms2, table),
 
     ok.
-    
+
+-record(dummy_record, {}).
+
+%% GH-7045: Some guard BIFs were unavailable in match specifications.
+guard_bifs(_Config) ->
+    Matches =
+        [begin
+             BIF = list_to_tuple([F | lists:duplicate(A, '$1')]),
+             erlang:match_spec_test(Data, [{{'$1'}, [BIF], [{{'$1'}}]}], Kind)
+         end
+         || {F, A} <- erlang:module_info(functions),
+            {Data, Kind} <- [{{a}, table}, {[a], trace}],
+            F =/= is_record, %% Has special requirements, checked below.
+            erl_internal:arith_op(F, A) orelse
+                erl_internal:bool_op(F, A) orelse
+                erl_internal:comp_op(F, A) orelse
+                erl_internal:guard_bif(F, A)],
+    [] = [T || {error, _}=T <- Matches],
+
+    IsRecord = {is_record,
+                '$1',
+                dummy_record,
+                record_info(size, dummy_record)},
+    [{ok, _, [], []} =
+         erlang:match_spec_test(Data, [{{'$1'}, [IsRecord], [{{'$1'}}]}], Kind)
+     || {Data, Kind} <- [{{#dummy_record{}}, table},
+                         {[#dummy_record{}], trace}]],
+
+    ok.
+
 tr(Fun, MFA, Pat, Expected) ->
     tr(Fun, MFA, [call], Pat, [global], Expected).
 
@@ -1155,11 +1331,54 @@ fbinmatch(<<>>, Acc) -> Acc.
 id(X) ->
     X.
 
-start_node(Name) ->
-    Pa = filename:dirname(code:which(?MODULE)),
-    Cookie = atom_to_list(erlang:get_cookie()),
-    test_server:start_node(Name, slave, 
-                           [{args, "-setcookie " ++ Cookie ++" -pa " ++ Pa}]).
+-file("test4.erl", 1).
+f3_test4(X,Y) ->
+    ?MODULE:f2_test4(X,Y), % Line 3 - This line number should remain stable
+    ok.
 
-stop_node(Node) ->
-    test_server:stop_node(Node).
+f2_test4(X, _) ->
+    ?MODULE:f1_test4(X).
+
+f1_test4(X) ->
+    {X}.
+
+-file("test5.erl", 1).
+f3_test5(X,Y) ->
+    f2_test5(X,Y), % Line 3 - This line number should remain stable
+    ok.
+
+f2_test5(X, _) ->
+    f1_test5(X).
+
+f1_test5(X) ->
+    {X}.
+
+-file("test6.erl", 1).
+fixed_runner(Collector, Fun) ->
+    receive
+        {go, Collector} ->
+            go
+    end,
+    Fun(), % Line 7 - This line number should remain stable
+    receive
+        {done, Collector} ->
+            Collector ! {gone, self()}
+    end.
+
+f5_test6() ->
+    f3_test6(), % Line 14 - This line number should remain stable
+    f4_test6().
+
+f4_test6() ->
+    f4.
+
+f3_test6() ->
+    f2_test6(f1), % Line 21 - This line number should remain stable
+    f3.
+
+f2_test6(X) ->
+    X = f1_test6(), % Line 25 - This line number should remain stable
+    f2.
+
+f1_test6() ->
+    f1.

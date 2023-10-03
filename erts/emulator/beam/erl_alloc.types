@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 2003-2021. All Rights Reserved.
+# Copyright Ericsson AB 2003-2023. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -254,6 +254,7 @@ type	BINARY_FIND	SHORT_LIVED	PROCESSES	binary_find
 type	CRASH_DUMP	STANDARD	SYSTEM		crash_dump
 type	DIST_TRANSCODE  SHORT_LIVED	SYSTEM		dist_transcode_context
 type	RLA_BLOCK_CNTRS	LONG_LIVED	SYSTEM		release_literal_area_block_counters
+type	SIGQ_BUFFERS	FIXED_SIZE	PROCESSES	process_signal_queue_buffers
 
 type	THR_Q_EL	STANDARD   	SYSTEM		thr_q_element
 type	THR_Q_EL_SL	FIXED_SIZE	SYSTEM		sl_thr_q_element
@@ -273,6 +274,7 @@ type	THR_PRGR_DATA	LONG_LIVED	SYSTEM		thr_prgr_data
 type	T_THR_PRGR_DATA	SHORT_LIVED	SYSTEM		temp_thr_prgr_data
 type	RELEASE_LAREA	SHORT_LIVED	SYSTEM		release_literal_area
 type	SIG_DATA	SHORT_LIVED	PROCESSES	signal_data
+type	SIG_YIELD_DATA	SHORT_LIVED	PROCESSES	signal_yield_data
 type	DIST_DEMONITOR	SHORT_LIVED	PROCESSES	dist_demonitor
 type	CML_CLEANUP	SHORT_LIVED	SYSTEM		connection_ml_cleanup
 type	ML_YIELD_STATE	SHORT_LIVED	SYSTEM		monitor_link_yield_state
@@ -303,6 +305,8 @@ type	LL_MPATHS	LONG_LIVED	SYSTEM		ll_migration_paths
 type	SL_MPATHS	SHORT_LIVED	SYSTEM		sl_migration_paths
 
 type	T2B_DETERMINISTIC SHORT_LIVED	PROCESSES	term_to_binary_deterministic
+
+type    DSIG_HNDL_NTFY  SHORT_LIVED     PROCESSES       dirty_signal_handler_notification
 
 #
 # Types used for special emulators

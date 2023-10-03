@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1997-2021. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -42,7 +42,7 @@ suite() -> [{ct_hooks,[{ts_install_cth,[{nodenames,2}]}]}].
 
 %% Verify that Mnesia really is a distributed real-time DBMS.
 %% This is the test suite of the Mnesia DBMS. The test suite
-%% covers many aspects of usage and is indended to be developed
+%% covers many aspects of usage and is intended to be developed
 %% incrementally. The test suite is divided into a hierarchy of test
 %% suites where the leafs actually implements the test cases.
 %% The intention of each test case and sub test suite can be
@@ -162,8 +162,8 @@ clean_up_suite(suite) ->
     [];
 clean_up_suite(Config) when is_list(Config)->
     mnesia:kill(),
-    Slaves = mnesia_test_lib:lookup_config(nodenames, Config),
-    Nodes = lists:delete(node(), Slaves),
+    NodeNames = mnesia_test_lib:lookup_config(nodenames, Config),
+    Nodes = lists:delete(node(), NodeNames),
     rpc:multicall(Nodes, erlang, halt, []),
     ok.
 

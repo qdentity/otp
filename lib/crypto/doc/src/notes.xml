@@ -4,7 +4,7 @@
 <chapter>
   <header>
     <copyright>
-      <year>1999</year><year>2021</year>
+      <year>1999</year><year>2023</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -30,6 +30,459 @@
     <file>notes.xml</file>
   </header>
   <p>This document describes the changes made to the Crypto application.</p>
+
+<section><title>Crypto 5.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix VM crash caused by <c>crypto being</c> purged and
+	    reloaded (by init:restart for example) on OS with musl
+	    libc (such as Alpine linux).</p>
+          <p>
+	    Own Id: OTP-18670 Aux Id: GH-7436, PR-7450 </p>
+        </item>
+        <item>
+          <p>
+	    Improved understanding of LibreSSL versions. Support
+	    chacha20 and chacha20_poly1305 for LibreSSL 3.7. Reflect
+	    removal of support for the DSS/DSA algorithm which was
+	    done in LibreSSL 2.6.1.</p>
+          <p>
+	    Own Id: OTP-18758 Aux Id: PR-7209 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    FIPS supported by <c>crypto</c> for OpenSSL 3.0.* and
+	    3.1.*.</p>
+          <p>
+	    Own Id: OTP-18666 Aux Id: PR-7392 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Crypto 5.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix cmac_update aes_128_cbc for LibreSSL.</p>
+          <p>
+	    Own Id: OTP-18571</p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Add support for SHAKE128 and SHAKE256.</p>
+          <p>
+	    Own Id: OTP-18204 Aux Id: PR-6203 </p>
+        </item>
+        <item>
+          <p>
+	    Make the <c>-DOPENSSL_API_COMPAT</c> flag work without
+	    warnings.</p>
+          <p>
+	    Own Id: OTP-18206 Aux Id: PR-6167 </p>
+        </item>
+        <item>
+          <p>
+	    Replace size/1 with either tuple_size/1 or byte_size/1</p>
+          <p>
+	    The <c>size/1</c> BIF is not optimized by the JIT, and
+	    its use can result in worse types for Dialyzer.</p>
+          <p>
+	    When one knows that the value being tested must be a
+	    tuple, <c>tuple_size/1</c> should always be preferred.</p>
+          <p>
+	    When one knows that the value being tested must be a
+	    binary, <c>byte_size/1</c> should be preferred. However,
+	    <c>byte_size/1</c> also accepts a bitstring (rounding up
+	    size to a whole number of bytes), so one must make sure
+	    that the call to <c>byte_size/</c> is preceded by a call
+	    to <c>is_binary/1</c> to ensure that bitstrings are
+	    rejected. Note that the compiler removes redundant calls
+	    to <c>is_binary/1</c>, so if one is not sure whether
+	    previous code had made sure that the argument is a
+	    binary, it does not harm to add an <c>is_binary/1</c>
+	    test immediately before the call to <c>byte_size/1</c>.</p>
+          <p>
+	    Own Id: OTP-18405 Aux Id:
+	    GH-6672,PR-6702,PR-6768,PR-6700,PR-6769,PR-6812,PR-6814 </p>
+        </item>
+        <item>
+	    <p> Handling of <c>on_load</c> modules during boot has
+	    been improved by adding an extra step in the boot order
+	    for embedded mode that runs all <c>on_load</c> handlers,
+	    instead of relying on explicit invocation of them, later,
+	    when the kernel supervision tree starts. </p><p> This is
+	    mostly a code improvement and OTP internal simplification
+	    to avoid future bugs and to simplify code maintenance.
+	    </p>
+          <p>
+	    Own Id: OTP-18447</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Crypto 5.1.4.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Fix VM crash caused by <c>crypto being</c> purged and
+	    reloaded (by init:restart for example) on OS with musl
+	    libc (such as Alpine linux).</p>
+          <p>
+	    Own Id: OTP-18670 Aux Id: GH-7436, PR-7450 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Crypto 5.1.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    With this change, random errors are fixed for
+	    crypto:generate_key calls with OpenSSL 3.</p>
+          <p>
+	    Own Id: OTP-18555</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Crypto 5.1.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A user defined runtime library path configured using
+	    <c>--with-ssl-rpath=&lt;PATHS&gt;</c> could fail to be
+	    enabled.</p>
+          <p>
+	    Own Id: OTP-18384 Aux Id: PR-6596 </p>
+        </item>
+        <item>
+          <p>
+	    Ensure that <c>configure</c> fails if a user defined
+	    runtime library path has been passed by the user, but
+	    cannot set.</p>
+          <p>
+	    Own Id: OTP-18408</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Crypto 5.1.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Fix configure with <c>--with-ssl</c> and
+	    <c>--disable-dynamic-ssl-lib</c> on Windows.</p>
+          <p>
+	    Own Id: OTP-18147 Aux Id: GH-6024, PR-6056 </p>
+        </item>
+        <item>
+	    <p> Remove all references correctly in the garbage
+	    collection if an engine handle was not explicit unloaded.
+	    </p>
+          <p>
+	    Own Id: OTP-18152</p>
+        </item>
+        <item>
+	    <p>Changed the behaviour of the engine load/unload
+	    functions</p> <p> The engine load/unload functions have
+	    got changed semantics to get a more consistent behaviour
+	    and work correct when variables are garbage collected.
+	    </p> <p> The load functions now don't register the
+	    methods for the engine to replace. That will now be
+	    handled with the new functions
+	    engine_register/engine_unregister if needed. </p> <p>
+	    Some functions are removed from the documentation and
+	    therefor the API, but they are left in the code for
+	    compatibility. </p> <list> <item>engine_load/4: is now
+	    the same as engine_load/3</item> <item>engine_unload/2:
+	    is now the same as engine_unload/1</item>
+	    <item>ensure_engine_loaded/3: is now the same as
+	    ensure_engine_loaded/2</item>
+	    <item>ensure_engine_unloaded/1, ensure_engine_unloaded/2:
+	    is now the same as engine_unload/1</item> </list>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-18172 Aux Id: ERIERL-826 </p>
+        </item>
+        <item>
+          <p>
+	    Fixed a naming bug for AES-CFB and Blowfish-CFB/OFB when
+	    linked with OpenSSL 3.0 cryptolib.</p>
+          <p>
+	    Own Id: OTP-18200</p>
+        </item>
+        <item>
+          <p>
+	    Sign/verify does now behave as in OTP-24 and earlier for
+	    eddsa.</p>
+          <p>
+	    Own Id: OTP-18205 Aux Id: GH-6219 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Pass elliptic curve names from crypto.erl to crypto's
+	    nif.</p>
+          <p>
+	    Own Id: OTP-18037</p>
+        </item>
+        <item>
+          <p>
+	    The configure option <c>--disable-deprecated-warnings</c>
+	    is removed. It was used for some releases when the
+	    support for OpenSSL 3.0 was not completed. It is not
+	    needed in OTP 25.</p>
+          <p>
+	    Own Id: OTP-18133</p>
+        </item>
+        <item>
+          <p>
+	    Crypto is now considered to be usable with the OpenSSL
+	    3.0 cryptolib for production code.</p>
+          <p>
+	    ENGINE and FIPS are not yet fully functional.</p>
+          <p>
+	    Own Id: OTP-18153</p>
+        </item>
+        <item>
+          <p>
+	    Do not exit if the legacy provider is missing in
+	    libcrypto 3.0.</p>
+          <p>
+	    Own Id: OTP-18217</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Crypto 5.1.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Note in the documentation that MODP (rfc3526) groups and
+	    OpenSSL 3.0 can give an error if a call to
+	    <c>crypto:generate_key/2</c> specifies a key length, and
+	    that length is to small.</p>
+          <p>
+	    Own Id: OTP-18046</p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    The cmac now uses only the 3.0 API</p>
+          <p>
+	    Own Id: OTP-18010</p>
+        </item>
+        <item>
+          <p>
+	    Documentation is now updated with which OpenSSL cryptolib
+	    versions that OTP currently is tested.</p>
+          <p>
+	    Own Id: OTP-18132</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Crypto 5.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Fix timing bug in ensure_engine_loaded</p> <p>When two
+	    ensure_engine_loaded() calls were done in parallel there
+	    was a possibility that a crypto lib function was called
+	    by both instead of just one of them which resulted in an
+	    error. This is solved by moving the implementation from
+	    erlang down into a NIF function that uses a mutex to
+	    protect the sensitive part.</p>
+          <p>
+	    Own Id: OTP-17858 Aux Id: ERIERL-728 </p>
+        </item>
+        <item>
+          <p>
+	    Remove faulty types <c>run_time_error()</c> and
+	    <c>descriptive_error()</c>.</p>
+          <p>
+	    Own Id: OTP-17984</p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Input for <c>configure</c> scripts adapted to
+	    <c>autoconf</c> 2.71.</p>
+          <p>
+	    Own Id: OTP-17414 Aux Id: PR-4967 </p>
+        </item>
+        <item>
+          <p>
+	    Add crypto:hash_equals/2</p>
+          <p>
+	    Own Id: OTP-17471 Aux Id: PR-4750 </p>
+        </item>
+        <item>
+          <p>
+	    Add /opt/homebrew/opt/openssl to standard locations to
+	    search for OpenSSL cryptolib.</p>
+          <p>
+	    Own Id: OTP-17561</p>
+        </item>
+        <item>
+          <p>
+	    <c>crypto_dyn_iv_init/3</c> and
+	    <c>crypto_dyn_iv_update/3</c> are deprecated.</p>
+          <p>
+	    Own Id: OTP-17870</p>
+        </item>
+        <item>
+          <p>
+	    The information in error messages are increased.</p>
+          <p>
+	    Previously the error was signaled with en error class
+	    exception <c>badarg</c>, <c>notsup</c> or <c>error</c>,
+	    and also in some more ways like an other exception or a
+	    return value in a non-standardized format.</p>
+          <p>
+	    Now it is an error-class exception
+	    <c>{notsup|badarg|error, InfoFromCfile,
+	    Description::string()}</c>.</p>
+          <p>
+	    The <c>InfoFromCfile</c> is a term with name and line
+	    number of the C-file where the error was found. This is
+	    primarily intended for a crypto maintainer or an advanced
+	    user to find the cause of complicated errors - maybe in
+	    crypto itself. The contents of that term might be changed
+	    in the future.</p>
+          <p>
+	    The <c>Description</c> is a clear text string that
+	    describes the error. In case of <c>badarg</c> and
+	    <c>notsup</c> the intention is that it should help the
+	    user to find the cause ("Bad key size" as an example).
+	    Specially for some <c>error</c> that are unlikely, the
+	    string may not be possible to understand without deep
+	    knowledge of the underlying cryptolib. Such messages are
+	    intended for a crypto maintainer.</p>
+          <p>
+	    The first element on call stack (the <c>S</c> in <c>try
+	    ... catch error:E:S .... end</c>) gives more information
+	    like the actual argument list in the call of crypto and
+	    the argument number (if possible) in the call to the NIF
+	    inside crypto.</p>
+          <p>
+	    The functions in crypto affected by this change are:</p>
+          <p>
+	    sign/4, sign/5, verify/5, verify/6,</p>
+          <p>
+	    generate_key/2, generate_key/3, compute_key/4,</p>
+          <p>
+	    hash/2, hash/4, hash_init/1, hash_update/4, hash_final/1,</p>
+          <p>
+	    mac/3,4, mac_init/3, mac_update/2, mac_final/2,</p>
+          <p>
+	    pbkdf2_hmac/5,</p>
+          <p>
+	    public_encrypt/4, private_decrypt/4, private_encrypt/4,
+	    public_decrypt/4</p>
+          <p>
+	    This schema was introduced earlier in:</p>
+          <p>
+	    crypto_init/3, crypto_init/4, crypto_update/2,
+	    crypto_final/1, crypto_get_data/1,</p>
+          <p>
+	    crypto_one_time/4, crypto_one_time/5,
+	    crypto_one_time_aead/6, crypto_one_time_aead/7</p>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-17965</p>
+        </item>
+        <item>
+          <p>
+	    Add Output Feedback mode (OFB) support for AES encryption
+	    / decryption for key sizes of 128, 192 and 256 bits.</p>
+          <p>
+	    Own Id: OTP-18067 Aux Id: PR-5866 </p>
+        </item>
+        <item>
+          <p>
+	    The cryptolib API deprecated in OpenSSL 3.0 is now no
+	    longer used with a few exceptions listed below.</p>
+          <p>
+	    Although OpenSSL 3.0.x itself is stable, its usage in
+	    OTP/crypto should still not be considered suitable for
+	    production code.</p>
+          <p>
+	    The use of ENGINEs is still disabled by default when
+	    using 3.0.</p>
+          <p>
+	    Deprecated functions are still called in the
+	    otp_test_engine.c (only used in tests), in mac.c
+	    (EVP_PKEY_new_CMAC_key) and five function calls in ec.c
+	    (EVP_PKEY_assign, EC_KEY_get_conv_form,
+	    EVP_PKEY_get1_EC_KEY, EC_KEY_get0_group and
+	    EC_KEY_set_public_key).</p>
+          <p>
+	    Own Id: OTP-18086 Aux Id: OTP-16282, OTP-16643,
+	    OTP-16644, OTP-17701, OTP-17702, OTP-17704 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
 
 <section><title>Crypto 5.0.6.3</title>
 
@@ -473,6 +926,66 @@
 	    Add prop_aead attribute to map from crypto:cipher_info/1.</p>
           <p>
 	    Own Id: OTP-17313 Aux Id: PR-4686 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Crypto 4.9.0.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Changed the behaviour of the engine load/unload
+	    functions</p> <p> The engine load/unload functions have
+	    got changed semantics to get a more consistent behaviour
+	    and work correct when variables are garbage collected.
+	    </p> <p> The load functions now don't register the
+	    methods for the engine to replace. That will now be
+	    handled with the new functions
+	    engine_register/engine_unregister if needed. </p> <p>
+	    Some functions functions are removed from the
+	    documentation and therefor the API, but they are left in
+	    the code for compatibility. </p> <list>
+	    <item>engine_load/4: is now the same as
+	    engine_load/3</item> <item>engine_unload/2: is now the
+	    same as engine_unload/1</item>
+	    <item>ensure_engine_loaded/3: is now the same as
+	    ensure_engine_loaded/2</item>
+	    <item>ensure_engine_unloaded/1, ensure_engine_unloaded/2:
+	    is now the same as engine_unload/1</item> </list>
+          <p>
+	    *** POTENTIAL INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-18172 Aux Id: ERIERL-826 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Crypto 4.9.0.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Fix timing bug in ensure_engine_loaded</p> <p>When two
+	    ensure_engine_loaded() calls were done in parallel there
+	    was a possibility that a crypto lib function was called
+	    by both instead of just one of them which resulted in an
+	    error. This is solved by moving the implementation from
+	    erlang down into a NIF function that uses a mutex to
+	    protect the sensitive part.</p>
+          <p>
+	    Own Id: OTP-17858 Aux Id: ERIERL-728 </p>
+        </item>
+        <item>
+	    <p> Remove all references correctly in the garbage
+	    collection if an engine handle was not explicit unloaded.
+	    </p>
+          <p>
+	    Own Id: OTP-18152</p>
         </item>
       </list>
     </section>

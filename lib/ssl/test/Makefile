@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 1999-2022. All Rights Reserved.
+# Copyright Ericsson AB 1999-2023. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -56,6 +56,7 @@ MODULES = \
 	openssl_sni_SUITE\
 	ssl_mfl_SUITE\
 	openssl_mfl_SUITE\
+	ssl_use_srtp_SUITE\
 	ssl_reject_SUITE\
         ssl_renegotiate_SUITE\
 	openssl_renegotiate_SUITE\
@@ -79,6 +80,7 @@ MODULES = \
 	ssl_session_cache_SUITE	\
 	ssl_session_cache_api_SUITE\	\
 	ssl_session_ticket_SUITE \
+	ssl_trace_SUITE \
 	openssl_session_ticket_SUITE \
 	openssl_session_SUITE \
 	ssl_ECC_SUITE \
@@ -94,7 +96,12 @@ MODULES = \
 	ssl_socket_SUITE\
 	make_certs \
         x509_test \
-	inet_crypto_dist \
+	cryptcookie \
+	dist_cryptcookie \
+	inet_epmd_cryptcookie_inet_ktls \
+	inet_epmd_dist_cryptcookie_inet \
+	inet_epmd_dist_cryptcookie_socket \
+	inet_epmd_cryptcookie_socket_ktls \
 	openssl_ocsp_SUITE \
 	tls_server_session_ticket_SUITE \
 	tls_client_ticket_store_SUITE
@@ -144,12 +151,13 @@ RELSYSDIR = $(RELEASE_PATH)/ssl_test
 # running the target "targets".
 # ----------------------------------------------------
 ERL_COMPILE_FLAGS += $(INCLUDES)
+ERL_COMPILE_FLAGS := $(filter-out +deterministic,$(ERL_COMPILE_FLAGS))
 
 # ----------------------------------------------------
 # Targets
 # ----------------------------------------------------
 
-tests debug opt: $(BUILDTARGET)
+tests $(TYPES): $(BUILDTARGET)
 
 targets: $(TARGET_FILES)
 
@@ -178,7 +186,7 @@ release_spec: opt
 release_tests_spec: opt
 	$(INSTALL_DIR) "$(RELSYSDIR)"
 	$(INSTALL_DATA)  $(ERL_FILES) $(HRL_FILES) $(HRL_FILES_NEEDED_IN_TEST) $(COVER_FILE) "$(RELSYSDIR)"
-	$(INSTALL_DATA) ssl.spec ssl_bench.spec ssl.cover "$(RELSYSDIR)"
+	$(INSTALL_DATA) ssl.spec ssl_bench.spec ssl_gh.spec ssl.cover "$(RELSYSDIR)"
 	chmod -R u+w "$(RELSYSDIR)"
 	@tar cf - *_SUITE_data property_test | (cd "$(RELSYSDIR)"; tar xf -)
 

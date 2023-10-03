@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2017-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2017-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -65,6 +65,7 @@
          sign_verify_rsa_fake/1,
          sign_verify_dsa/1,
          sign_verify_ecdsa/1,
+         sign_verify_eddsa/1,
          sign_verify_rsa_pwd/1,
          sign_verify_rsa_pwd_bad_pwd/1,
          priv_encrypt_pub_decrypt_rsa/1,
@@ -113,6 +114,7 @@ groups() ->
        sign_verify_rsa,
        sign_verify_dsa,
        sign_verify_ecdsa,
+       sign_verify_eddsa,
        sign_verify_rsa_pwd,
        sign_verify_rsa_pwd_bad_pwd,
        priv_encrypt_pub_decrypt_rsa,
@@ -126,26 +128,31 @@ groups() ->
        get_pub_from_priv_key_dsa,
        get_pub_from_priv_key_ecdsa
       ]},
-    {engine_fakes_rsa, [], [sign_verify_rsa_fake
-                     ]}
-     ].
+    {engine_fakes_rsa, [],
+     [
+      sign_verify_rsa_fake
+     ]}
+    ].
 
 
 init_per_suite(Config) ->
-    try {os:type(), crypto:info_lib()} of
-        {_, [{_,_, <<"OpenSSL 1.0.1s-freebsd  1 Mar 2016">>}]} ->
+    try {engine_supported(), os:type(), crypto:info_lib()} of
+        {false,_,[{_,_,OpenSSLversion}]} ->
+            {skip, "Engine not supported by " ++ OpenSSLversion};
+
+        {_,_, [{_,_, <<"OpenSSL 1.0.1s-freebsd  1 Mar 2016">>}]} ->
             {skip, "Problem with engine on OpenSSL 1.0.1s-freebsd"};
 
-        {_, [{_,_,<<"LibreSSL 2.1.",_/binary>>}]} ->
+        {_,_, [{_,_,<<"LibreSSL 2.1.",_/binary>>}]} ->
             {skip, "Problem with engine on older LibreSSL 2.1.*"};
 
-        {{unix,darwin}, _} ->
+        {_,{unix,darwin}, _} ->
             {skip, "Engine unsupported on Darwin"};
-        
-        {{win32,_}, _} ->
+
+        {_,{win32,_}, _} ->
             {skip, "Engine unsupported on Windows"};
-        
-        {OS, Res} ->
+
+        {_,OS, Res} ->
             ct:log("crypto:info_lib() -> ~p\nos:type() -> ~p", [Res,OS]),
             try crypto:start() of
                 ok ->
@@ -161,6 +168,11 @@ init_per_suite(Config) ->
 
 end_per_suite(_Config) ->
     ok.
+
+engine_supported() ->
+    try crypto:engine_list(), true
+    catch error:notsup -> false
+    end.
 
 %%--------------------------------------------------------------------
 init_per_group(engine_stored_key, Config) ->
@@ -212,18 +224,22 @@ end_per_group(_, Config) ->
 
 %%--------------------------------------------------------------------
 init_per_testcase(Case, Config) ->
-    case string:tokens(atom_to_list(Case),"_") of
-        ["sign","verify",Type|_] ->
-            skip_if_unsup(list_to_atom(Type), Config);
-
-        ["priv","encrypt","pub","decrypt",Type|_] ->
-            skip_if_unsup(list_to_atom(Type), Config);
-
-        ["get","pub","from","priv","key",Type|_] ->
-            skip_if_unsup(list_to_atom(Type), Config);
-
+    HasMD5 = lists:member(md5, crypto:supports(hashs)),
+    case Case of
+        ensure_load                 when HasMD5==false -> {skip, "md5 not available"};
+	engine_load_register_method when HasMD5==false -> {skip, "md5 not available"};
+	gc_clean                    when HasMD5==false -> {skip, "md5 not available"};
         _ ->
-            Config
+            case string:tokens(atom_to_list(Case),"_") of
+                ["sign","verify",Type|_] ->
+                    skip_if_unsup(list_to_atom(Type), Config);
+                ["priv","encrypt","pub","decrypt",Type|_] ->
+                    skip_if_unsup(list_to_atom(Type), Config);
+                ["get","pub","from","priv","key",Type|_] ->
+                    skip_if_unsup(list_to_atom(Type), Config);
+                _ ->
+                    Config
+            end
     end.
 
 end_per_testcase(_Case, _Config) ->
@@ -811,6 +827,13 @@ sign_verify_ecdsa(Config) ->
              key_id => key_id(Config, "ecdsa_public_key.pem")},
     sign_verify(ecdsa, sha, Priv, Pub).
 
+sign_verify_eddsa(Config) ->
+    Priv = #{engine => engine_ref(Config),
+             key_id => key_id(Config, "eddsa_private_key.pem")},
+    Pub  = #{engine => engine_ref(Config),
+             key_id => key_id(Config, "eddsa_public_key.pem")},
+    sign_verify(eddsa, sha, Priv, Pub).
+
 sign_verify_rsa_pwd(Config) ->
     Priv = #{engine => engine_ref(Config),
              key_id => key_id(Config, "rsa_private_key_pwd.pem"),
@@ -828,7 +851,7 @@ sign_verify_rsa_pwd_bad_pwd(Config) ->
     try sign_verify(rsa, sha, Priv, Pub) of
         _ -> {fail, "PWD prot pubkey sign succeeded with no pwd!"}
     catch
-        error:badarg -> ok
+        error:{badarg,_,_} -> ok
     end.
 
 priv_encrypt_pub_decrypt_rsa(Config) ->

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2002-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2002-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -18,20 +18,14 @@
 %% %CopyrightEnd%
 %%
 -module(test_server_node).
--compile(r20).
-
-%%%
-%%% The same compiled code for this module must be possible to load
-%%% in R16B and later.
-%%%
+-compile(r22).
 
 %% Test Controller interface
--export([is_release_available/1]).
--export([start_tracer_node/2,trace_nodes/2,stop_tracer_node/1]).
+-export([is_release_available/1, find_release/1]).
 -export([start_node/5, stop_node/1]).
 -export([kill_nodes/0, nodedown/1]).
 %% Internal export
--export([node_started/1,trc/1,handle_debug/4]).
+-export([node_started/1]).
 
 -include("test_server_internal.hrl").
 -record(slave_info, {name,socket,client}).
@@ -39,7 +33,7 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%                                                                  %%%
 %%% All code in this module executes on the test_server_ctrl process %%%
-%%% except for node_started/1 and trc/1 which execute on a new node. %%%
+%%% except for node_started/1  which execute on a new node.          %%%
 %%%                                                                  %%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -67,212 +61,6 @@ nodedown(Sock) ->
 	[] ->
 	    ok
     end.
-
-
-
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%% Start trace node
-%%%
-start_tracer_node(TraceFile,TI) ->
-    Match = #slave_info{name='$1',_='_'},
-    SlaveNodes = lists:map(fun([N]) -> [" ",N] end,
-			   ets:match(slave_tab,Match)),
-    TargetNode = node(),
-    Cookie = TI#target_info.cookie,
-    {ok,LSock} = gen_tcp:listen(0,[binary,{reuseaddr,true},{packet,2}]),
-    {ok,TracePort} = inet:port(LSock),
-    {false, Prog0} = pick_erl_program(default),
-    Prog = quote_progname(Prog0),
-    Cmd = lists:concat([Prog, " -sname tracer -hidden -setcookie ", Cookie, 
-			" -s ", ?MODULE, " trc ", TraceFile, " ", 
-			TracePort, " ", TI#target_info.os_family]),
-    spawn(fun() -> print_data(open_port({spawn,Cmd},[stream])) end),
-%!    open_port({spawn,Cmd},[stream]),
-    case gen_tcp:accept(LSock,?ACCEPT_TIMEOUT) of
-	{ok,Sock} -> 
-	    gen_tcp:close(LSock),
-	    receive 
-		{tcp,Sock,Result} when is_binary(Result) ->
-		    case unpack(Result) of
-			error ->
-			    gen_tcp:close(Sock),
-			    {error,timeout};
-			{ok,started} ->
-			    trace_nodes(Sock,[TargetNode | SlaveNodes]),
-			    {ok,Sock};
-			{ok,Error} -> Error
-		    end;
-		{tcp_closed,Sock} ->
-		    gen_tcp:close(Sock),
-		    {error,could_not_start_tracernode}
-	    after ?ACCEPT_TIMEOUT ->
-		    gen_tcp:close(Sock),
-		    {error,timeout}
-	    end;
-	Error -> 
-	    gen_tcp:close(LSock),
-	    {error,{could_not_start_tracernode,Error}}
-    end.
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%% Start a tracer on each of these nodes and set flags and patterns
-%%%
-trace_nodes(Sock,Nodes) ->
-    Bin = term_to_binary({add_nodes,Nodes}),
-    ok = gen_tcp:send(Sock, tag_trace_message(Bin)),
-    receive_ack(Sock).
-
-
-receive_ack(Sock) ->
-    receive
-	{tcp,Sock,Bin} when is_binary(Bin) ->
-	    case unpack(Bin) of
-		error -> receive_ack(Sock);
-		{ok,_} -> ok
-	    end;
-	_ ->
-	    receive_ack(Sock)
-    end.
-    
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%% Stop trace node
-%%%
-stop_tracer_node(Sock) ->
-    Bin = term_to_binary(id(stop)),
-    ok = gen_tcp:send(Sock, tag_trace_message(Bin)),
-    receive {tcp_closed,Sock} -> gen_tcp:close(Sock) end,
-    ok.
-    
-
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% trc([TraceFile,Nodes]) -> ok
-%%
-%% Start tracing on the given nodes
-%%
-%% This function executes on the new node
-%%
-trc([TraceFile, PortAtom, Type]) ->
-    {Result,Patterns} = 
-	case file:consult(TraceFile) of
-	    {ok,TI} ->
-		Pat = parse_trace_info(lists:flatten(TI)),
-		{started,Pat};
-	    Error ->
-		{Error,[]}
-	end,
-    Port = list_to_integer(atom_to_list(PortAtom)),
-    case catch gen_tcp:connect("localhost", Port, [binary, 
-						   {reuseaddr,true}, 
-						   {packet,2}]) of
-	{ok,Sock} -> 
-	    BinResult = term_to_binary(Result),
-	    ok = gen_tcp:send(Sock,tag_trace_message(BinResult)),
-	    trc_loop(Sock,Patterns,Type);
-	_else ->
-	    ok
-    end,
-    erlang:halt().
-trc_loop(Sock,Patterns,Type) ->
-    receive
-	{tcp,Sock,Bin} ->
-	    case unpack(Bin) of
-		error ->
-		    ttb:stop(),
-		    gen_tcp:close(Sock);
-		{ok,{add_nodes,Nodes}} -> 
-		    add_nodes(Nodes,Patterns,Type),
-		    Bin = term_to_binary(id(ok)),
-		    ok = gen_tcp:send(Sock, tag_trace_message(Bin)),
-		    trc_loop(Sock,Patterns,Type);
-		{ok,stop} -> 
-		    ttb:stop(),
-		    gen_tcp:close(Sock)
-	    end;
-	{tcp_closed,Sock} ->
-	    ttb:stop(),
-	    gen_tcp:close(Sock)
-    end.
-add_nodes(Nodes,Patterns,_Type) ->
-    {ok, _} = ttb:tracer(Nodes,[{file,{local, test_server}},
-			        {handler, {{?MODULE,handle_debug},initial}}]),
-    {ok, _} = ttb:p(all,[call,timestamp]),
-    lists:foreach(fun({TP,M,F,A,Pat}) -> ttb:TP(M,F,A,Pat);
-		     ({CTP,M,F,A}) -> ttb:CTP(M,F,A) 
-		  end,
-		  Patterns).
-
-parse_trace_info([{TP,M,Pat}|Pats]) when TP=:=tp; TP=:=tpl ->
-    [{TP,M,'_','_',Pat}|parse_trace_info(Pats)];
-parse_trace_info([{TP,M,F,Pat}|Pats]) when TP=:=tp; TP=:=tpl ->
-    [{TP,M,F,'_',Pat}|parse_trace_info(Pats)];
-parse_trace_info([{TP,M,F,A,Pat}|Pats]) when TP=:=tp; TP=:=tpl ->
-    [{TP,M,F,A,Pat}|parse_trace_info(Pats)];
-parse_trace_info([CTP|Pats]) when CTP=:=ctp; CTP=:=ctpl; CTP=:=ctpg ->
-    [{CTP,'_','_','_'}|parse_trace_info(Pats)];
-parse_trace_info([{CTP,M}|Pats]) when CTP=:=ctp; CTP=:=ctpl; CTP=:=ctpg ->
-    [{CTP,M,'_','_'}|parse_trace_info(Pats)];
-parse_trace_info([{CTP,M,F}|Pats]) when CTP=:=ctp; CTP=:=ctpl; CTP=:=ctpg ->
-    [{CTP,M,F,'_'}|parse_trace_info(Pats)];
-parse_trace_info([{CTP,M,F,A}|Pats]) when CTP=:=ctp; CTP=:=ctpl; CTP=:=ctpg ->
-    [{CTP,M,F,A}|parse_trace_info(Pats)];
-parse_trace_info([]) ->
-    [];
-parse_trace_info([_other|Pats]) -> % ignore
-    parse_trace_info(Pats).
-
-handle_debug(Out,Trace,TI,initial) ->
-    handle_debug(Out,Trace,TI,0);
-handle_debug(_Out,end_of_trace,_TI,N) ->
-    N;
-handle_debug(Out,Trace,_TI,N) ->
-    print_trc(Out,Trace,N),
-    N+1.
-
-print_trc(Out,{trace_ts,P,call,{M,F,A},C,Ts},N) ->
-    io:format(Out,
-	      "~w: ~s~n"
-	      "Process   : ~w~n"
-	      "Call      : ~w:~tw/~w~n"
-	      "Arguments : ~tp~n"
-	      "Caller    : ~tw~n~n",
-	      [N,ts(Ts),P,M,F,length(A),A,C]);
-print_trc(Out,{trace_ts,P,call,{M,F,A},Ts},N) ->
-    io:format(Out,
-	      "~w: ~s~n"
-	      "Process   : ~w~n"
-	      "Call      : ~w:~tw/~w~n"
-	      "Arguments : ~tp~n~n",
-	      [N,ts(Ts),P,M,F,length(A),A]);
-print_trc(Out,{trace_ts,P,return_from,{M,F,A},R,Ts},N) ->
-    io:format(Out,
-	      "~w: ~s~n"
-	      "Process      : ~w~n"
-	      "Return from  : ~w:~tw/~w~n"
-	      "Return value : ~tp~n~n",
-	      [N,ts(Ts),P,M,F,A,R]);
-print_trc(Out,{drop,X},N) ->
-    io:format(Out,
-	      "~w: Tracer dropped ~w messages - too busy~n~n",
-	      [N,X]);
-print_trc(Out,Trace,N) ->
-    Ts = element(size(Trace),Trace),
-    io:format(Out,
-	      "~w: ~s~n"
-	      "Trace        : ~tp~n~n",
-	      [N,ts(Ts),Trace]).
-ts({_, _, Micro} = Now) ->
-    {{Y,M,D},{H,Min,S}} = calendar:now_to_local_time(Now),
-    io_lib:format("~4.4.0w-~2.2.0w-~2.2.0w ~2.2.0w:~2.2.0w:~2.2.0w,~6.6.0w",
-		  [Y,M,D,H,Min,S,Micro]).
-
-
-
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% Start slave/peer nodes (initiated by test_server:start_node/5)
@@ -395,6 +183,9 @@ start_node_slave(SlaveName, OptList, From, _TI) ->
 	end,
     gen_server:reply(From,Ret).
 
+%% Temporary suppression, to avoid a warning calling undocumented
+%%  but deprecated function.
+-compile([{nowarn_deprecated_function,[{slave,start,5}]}]).
 
 do_start_node_slave(Host0, SlaveName, Args, Prog, Cleanup, ClearAFlags) ->
     Host =
@@ -645,7 +436,7 @@ pick_erl_program(L) ->
 %% path and spaces that separate arguments. The program is quoted to
 %% allow spaces in the path.
 %%
-%% Arguments could exist either if the executable is excplicitly given
+%% Arguments could exist either if the executable is explicitly given
 %% ({prog,String}) or if the -program switch to beam is used and
 %% includes arguments (typically done by cerl in OTP test environment
 %% in order to ensure that slave/peer nodes are started with the same
@@ -669,14 +460,38 @@ do_quote_progname([Prog,Arg|Args]) ->
 random_element(L) ->
     lists:nth(rand:uniform(length(L)), L).
 
+otp_release_path(RelPath) ->
+    filename:join(otp_release_root(), RelPath).
+
+otp_release_root() ->
+    case get(test_server_release_root) of
+        undefined ->
+            Root = os:getenv("TEST_SERVER_RELEASE_ROOT",
+                             "/usr/local/otp/releases"),
+            put(test_server_release_root, Root),
+            Root;
+        Cached ->
+            Cached
+    end.
+
 find_release(latest) ->
-    "/usr/local/otp/releases/latest/bin/erl";
+    otp_release_path("latest/bin/erl");
 find_release(previous) ->
     "kaka";
 find_release(Rel) ->
     case find_release(os:type(), Rel) of
         none ->
-            find_release_path(Rel);
+            case find_release_path(Rel) of
+                none ->
+                    case string:take(Rel,"_",true) of
+                        {Rel,[]} ->
+                            none;
+                        {RelNum,_} ->
+                            find_release_path(RelNum)
+                    end;
+                Release ->
+                    Release
+            end;
         Else ->
             Else
     end.
@@ -689,19 +504,19 @@ find_release_path([Path|T], Rel) ->
         false ->
             find_release_path(T, Rel);
         ErlExec ->
-            Pattern = filename:join([Path,"..","releases","*","OTP_VERSION"]),
-            case filelib:wildcard(Pattern) of
-                [VersionFile] ->
-                    {ok, VsnBin} = file:read_file(VersionFile),
-                    [MajorVsn|_] = string:lexemes(VsnBin, "."),
-                    case unicode:characters_to_list(MajorVsn) of
-                        Rel ->
-                            ErlExec;
-                        _Else ->
-                            find_release_path(T, Rel)
+            QuotedExec = "\""++ErlExec++"\"",
+            Release = os:cmd(QuotedExec ++ " -noinput -eval 'io:format(\"~ts\", [erlang:system_info(otp_release)])' -s init stop"),
+            case Release =:= Rel of
+                true ->
+                    %% Check is the release is a source tree release,
+                    %% if so we should not use it.
+                    case os:cmd(QuotedExec ++ " -noinput -eval 'io:format(\"~p\",[filelib:is_file(filename:join([code:root_dir(),\"OTP_VERSION\"]))]).' -s init stop") of
+                        "true" ->
+                            find_release_path(T, Rel);
+                        "false" ->
+                            ErlExec
                     end;
-                _Else ->
-                    find_release_path(T, Rel)
+                false -> find_release_path(T, Rel)
             end
     end;
 find_release_path([], _) ->
@@ -710,7 +525,7 @@ find_release_path([], _) ->
 find_release({unix,sunos}, Rel) ->
     case os:cmd("uname -p") of
 	"sparc" ++ _ ->
-	    "/usr/local/otp/releases/otp_beam_solaris8_" ++ Rel ++ "/bin/erl";
+            otp_release_path("otp_beam_solaris8_" ++ Rel ++ "/bin/erl");
 	_ ->
 	    none
     end;
@@ -741,7 +556,7 @@ find_rel_linux(Rel) ->
     end.
 
 find_rel_suse(Rel, SuseRel) ->
-    Root = "/usr/local/otp/releases/sles",
+    Root = otp_release_path("sles"),
     case SuseRel of
 	"11" ->
 	    %% Try both SuSE 11, SuSE 10 and SuSe 9 in that order.
@@ -817,7 +632,7 @@ suse_release(Fd) ->
 find_rel_ubuntu(_Rel, UbuntuRel) when is_integer(UbuntuRel), UbuntuRel < 16 ->
     [];
 find_rel_ubuntu(Rel, UbuntuRel) when is_integer(UbuntuRel) ->
-    Root = "/usr/local/otp/releases/ubuntu",
+    Root = otp_release_path("ubuntu"),
     lists:foldl(fun (ChkUbuntuRel, Acc) ->
                         find_rel_ubuntu_aux1(Rel, Root++integer_to_list(ChkUbuntuRel))
                             ++ Acc
@@ -912,24 +727,3 @@ unpack(Bin) ->
 	_ -> error
     end.
 
-id(I) -> I.
-   
-print_data(Port) ->
-    ct_util:mark_process(),
-    receive
-	{Port, {data, Bytes}} ->
-	    io:put_chars(Bytes),
-	    print_data(Port);
-	{Port, eof} ->
-	    Port ! {self(), close}, 
-	    receive
-		{Port, closed} ->
-		    true
-	    end, 
-	    receive
-		{'EXIT',  Port,  _} -> 
-		    ok
-	    after 1 ->				% force context switch
-		    ok
-	    end
-    end.

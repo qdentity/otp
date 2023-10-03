@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@
 -include("ssl_handshake.hrl").
 -include("ssl_internal.hrl").
 -include("ssl_api.hrl").
+-include("ssl_record.hrl").
 
 %% Internal application API
 -export([is_new/2,
@@ -39,21 +40,23 @@
 -type seconds()   :: integer().
 
 %%--------------------------------------------------------------------
--spec legacy_session_id() -> ssl:session_id().
+-spec legacy_session_id(map()) -> ssl:session_id().
 %%
 %% Description: TLS-1.3 deprecates the session id but has a dummy
 %% value for it for protocol backwards-compatibility reasons.
 %% If now lower versions are configured this function can be called
 %% for a dummy value.
 %%--------------------------------------------------------------------
-legacy_session_id(#{middlebox_comp_mode := true}) ->
-    legacy_session_id();
-legacy_session_id(_) ->
-    ?EMPTY_ID.
+legacy_session_id(Opts) ->
+    case maps:get(middlebox_comp_mode, Opts, true) of
+        true  -> legacy_session_id();
+        false -> ?EMPTY_ID
+    end.
+
 %%--------------------------------------------------------------------
 -spec is_new(ssl:session_id() | #session{}, ssl:session_id()) -> boolean().
-%%
-%% Description: Checks if the session id decided by the server is a
+ %%
+ %% Description: Checks if the session id decided by the server is a
 %%              new or resumed sesion id. TLS-1.3 middlebox negotiation
 %%              requies that client also needs to check "is_resumable" in
 %%              its current session data when pre TLS-1.3 version is
@@ -87,7 +90,7 @@ client_select_session({_, _, #{versions := Versions,
     HVersion = RecordCb:highest_protocol_version(Versions),
 
     case LVersion of
-        {3, 4} ->
+        ?TLS_1_3 ->
             %% Session reuse is not supported, do pure legacy
             %% middlebox comp mode negotiation, by providing either
             %% empty session id (no middle box) or random id (middle
@@ -104,13 +107,13 @@ client_select_session({_, _, #{versions := Versions,
     end.
 
 %%--------------------------------------------------------------------
--spec server_select_session(ssl_record:ssl_version(), pid(), binary(), map(),
+-spec server_select_session(ssl_record:ssl_version(), pid(), ssl:session_id(), map(),
                             list())  -> {binary(), #session{} | undefined}.
 %%
 %% Description: Should be called by the server side to get an id
 %%              for the client hello message.
 %%--------------------------------------------------------------------
-server_select_session(_, SessIdTracker, <<>>, _SslOpts, _CertKeyPairs) ->
+server_select_session(_, SessIdTracker, ?EMPTY_ID, _SslOpts, _CertKeyPairs) ->
     {ssl_server_session_cache:new_session_id(SessIdTracker), undefined};
 server_select_session(_, SessIdTracker, SuggestedId, Options, CertKeyPairs) ->
     case is_resumable(SuggestedId, SessIdTracker, Options, CertKeyPairs)
@@ -143,13 +146,13 @@ do_client_select_session({_, _, #{reuse_session := {SessionId, SessionData}}},
             Session#session{is_resumable = true}
     catch
         _:_ ->
-            NewSession#session{session_id = <<>>}
+            NewSession#session{session_id = ?EMPTY_ID}
     end;
 do_client_select_session({Host, Port, #{reuse_session := SessionId}},
                          Cache, CacheCb, NewSession, _) when is_binary(SessionId)->
     case CacheCb:lookup(Cache, {{Host, Port}, SessionId}) of
         undefined ->
-	    NewSession#session{session_id = <<>>};
+	    NewSession#session{session_id = ?EMPTY_ID};
 	#session{} = Session->
 	    Session
     end;
@@ -239,8 +242,12 @@ record_cb(dtls) ->
 legacy_session_id() ->
     crypto:strong_rand_bytes(32).
 
-maybe_handle_middlebox({3, 4}, #session{session_id = ?EMPTY_ID} = Session, 
-                       #{middlebox_comp_mode := true})->
-    Session#session{session_id = legacy_session_id()};
+maybe_handle_middlebox(?TLS_1_3, #session{session_id = ?EMPTY_ID} = Session, Options)->
+    case maps:get(middlebox_comp_mode, Options,true) of
+        true ->
+            Session#session{session_id = legacy_session_id()};
+        false ->
+            Session
+    end;
 maybe_handle_middlebox(_, Session, _) ->
     Session.

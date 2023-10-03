@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2005-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@
 		 vcount=0,	% Variable counter
 		 calltype=#{},	% Call types
 		 records=#{},	% Record definitions
+                 raw_records=[],% Raw record forms
 		 strict_ra=[],	% strict record accesses
 		 checked_ra=[], % successfully accessed records
                  dialyzer=false % Cached value of compile flag 'dialyzer'
@@ -54,8 +55,7 @@ compiler_options(Forms) ->
     lists:flatten([C || {attribute,_,compile,C} <- Forms]).
 
 init_calltype(Forms) ->
-    Locals = [{{Name,Arity},local} || {function,_,Name,Arity,_} <- Forms],
-    Ctype = maps:from_list(Locals),
+    Ctype = #{{Name,Arity} => local || {function,_,Name,Arity,_} <- Forms},
     init_calltype_imports(Forms, Ctype).
 
 init_calltype_imports([{attribute,_,import,{Mod,Fs}}|T], Ctype0) ->
@@ -70,7 +70,8 @@ init_calltype_imports([], Ctype) -> Ctype.
 
 forms([{attribute,_,record,{Name,Defs}}=Attr | Fs], St0) ->
     NDefs = normalise_fields(Defs),
-    St = St0#exprec{records=maps:put(Name, NDefs, St0#exprec.records)},
+    St = St0#exprec{records=maps:put(Name, NDefs, St0#exprec.records),
+                    raw_records=[Attr | St0#exprec.raw_records]},
     {Fs1, St1} = forms(Fs, St),
     {[Attr | Fs1], St1};
 forms([{function,Anno,N,A,Cs0} | Fs0], St0) ->
@@ -287,6 +288,10 @@ expr({bc,Anno,E0,Qs0}, St0) ->
     {Qs1,St1} = lc_tq(Anno, Qs0, St0),
     {E1,St2} = expr(E0, St1),
     {{bc,Anno,E1,Qs1},St2};
+expr({mc,Anno,E0,Qs0}, St0) ->
+    {Qs1,St1} = lc_tq(Anno, Qs0, St0),
+    {E1,St2} = expr(E0, St1),
+    {{mc,Anno,E1,Qs1},St2};
 expr({tuple,Anno,Es0}, St0) ->
     {Es1,St1} = expr_list(Es0, St0),
     {{tuple,Anno,Es1},St1};
@@ -366,6 +371,12 @@ expr({call,Anno,{remote,_,{atom,_,erlang},{atom,_,is_record}},
 expr({call,Anno,{tuple,_,[{atom,_,erlang},{atom,_,is_record}]},
       [A,{atom,_,Name}]}, St) ->
     record_test(Anno, A, Name, St);
+expr({call,Anno,{atom,_,is_record},[_,_,{integer,_,Sz}]}, St)
+  when is_integer(Sz), Sz =< 0 ->
+    {{atom,Anno,false},St};
+expr({call,Anno,{remote,_,{atom,_,erlang},{atom,_,is_record}},
+      [_,_,{integer,_,Sz}]}, St) when is_integer(Sz), Sz =< 0 ->
+    {{atom,Anno,false},St};
 expr({call,Anno,{atom,_AnnoA,record_info},[_,_]=As0}, St0) ->
     {As,St1} = expr_list(As0, St0),
     record_info_call(Anno, As, St1);
@@ -406,6 +417,17 @@ expr({'try',Anno,Es0,Scs0,Ccs0,As0}, St0) ->
 expr({'catch',Anno,E0}, St0) ->
     {E,St1} = expr(E0, St0),
     {{'catch',Anno,E},St1};
+expr({'maybe',MaybeAnno,Es0}, St0) ->
+    {Es,St1} = exprs(Es0, St0),
+    {{'maybe',MaybeAnno,Es},St1};
+expr({'maybe',MaybeAnno,Es0,{'else',ElseAnno,Cs0}}, St0) ->
+    {Es,St1} = exprs(Es0, St0),
+    {Cs,St2} = clauses(Cs0, St1),
+    {{'maybe',MaybeAnno,Es,{'else',ElseAnno,Cs}},St2};
+expr({maybe_match,Anno,P0,E0}, St0) ->
+    {E,St1} = expr(E0, St0),
+    {P,St2} = pattern(P0, St1),
+    {{maybe_match,Anno,P,E},St2};
 expr({match,Anno,P0,E0}, St0) ->
     {E,St1} = expr(E0, St0),
     {P,St2} = pattern(P0, St1),
@@ -429,7 +451,9 @@ expr({op,Anno,Op,L0,R0}, St0) when Op =:= 'andalso';
 expr({op,Anno,Op,L0,R0}, St0) ->
     {L,St1} = expr(L0, St0),
     {R,St2} = expr(R0, St1),
-    {{op,Anno,Op,L,R},St2}.
+    {{op,Anno,Op,L,R},St2};
+expr(E={ssa_check_when,_,_,_,_,_}, St) ->
+    {E, St}.
 
 expr_list([E0 | Es0], St0) ->
     {E,St1} = expr(E0, St0),
@@ -500,7 +524,12 @@ lc_tq(Anno, [{b_generate,AnnoG,P0,G0} | Qs0], St0) ->
     {P1,St2} = pattern(P0, St1),
     {Qs1,St3} = lc_tq(Anno, Qs0, St2),
     {[{b_generate,AnnoG,P1,G1} | Qs1],St3};
-lc_tq(Anno, [F0 | Qs0], #exprec{calltype=Calltype}=St0) ->
+lc_tq(Anno, [{m_generate,AnnoG,P0,G0} | Qs0], St0) ->
+    {G1,St1} = expr(G0, St0),
+    {P1,St2} = pattern(P0, St1),
+    {Qs1,St3} = lc_tq(Anno, Qs0, St2),
+    {[{m_generate,AnnoG,P1,G1} | Qs1],St3};
+lc_tq(Anno, [F0 | Qs0], #exprec{calltype=Calltype,raw_records=Records}=St0) ->
     %% Allow record/2 and expand out as guard test.
     IsOverriden = fun(FA) ->
 			  case Calltype of
@@ -509,7 +538,7 @@ lc_tq(Anno, [F0 | Qs0], #exprec{calltype=Calltype}=St0) ->
 			      _ -> false
 			  end
 		  end,
-    case erl_lint:is_guard_test(F0, [], IsOverriden) of
+    case erl_lint:is_guard_test(F0, Records, IsOverriden) of
         true ->
             {F1,St1} = guard_test(F0, St0),
             {Qs1,St2} = lc_tq(Anno, Qs0, St1),
@@ -595,11 +624,11 @@ strict_get_record_field(Anno, R, {atom,_,F}=Index, Name, St0) ->
             RAnno = mark_record(NAnno, St),
 	    E = {'case',Anno,R,
 		     [{clause,NAnno,[{tuple,RAnno,P}],[],[Var]},
-		      {clause,NAnno,[{var,NAnno,'_'}],[],
+		      {clause,NAnno,[Var],[],
 		       [{call,NAnno,{remote,NAnno,
 				    {atom,NAnno,erlang},
 				    {atom,NAnno,error}},
-			 [{tuple,NAnno,[{atom,NAnno,badrecord},{atom,NAnno,Name}]}]}]}]},
+			 [{tuple,NAnno,[{atom,NAnno,badrecord},Var]}]}]}]},
             expr(E, St);
         true ->                                 %In a guard.
             Fs = record_fields(Name, Anno, St0),
@@ -681,24 +710,20 @@ record_wildcard_init([]) -> none.
 record_update(R, Name, Fs, Us0, St0) ->
     Anno = element(2, R),
     {Pre,Us,St1} = record_exprs(Us0, St0),
-    Nf = length(Fs),                            %# of record fields
-    Nu = length(Us),                            %# of update fields
-    Nc = Nf - Nu,                               %# of copy fields
 
     %% We need a new variable for the record expression
     %% to guarantee that it is only evaluated once.
     {Var,St2} = new_var(Anno, St1),
 
+    %% Honor the `strict_record_updates` option needed by `dialyzer`, otherwise
+    %% expand everything to chains of `setelement/3` as that's far more
+    %% efficient in the JIT.
     StrictUpdates = strict_record_updates(St2#exprec.compile),
-
-    %% Try to be intelligent about which method of updating record to use.
     {Update,St} =
         if
-            Nu =:= 0 -> 
-                record_match(Var, Name, Anno, Fs, Us, St2);
-            Nu =< Nc, not StrictUpdates ->      %Few fields updated
+            not StrictUpdates, Us =/= [] ->
                 {record_setel(Var, Name, Fs, Us), St2};
-            true ->                             %The wide area inbetween
+            true ->
                 record_match(Var, Name, Anno, Fs, Us, St2)
         end,
     {{block,Anno,Pre ++ [{match,Anno,Var,R},Update]},St}.
@@ -714,7 +739,7 @@ record_match(R, Name, AnnoR, Fs, Us, St0) ->
       [{clause,AnnoR,[{tuple,RAnno,[{atom,AnnoR,Name} | Ps]}],[],
         [{tuple,RAnno,[{atom,AnnoR,Name} | News]}]},
        {clause,NAnnoR,[{var,NAnnoR,'_'}],[],
-        [call_error(NAnnoR, {tuple,NAnnoR,[{atom,NAnnoR,badrecord},{atom,NAnnoR,Name}]})]}
+        [call_error(NAnnoR, {tuple,NAnnoR,[{atom,NAnnoR,badrecord},R]})]}
       ]},
      St1}.
 
@@ -752,7 +777,7 @@ record_setel(R, Name, Fs, Us0) ->
 				{atom,Anno,setelement}},[I,Acc,Val]} end,
               R, Us)]},
       {clause,NAnnoR,[{var,NAnnoR,'_'}],[],
-       [call_error(NAnnoR, {tuple,NAnnoR,[{atom,NAnnoR,badrecord},{atom,NAnnoR,Name}]})]}]}.
+       [call_error(NAnnoR, {tuple,NAnnoR,[{atom,NAnnoR,badrecord},R]})]}]}.
 
 %% Expand a call to record_info/2. We have checked that it is not
 %% shadowed by an import.
@@ -900,11 +925,13 @@ opt_rec_vars_2({op,_,'orelse',Arg,{atom,_,fail}}, Rs) ->
     %% Since the second argument guarantees failure,
     %% it is safe to inspect the first argument.
     opt_rec_vars_2(Arg, Rs);
-opt_rec_vars_2({call,_,{remote,_,{atom,_,erlang},{atom,_,is_record}},
-		[{var,_,V},{atom,_,Tag},{integer,_,Sz}]}, Rs) ->
-    orddict:store(V, {Tag,Sz}, Rs);
+opt_rec_vars_2({call,Anno,
+                {remote,_,{atom,_,erlang},{atom,_,is_record}=IsRecord},
+		Args}, Rs) ->
+    opt_rec_vars_2({call,Anno,IsRecord,Args}, Rs);
 opt_rec_vars_2({call,_,{atom,_,is_record},
-		[{var,_,V},{atom,_,Tag},{integer,_,Sz}]}, Rs) ->
+		[{var,_,V},{atom,_,Tag},{integer,_,Sz}]}, Rs)
+  when is_integer(Sz), 0 < Sz, Sz < 100 ->
     orddict:store(V, {Tag,Sz}, Rs);
 opt_rec_vars_2(_, Rs) -> Rs.
 

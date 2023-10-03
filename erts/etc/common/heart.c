@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  * 
- * Copyright Ericsson AB 1996-2021. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2023. All Rights Reserved.
  * 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -63,7 +63,7 @@
  *  This program communicates with Erlang through the standard
  *  input and output file descriptors (0 and 1). These descriptors
  *  (and the standard error descriptor 2) must NOT be closed
- *  explicitely by this program at termination (in UNIX it is
+ *  explicitly by this program at termination (in UNIX it is
  *  taken care of by the operating system itself).
  *
  *  END OF FILE
@@ -74,16 +74,7 @@
  *
  */
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#ifdef __WIN32__
-#include <windows.h>
-#include <io.h>
-#include <fcntl.h>
-#include <process.h>
-#endif
+#include "etc_common.h"
 
 /*
  * Implement time correction using times() call even on Linuxes 
@@ -91,13 +82,7 @@
  * a phony gethrtime in this file as the time questions are so infrequent.
  */
 
-#include <stdio.h>
 #include <stddef.h>
-#include <stdlib.h>
-
-#include <stdarg.h>
-
-#include <string.h>
 #include <time.h>
 #include <errno.h>
 
@@ -350,7 +335,7 @@ int main(int argc, char **argv) {
 	    AllocConsole();
 	    conh = freopen("CONOUT$","w",stderr);
 	    if (conh != NULL)
-		fprintf(conh,"console alloced\n");
+		fprintf(conh,"console allocated\n");
 	}
 	debugf("stderr\n");
     }
@@ -369,8 +354,7 @@ int main(int argc, char **argv) {
  * message loop
  */
 static int
-message_loop(erlin_fd, erlout_fd)
-     int   erlin_fd, erlout_fd;
+message_loop(int erlin_fd, int erlout_fd)
 {
   int   i;
   time_t now, last_received;
@@ -423,7 +407,7 @@ message_loop(erlin_fd, erlout_fd)
 #endif
     /*
      * Maybe heart beat time-out
-     * If we havn't got anything in 60 seconds we reboot, even if we may
+     * If we haven't got anything in 60 seconds we reboot, even if we may
      * have got something in the last 5 seconds. We may end up here if
      * the system clock is adjusted with more than 55 seconds, but we
      * regard this as en error and reboot anyway.
@@ -689,7 +673,7 @@ do_terminate(int erlin_fd, int reason) {
   case R_ERROR:
   default:
     {
-#if defined(__WIN32__) /* Not VxWorks */
+#if defined(__WIN32__)
 	if(!cmd[0]) {
 	    char *command = get_env(HEART_COMMAND_ENV);
 	    if(!command)
@@ -791,8 +775,7 @@ int wait_until_close_write_or_env_tmo(int tmo) {
  * Sends an HEART_ACK.
  */
 static int
-notify_ack(fd)
-  int   fd;
+notify_ack(int fd)
 {
   struct msg m;
   
@@ -839,9 +822,7 @@ heart_cmd_reply(int fd, char *s)
  *  FIXME.
  */
 static int
-write_message(fd, mp)
-  int   fd;
-  struct msg *mp;
+write_message(int fd, struct msg *mp)
 {
   int len = ntohs(mp->len);
 
@@ -868,9 +849,7 @@ write_message(fd, mp)
  *  message.
  */
 static int
-read_message(fd, mp)
-  int   fd;
-  struct msg *mp;
+read_message(int fd, struct msg *mp)
 {
   int   rlen, i;
   unsigned char* tmp;
@@ -906,9 +885,7 @@ read_message(fd, mp)
  *  bytes read (i.e. len) , 0 if eof, or < 0 if error. len must be > 0.
  */
 static int
-read_fill(fd, buf, len)
-  int   fd, len;
-  char *buf;
+read_fill(int fd, char *buf, int len)
 {
   int   i, got = 0;
 
@@ -929,9 +906,7 @@ read_fill(fd, buf, len)
  *  0 if eof, or < 0 if error. len > maxlen > 0 must hold.
  */
 static int
-read_skip(fd, buf, maxlen, len)
-  int   fd, maxlen, len;
-  char *buf;
+read_skip(int fd, char *buf, int maxlen, int len)
 {
   int   i, got = 0;
   char  c;

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1997-2021. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -106,7 +106,7 @@ all() ->
      dump_log_load_regulation, {group, dump_log_thresholds},
      dump_log_update_in_place,
      event_module, backend_plugin_registration,
-     inconsistent_database, max_wait_for_decision,
+     inconsistent_database, %% max_wait_for_decision,
      send_compressed, app_test, {group, schema_config},
      unknown_config].
 
@@ -937,7 +937,7 @@ start_first_one_disc_less_then_two_more_disc_less(Config) when is_list(Config) -
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 schema_location_and_extra_db_nodes_combinations(doc)->
-    ["Test schema loaction and extra_db_nodes combinations."];
+    ["Test schema location and extra_db_nodes combinations."];
 schema_location_and_extra_db_nodes_combinations(suite) -> [];
 schema_location_and_extra_db_nodes_combinations(Config) when is_list(Config) ->
     [N1, N2] = Nodes = ?init(2, Config),

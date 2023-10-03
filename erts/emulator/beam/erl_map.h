@@ -24,7 +24,7 @@
 
 #include "sys.h"
 
-/* instrinsic wrappers */
+/* intrinsic wrappers */
 #if ERTS_AT_LEAST_GCC_VSN__(3, 4, 0)
 #define hashmap_clz(x)       ((Uint32) __builtin_clz((unsigned int)(x)))
 #define hashmap_bitcount(x)  ((Uint32) __builtin_popcount((unsigned int) (x)))
@@ -111,6 +111,8 @@ Eterm  erts_hashmap_from_ks_and_vs_extra(ErtsHeapFactory *factory,
 const Eterm *erts_maps_get(Eterm key, Eterm map);
 
 const Eterm *erts_hashmap_get(Uint32 hx, Eterm key, Eterm map);
+
+Sint erts_map_size(Eterm map);
 
 /* hamt nodes v2.0
  *

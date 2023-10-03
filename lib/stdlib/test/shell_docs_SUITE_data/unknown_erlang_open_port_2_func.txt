@@ -36,7 +36,7 @@
   Returns a port identifier as the result of opening a new Erlang
   port. A port can be seen as an external Erlang process.
 
-  The name of the executable as well as the arguments specifed in [;;4m[0m
+  The name of the executable as well as the arguments specified in [;;4m[0m
   [;;4mcd[0m, [;;4menv[0m, [;;4margs[0m, and [;;4marg0[0m are subject to Unicode filename
   translation if the system is running in Unicode filename mode. To
   avoid translation or to force, for example UTF-8, supply the
@@ -154,7 +154,7 @@
     the name of an environment variable, and [;;4mVal[0m is the value it
     is to have in the spawned port process. Both [;;4mName[0m and [;;4mVal[0m
     must be strings. The one exception is [;;4mVal[0m being the atom [;;4m[0m
-    [;;4mfalse[0m (in analogy with [;;4mos:getenv/1[0m, which removes the
+    [;;4mfalse[0m (in analogy with [;;4mos:getenv/1[0m), which removes the
     environment variable.
 
     For information about encoding requirements, see documentation

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2003-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2003-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -52,6 +52,7 @@ groups() ->
 
 
 init_per_suite(Config) ->
+    _ = id(Config),                  %Make return value unpredicatble.
     test_lib:recompile(?MODULE),
     Config.
 
@@ -73,17 +74,17 @@ errors(Config) when is_list(Config) ->
     Foo = #foo{a=1,b=2,c=3,d=4},
     #foo{a=19,b=42,c=3,d=4} = update_foo(Foo, 19, 42),
 
-    {'EXIT',{{badrecord,bar},_}} = (catch update_foo_bar(Foo, 19)),
-    {'EXIT',{{badrecord,bar},_}} = (catch update_foo_bar(Foo, 19, 35)),
-    {'EXIT',{{badrecord,bar},_}} = (catch update_foo_bar(Foo, 19, 35, 17)),
-    {'EXIT',{{badrecord,bar},_}} = (catch update_foo_bar(Foo, 19, 35, 17, 42)),
+    {'EXIT',{{badrecord,Foo},_}} = (catch update_foo_bar(Foo, 19)),
+    {'EXIT',{{badrecord,Foo},_}} = (catch update_foo_bar(Foo, 19, 35)),
+    {'EXIT',{{badrecord,Foo},_}} = (catch update_foo_bar(Foo, 19, 35, 17)),
+    {'EXIT',{{badrecord,Foo},_}} = (catch update_foo_bar(Foo, 19, 35, 17, 42)),
 
-    {'EXIT',{{badrecord,barf},_}} = (catch update_foo_barf(Foo, 19)),
-    {'EXIT',{{badrecord,barf},_}} = (catch update_foo_barf(Foo, 19, 35)),
-    {'EXIT',{{badrecord,barf},_}} = (catch update_foo_barf(Foo, 19, 35, 17)),
-    {'EXIT',{{badrecord,barf},_}} = (catch update_foo_barf(Foo, 19, 35, 17, 42)),
-    {'EXIT',{{badrecord,barf},_}} = (catch update_foo_barf(Foo, 19,
-								 35, 17, 42, -2)),
+    {'EXIT',{{badrecord,Foo},_}} = (catch update_foo_barf(Foo, 19)),
+    {'EXIT',{{badrecord,Foo},_}} = (catch update_foo_barf(Foo, 19, 35)),
+    {'EXIT',{{badrecord,Foo},_}} = (catch update_foo_barf(Foo, 19, 35, 17)),
+    {'EXIT',{{badrecord,Foo},_}} = (catch update_foo_barf(Foo, 19, 35, 17, 42)),
+    {'EXIT',{{badrecord,Foo},_}} = (catch update_foo_barf(Foo, 19,
+                                                          35, 17, 42, -2)),
 
     ok.
 
@@ -238,6 +239,14 @@ record_test_2(Config) when is_list(Config) ->
 			 begin not is_record(X, foo) or
 				   is_reference(X) end],
 
+    Map = id(#{a => 1, b => #foo{a=2}, c => 3, d => #bar{d=4},
+               e => 5, f => #foo{a=6}, h => 7}),
+    [#foo{a=2},#foo{a=6}] = lists:sort([X || _ := X <- Map, is_record(X, foo)]),
+    [#bar{d=4}] = [X || _ := X <- Map, is_record(X, bar)],
+    [1,3,5,7,#foo{a=2},#foo{a=6}] =
+	lists:sort([X || _ := X <- Map, not is_record(X, bar)]),
+    [2,6] = lists:sort([A || _ := #foo{a=A} <- Map]),
+
     %% Call is_record/2 with illegal arguments.
     [] = [X || X <- [], is_record(t, id(X))],
     {'EXIT',{badarg,_}} = (catch [X || X <- [1], is_record(t, id(X))]),
@@ -385,6 +394,28 @@ record_test_3(Config) when is_list(Config) ->
 
     true = is_record(Rec, Good, Size) orelse error,
     error = is_record(Rec, Bad, Size) orelse error,
+
+    %% GH-7298: Zero size.
+    TupleA = id({a}),
+
+    false = is_record(TupleA, a, 0),
+    false = is_record(Bad, a, 0),
+
+    ZeroF = fun(A) when is_record(A, a, 0) -> ok;
+               (_) -> error
+            end,
+    error = ZeroF(TupleA),
+    error = ZeroF(Bad),
+
+    %% GH-7317: Huge tuple size used to take forever to compile.
+    false = is_record(TupleA, a, 10_000_000),
+    false = is_record(Bad, a, 10_000_000),
+
+    HugeF = fun(A) when is_record(A, a, 10_000_000) -> ok;
+               (_) -> error
+            end,
+    error = HugeF(TupleA),
+    error = HugeF(Bad),
 
     ok.
 
@@ -698,6 +729,34 @@ grab_bag(_Config) ->
     error = T5(#gb_nil{}),
     error = T5(#gb_bar{}),
     error = T5(atom),
+
+    %% With type optimizations disabled, beam_ssa_pre_codegen would insert
+    %% set_tuple_element instructions between the call to setelement/3 and
+    %% its succeeded instruction.
+    T6 = fun(R) ->
+                 try
+                     %% The succeeded instruction should immediately follow its instruction.
+                     %% Not like this:
+                     %%
+                     %%   x0/_212 = call (`erlang`:`setelement`/3), `5`, y0/_87:37, `4`
+                     %%   z0/@ssa_dummy:34 = set_tuple_element `3`, x0/_212, `3`
+                     %%   z0/@ssa_dummy:35 = set_tuple_element `2`, x0/_212, `2`
+                     %%   z0/@ssa_dummy:36 = set_tuple_element `1`, x0/_212, `1`
+                     %%   z0/@ssa_bool:13 = succeeded x0/_212
+                     %%   br z0/@ssa_bool:13, ^14, ^4
+                     R#foo{a=1,b=2,c=3,d=4}
+                 of
+                     42 ->
+                         ok
+                 catch
+                     _:_ ->
+                         error
+                 end
+         end,
+    error = catch T6(100),
+    error = catch T6([a,b,c]),
+    error = catch T6(#bar{}),
+    {'EXIT',{{try_clause,#foo{}},_}} = catch T6(#foo{}),
 
     ok.
 

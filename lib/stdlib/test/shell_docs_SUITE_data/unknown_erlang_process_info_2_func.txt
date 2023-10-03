@@ -18,20 +18,23 @@
               non_neg_integer() |
               #{size => non_neg_integer(),
                 kill => boolean(),
-                error_logger => boolean()}.
+                error_logger => boolean(),
+                include_shared_binaries => boolean()}.
     -type message_queue_data() :: off_heap | on_heap.
     -type priority_level() :: low | normal | high | max.
     -type process_info_item() ::
-          backtrace | binary | catchlevel | current_function |
-          current_location | current_stacktrace | dictionary |
-          error_handler | garbage_collection | garbage_collection_info |
-          group_leader | heap_size | initial_call | links | last_calls |
-          memory | message_queue_len | messages | min_heap_size |
+          async_dist | backtrace | binary | catchlevel |
+          current_function | current_location | current_stacktrace |
+          dictionary | error_handler | garbage_collection |
+          garbage_collection_info | group_leader | heap_size |
+          initial_call | links | last_calls | memory |
+          message_queue_len | messages | min_heap_size |
           min_bin_vheap_size | monitored_by | monitors |
-          message_queue_data | priority | reductions | registered_name |
-          sequential_trace_token | stack_size | status | suspending |
-          total_heap_size | trace | trap_exit.
+          message_queue_data | parent | priority | reductions |
+          registered_name | sequential_trace_token | stack_size |
+          status | suspending | total_heap_size | trace | trap_exit.
     -type process_info_result_item() ::
+          {async_dist, Enabled :: boolean()} |
           {backtrace, Bin :: binary()} |
           {binary,
            BinInfo ::
@@ -76,6 +79,7 @@
                      port() |
                      {RegName :: atom(), Node :: node()}}]} |
           {message_queue_data, MQD :: message_queue_data()} |
+          {parent, pid() | undefined} |
           {priority, Level :: priority_level()} |
           {reductions, Number :: non_neg_integer()} |
           {registered_name, [] | (Atom :: atom())} |
@@ -117,6 +121,10 @@
   [;;4mItem[0ms in the same order as the [;;4mItem[0ms were included in [;;4mItemList[0m.
   Valid [;;4mItem[0ms can be included multiple times in [;;4mItemList[0m.
 
+  Getting process information follows the signal ordering guarantees
+  described in the Processes Chapter in the Erlang Reference
+  Manual.
+
   Note:
     If [;;4mregistered_name[0m is part of [;;4mItemList[0m and the process has
     no name registered, a [;;4m{registered_name, []}[0m, [;;4mInfoTuple[0m 
@@ -125,6 +133,11 @@
     is specified, and when [;;4mprocess_info/1[0m is used.
 
   Valid [;;4mInfoTuple[0ms with corresponding [;;4mItem[0ms:
+
+  [;;4m[;;4m{async_dist, Enabled}[0m[0m:
+    Since: OTP 25.3
+
+    Current value of the [;;4masync_dist[0m process flag.
 
   [;;4m[;;4m{backtrace, Bin}[0m[0m:
     Binary [;;4mBin[0m contains the same information as the output from [;;4m[0m
@@ -138,8 +151,8 @@
     implementation [;;4mBinInfo[0m is a list of tuples. The tuples
     contain; [;;4mBinaryId[0m, [;;4mBinarySize[0m, [;;4mBinaryRefcCount[0m.
 
-    The message queue is on the heap depending on the process flag [;;4m[0m
-    [;;4mmessage_queue_data[0m.
+    Depending on the value of the [;;4mmessage_queue_data[0m process
+    flag the message queue may be stored on the heap.
 
   [;;4m[;;4m{catchlevel, CatchLevel}[0m[0m:
     [;;4mCatchLevel[0m is the number of currently active catches in this
@@ -251,10 +264,16 @@
       the local node name.
 
   [;;4m[;;4m{message_queue_data, MQD}[0m[0m:
-    Returns the current state of process flag [;;4mmessage_queue_data[0m. [;;4m[0m
-    [;;4mMQD[0m is either [;;4moff_heap[0m or [;;4mon_heap[0m. For more information,
-    see the documentation of [;;4mprocess_flag(message_queue_data,[0m
-    [;;4mMQD)[0m.
+    [;;4mMQD[0m is the current value of the [;;4mmessage_queue_data[0m process
+    flag, which can be either [;;4moff_heap[0m or [;;4mon_heap[0m. For more
+    information, see the documentation of [;;4m[0m
+    [;;4mprocess_flag(message_queue_data, MQD)[0m.
+
+  [;;4m[;;4m{parent, Pid}[0m[0m:
+    [;;4mPid[0m is the identifier of the parent process, the one that
+    spawned current process. When the process does not have a
+    parent [;;4mundefined[0m is returned. Only the initial process ([;;4m[0m
+    [;;4minit[0m) on a node lacks a parent, though.
 
   [;;4m[;;4m{priority, Level}[0m[0m:
     [;;4mLevel[0m is the current priority level for the process. For more

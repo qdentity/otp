@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -212,10 +212,10 @@ finish(Tracing, ExitStatus, Args) ->
             case get_start_opt(halt_with,
                                fun([HaltMod,HaltFunc]) -> 
                                        {list_to_atom(HaltMod),
-                                        list_to_atom(HaltFunc)} end,
-                               Args) of
+                                        list_to_atom(HaltFunc)}
+                               end, Args) of
                 undefined ->
-                    halt(ExitStatus);
+                    halt(ExitStatus, [{flush, false}]);
                 {M,F} ->
                     apply(M, F, [ExitStatus])
             end
@@ -799,22 +799,7 @@ script_usage() ->
     io:format("Run CT in interactive mode:\n\n"
 	      "\tct_run -shell"
 	      "\n\t [-config ConfigFile1 ConfigFile2 .. ConfigFileN]"
-	      "\n\t [-decrypt_key Key] | [-decrypt_file KeyFile]\n\n"),
-    io:format("Run tests in web based GUI:\n\n"
-	      "\n\t [-config ConfigFile1 ConfigFile2 .. ConfigFileN]"
-	      "\n\t [-decrypt_key Key] | [-decrypt_file KeyFile]"
-	      "\n\t [-dir TestDir1 TestDir2 .. TestDirN] |"
-	      "\n\t [-suite Suite [-case Case]]"
-	      "\n\t [-logopts LogOpt1 LogOpt2 .. LogOptN]"
-	      "\n\t [-verbosity GenVLvl | [CategoryVLvl1 .. CategoryVLvlN]]"
-	      "\n\t [-include InclDir1 InclDir2 .. InclDirN]"
-	      "\n\t [-no_auto_compile]"
-	      "\n\t [-abort_if_missing_suites]"
-	      "\n\t [-multiply_timetraps N]"
-	      "\n\t [-scale_timetraps]"
-	      "\n\t [-create_priv_dir auto_per_run | auto_per_tc | manual_per_tc]"
-	      "\n\t [-basic_html]"
-	      "\n\t [-no_esc_chars]\n\n").
+	      "\n\t [-decrypt_key Key] | [-decrypt_file KeyFile]\n\n").
 
 install(Opts) ->
     install(Opts, ".").
@@ -3276,7 +3261,7 @@ do_trace(Terms) ->
     ok.
 
 stop_trace(true) ->
-    dbg:stop_clear();
+    dbg:stop();
 stop_trace(false) ->
     ok.
 

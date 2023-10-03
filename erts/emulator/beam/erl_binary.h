@@ -271,7 +271,7 @@ void erts_init_binary(void);
 
 byte* erts_get_aligned_binary_bytes_extra(Eterm, byte**, ErtsAlcType_t, unsigned extra);
 /* Used by unicode module */
-Eterm erts_bin_bytes_to_list(Eterm previous, Eterm* hp, byte* bytes, Uint size, Uint bitoffs);
+Eterm erts_bin_bytes_to_list(Eterm previous, Eterm* hp, const byte* bytes, Uint size, Uint bitoffs);
 
 /*
  * Common implementation for erlang:list_to_binary/1 and binary:list_to_bin/1
@@ -281,14 +281,7 @@ BIF_RETTYPE erts_list_to_binary_bif(Process *p, Eterm arg, Export *bif);
 BIF_RETTYPE erts_binary_part(Process *p, Eterm binary, Eterm epos, Eterm elen);
 
 
-typedef union {
-    /*
-     * These two are almost always of
-     * the same size, but when fallback
-     * atomics are used they might
-     * differ in size.
-     */
-    erts_atomic_t smp_atomic_word;
+typedef struct {
     erts_atomic_t atomic_word;
 } ErtsMagicIndirectionWord;
 
@@ -563,7 +556,7 @@ erts_binary_to_magic_indirection(Binary *bp)
     ASSERT(bp->intern.flags & BIN_FLAG_MAGIC);
     ASSERT(ERTS_MAGIC_BIN_ATYPE(bp) == ERTS_ALC_T_MINDIRECTION);
     mip = (ErtsMagicIndirectionWord*)ERTS_MAGIC_BIN_UNALIGNED_DATA(bp);
-    return &mip->smp_atomic_word;
+    return &mip->atomic_word;
 }
 
 #endif /* #if ERTS_GLB_INLINE_INCL_FUNC_DEF */

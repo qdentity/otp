@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 2004-2021. All Rights Reserved.
+# Copyright Ericsson AB 2004-2023. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ MODULES= \
 	ssh_basic_SUITE \
 	ssh_bench_SUITE \
 	ssh_chan_behaviours_SUITE \
+	ssh_collect_labmachine_info_SUITE \
 	ssh_compat_SUITE \
 	ssh_connection_SUITE \
 	ssh_agent_mock_server \
@@ -98,6 +99,7 @@ RELSYSDIR = $(RELEASE_PATH)/ssh_test
 INCLUDES = -I$(ERL_TOP)/lib/ssh/src
 
 ERL_COMPILE_FLAGS += $(INCLUDES) -pa ../ebin
+ERL_COMPILE_FLAGS := $(filter-out +deterministic,$(ERL_COMPILE_FLAGS))
 
 EBIN = .
 
@@ -105,7 +107,7 @@ EBIN = .
 # Targets
 # ----------------------------------------------------
 
-tests debug opt: emakebuild $(TARGET_FILES)
+tests $(TYPES): emakebuild $(TARGET_FILES)
 
 .PHONY: emakebuild
 
