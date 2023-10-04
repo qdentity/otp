@@ -4156,6 +4156,7 @@ dmc_map(DMCContext *context, DMCHeap *heap, DMC_STACK_TYPE(UWord) *text,
         DMC_PUSH2(*text, matchMkHashMap, nelems);
         context->stack_used -= 2*nelems - 1;  /* n keys & values => 1 map */
         DESTROY_WSTACK(wstack);
+        *constant = 0;
         return retOk;
     }
 }
