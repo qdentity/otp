@@ -1953,7 +1953,7 @@ t_select_hashmap_term_copy_bug(_Config) ->
     {LargeMapSize, FlatmapSize} =
         case erlang:system_info(emu_type) of
             debug -> {40, 3};
-            _ -> {100, 32}
+            _ -> {250, 32}
         end,
 
     LM = maps:from_list([{V,1} || V <- lists:seq(1,LargeMapSize)]),
