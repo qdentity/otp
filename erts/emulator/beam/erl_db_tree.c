@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1998-2020. All Rights Reserved.
+ * Copyright Ericsson AB 1998-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -519,7 +519,7 @@ DbTableMethod db_tree =
     db_lookup_dbterm_tree,
     db_finalize_dbterm_tree,
     db_eterm_to_dbterm_tree_common,
-    db_dbterm_list_prepend_tree_common,
+    db_dbterm_list_append_tree_common,
     db_dbterm_list_remove_first_tree_common,
     db_put_dbterm_tree,
     db_free_dbterm_tree_common,
@@ -2467,9 +2467,11 @@ static SWord db_free_table_continue_tree(DbTable *tbl, SWord reds)
 	ASSERT(erts_flxctr_is_snapshot_ongoing(&tb->common.counters) ||
                ((APPROX_MEM_CONSUMED(tb)
                  == (sizeof(DbTable) +
+                     (!DB_LOCK_FREE(tb) ? erts_rwmtx_size(&tb->common.rwlock) : 0) +
                      erts_flxctr_nr_of_allocated_bytes(&tb->common.counters))) ||
                 (APPROX_MEM_CONSUMED(tb)
                  == (sizeof(DbTable) +
+                     (!DB_LOCK_FREE(tb) ? erts_rwmtx_size(&tb->common.rwlock) : 0) +
                      sizeof(DbFixation) +
                      erts_flxctr_nr_of_allocated_bytes(&tb->common.counters)))));
     }
@@ -3097,7 +3099,7 @@ static TreeDbTerm *find_next(DbTableCommon *tb, TreeDbTerm *root,
 	for (;;) {
 	    PUSH_NODE(stack, this);
 	    if (( c = cmp_key(tb,key,this) ) > 0) {
-		if (this->right == NULL) /* We are at the previos 
+		if (this->right == NULL) /* We are at the previous 
 					    and the element does
 					    not exist */
 		    break;
@@ -3444,6 +3446,7 @@ int db_lookup_dbterm_tree_common(Process *p, DbTable *tbl, TreeDbTerm **root,
     handle->flags = flags;
     handle->bp = (void**) pp;
     handle->new_size = (*pp)->dbterm.size;
+    handle->old_tpl = NULL;
     return 1;
 }
 
@@ -3531,11 +3534,11 @@ void* db_eterm_to_dbterm_tree_common(int compress, int keypos, Eterm obj)
     return term;
 }
 
-void* db_dbterm_list_prepend_tree_common(void *list, void *db_term)
+void* db_dbterm_list_append_tree_common(void *last_term, void *db_term)
 {
-    TreeDbTerm* l = list;
+    TreeDbTerm* l = last_term;
     TreeDbTerm* t = db_term;
-    t->left = l;
+    l->left = t;
     return t;
 }
 
@@ -4273,7 +4276,7 @@ static void check_slot_pos(DbTableTree *tb)
 	return;
     t = traverse_until(tb->root, &pos, tb->stack.slot);
     if (t != tb->stack.array[tb->stack.pos - 1]) {
-	erts_fprintf(stderr, "Slot position does not correspont with stack, "
+	erts_fprintf(stderr, "Slot position does not correspond with stack, "
 		   "element position %d is really 0x%08X, when stack says "
 		   "it's 0x%08X\n", tb->stack.slot, t, 
 		   tb->stack.array[tb->stack.pos - 1]);

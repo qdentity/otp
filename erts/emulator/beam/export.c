@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2021. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -123,15 +123,15 @@ export_alloc(struct export_entry* tmpl_e)
 	blob = (struct export_blob*) erts_alloc(ERTS_ALC_T_EXPORT, sizeof(*blob));
 	erts_atomic_add_nob(&total_entries_bytes, sizeof(*blob));
 	obj = &blob->exp;
-	obj->info.op = 0;
-	obj->info.u.gen_bp = NULL;
+        sys_memset(&obj->info.u, 0, sizeof(obj->info.u));
+	obj->info.gen_bp = NULL;
 	obj->info.mfa.module = tmpl->info.mfa.module;
 	obj->info.mfa.function = tmpl->info.mfa.function;
 	obj->info.mfa.arity = tmpl->info.mfa.arity;
         obj->bif_number = -1;
         obj->is_bif_traced = 0;
 
-        memset(&obj->trampoline, 0, sizeof(obj->trampoline));
+        sys_memset(&obj->trampoline, 0, sizeof(obj->trampoline));
 
         if (BeamOpsAreInitialized()) {
             obj->trampoline.common.op = BeamOpCodeAddr(op_call_error_handler);
@@ -293,7 +293,7 @@ erts_export_put(Eterm mod, Eterm func, unsigned int arity)
     res = ee->ep;
 
 #ifdef BEAMASM
-    res->addresses[ERTS_SAVE_CALLS_CODE_IX] = beam_save_calls;
+    res->dispatch.addresses[ERTS_SAVE_CALLS_CODE_IX] = beam_save_calls_export;
 #endif
 
     return res;
@@ -336,7 +336,8 @@ erts_export_get_or_make_stub(Eterm mod, Eterm func, unsigned int arity)
 		ep = entry->ep;
 
 #ifdef BEAMASM
-                ep->addresses[ERTS_SAVE_CALLS_CODE_IX] = beam_save_calls;
+                ep->dispatch.addresses[ERTS_SAVE_CALLS_CODE_IX] =
+                    beam_save_calls_export;
 #endif
 
 		ASSERT(ep);
@@ -386,7 +387,7 @@ Export *export_get(Export *e)
     return entry ? entry->ep : NULL;
 }
 
-IF_DEBUG(static ErtsCodeIndex debug_start_load_ix = 0;)
+IF_DEBUG(static ErtsCodeIndex debug_export_load_ix = 0;)
 
 
 void export_start_staging(void)
@@ -395,36 +396,42 @@ void export_start_staging(void)
     ErtsCodeIndex src_ix = erts_active_code_ix();
     IndexTable* dst = &export_tables[dst_ix];
     IndexTable* src = &export_tables[src_ix];
-    struct export_entry* src_entry;
-#ifdef DEBUG
-    struct export_entry* dst_entry;
-#endif
     int i;
 
     ASSERT(dst_ix != src_ix);
-    ASSERT(debug_start_load_ix == -1);
+    ASSERT(debug_export_load_ix == ~0);
 
     export_staging_lock();
     /*
      * Insert all entries in src into dst table
      */
     for (i = 0; i < src->entries; i++) {
-	src_entry = (struct export_entry*) erts_index_lookup(src, i);
-        src_entry->ep->addresses[dst_ix] = src_entry->ep->addresses[src_ix];
-#ifdef DEBUG
-	dst_entry = (struct export_entry*) 
+        struct export_entry* src_entry;
+        ErtsDispatchable *disp;
+
+        src_entry = (struct export_entry*) erts_index_lookup(src, i);
+        disp = &src_entry->ep->dispatch;
+
+        disp->addresses[dst_ix] = disp->addresses[src_ix];
+
+#ifndef DEBUG
+        index_put_entry(dst, src_entry);
+#else /* DEBUG */
+        {
+            struct export_entry* dst_entry =
+                (struct export_entry*)index_put_entry(dst, src_entry);
+            ASSERT(entry_to_blob(src_entry) == entry_to_blob(dst_entry));
+        }
 #endif
-	    index_put_entry(dst, src_entry);
-	ASSERT(entry_to_blob(src_entry) == entry_to_blob(dst_entry));
     }
     export_staging_unlock();
 
-    IF_DEBUG(debug_start_load_ix = dst_ix);
+    IF_DEBUG(debug_export_load_ix = dst_ix);
 }
 
 void export_end_staging(int commit)
 {
-    ASSERT(debug_start_load_ix == erts_staging_code_ix());
-    IF_DEBUG(debug_start_load_ix = -1);
+    ASSERT(debug_export_load_ix == erts_staging_code_ix());
+    IF_DEBUG(debug_export_load_ix = ~0);
 }
 

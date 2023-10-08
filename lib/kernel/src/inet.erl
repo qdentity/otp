@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1997-2021. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -32,14 +32,19 @@
 	 ifget/3, ifget/2, ifset/3, ifset/2,
 	 getstat/1, getstat/2,
          info/1, socket_to_list/1,
-	 ip/1, stats/0, options/0, 
+	 ip/1, is_ipv4_address/1, is_ipv6_address/1, is_ip_address/1,
+	 stats/0, options/0, 
 	 pushf/3, popf/1, close/1, gethostname/0, gethostname/1, 
-	 parse_ipv4_address/1, parse_ipv6_address/1, parse_ipv4strict_address/1,
-	 parse_ipv6strict_address/1, parse_address/1, parse_strict_address/1,
+	 parse_ipv4_address/1, parse_ipv6_address/1,
+         parse_ipv4strict_address/1, parse_ipv6strict_address/1,
+         parse_address/1, parse_strict_address/1,
+         parse_address/2, parse_strict_address/2,
          ntoa/1, ipv4_mapped_ipv6_address/1]).
 
 -export([connect_options/2, listen_options/2, udp_options/2, sctp_options/2]).
--export([udp_module/1, tcp_module/1, tcp_module/2, sctp_module/1]).
+-export([udp_module/1, udp_module/2,
+         tcp_module/1, tcp_module/2,
+         sctp_module/1]).
 -export([gen_tcp_module/1, gen_udp_module/1]).
 
 -export([i/0, i/1, i/2]).
@@ -85,7 +90,8 @@
               ip6_address/0, ip_address/0, port_number/0,
 	      family_address/0, local_address/0,
               socket_address/0, returned_non_ip_address/0,
-	      socket_setopt/0, socket_getopt/0, ancillary_data/0,
+	      socket_setopt/0, socket_getopt/0, socket_optval/0,
+              ancillary_data/0,
 	      posix/0, socket/0, inet_backend/0, stat_option/0]).
 %% imports
 -import(lists, [append/1, duplicate/2, filter/2, foldl/3]).
@@ -146,8 +152,13 @@
 -type socket_setopt() ::
         gen_sctp:option() | gen_tcp:option() | gen_udp:option().
 
+-type socket_optval() ::
+        gen_sctp:option_value() | gen_tcp:option() | gen_udp:option() |
+        gen_tcp:pktoptions_value().
+
 -type socket_getopt() ::
         gen_sctp:option_name() | gen_tcp:option_name() | gen_udp:option_name().
+
 -type ether_address() :: [0..255].
 
 -type if_setopt() ::
@@ -398,7 +409,7 @@ setopts(Socket, Opts) ->
 	{'ok', OptionValues} | {'error', posix()} when
       Socket :: socket(),
       Options :: [socket_getopt()],
-      OptionValues :: [socket_setopt() | gen_tcp:pktoptions_value()].
+      OptionValues :: [socket_optval()].
 
 getopts(?module_socket(GenSocketMod, _) = Socket, Opts)
   when is_atom(GenSocketMod) ->
@@ -754,6 +765,25 @@ ip(Name) ->
 	Error -> Error
     end.
 
+-spec is_ipv4_address(IPv4Address) -> boolean() when
+      IPv4Address :: ip4_address() | term().
+is_ipv4_address({A,B,C,D}) when ?ip(A,B,C,D) ->
+    true;
+is_ipv4_address(_) ->
+    false.
+
+-spec is_ipv6_address(IPv6Address) -> boolean() when
+      IPv6Address :: ip6_address() | term().
+is_ipv6_address({A,B,C,D,E,F,G,H}) when ?ip6(A,B,C,D,E,F,G,H) ->
+    true;
+is_ipv6_address(_) ->
+    false.
+
+-spec is_ip_address(IPAddress) -> boolean() when
+      IPAddress :: ip_address() | term().
+is_ip_address(Address) ->
+    is_ipv4_address(Address) orelse is_ipv6_address(Address).
+
 %% This function returns the erlang port used (with inet_drv)
 
 -spec getll(Socket :: socket()) -> {'ok', socket()}.
@@ -854,28 +884,28 @@ ntoa(Addr) ->
 -spec parse_ipv4_address(Address) ->
 	{ok, IPv4Address} | {error, einval} when
       Address :: string(),
-      IPv4Address :: ip_address().
+      IPv4Address :: ip4_address().
 parse_ipv4_address(Addr) ->
     inet_parse:ipv4_address(Addr).
 
 -spec parse_ipv6_address(Address) ->
 	{ok, IPv6Address} | {error, einval} when
       Address :: string(),
-      IPv6Address :: ip_address().
+      IPv6Address :: ip6_address().
 parse_ipv6_address(Addr) ->
     inet_parse:ipv6_address(Addr).
 
 -spec parse_ipv4strict_address(Address) ->
 	{ok, IPv4Address} | {error, einval} when
       Address :: string(),
-      IPv4Address :: ip_address().
+      IPv4Address :: ip4_address().
 parse_ipv4strict_address(Addr) ->
     inet_parse:ipv4strict_address(Addr).
 
 -spec parse_ipv6strict_address(Address) ->
 	{ok, IPv6Address} | {error, einval} when
       Address :: string(),
-      IPv6Address :: ip_address().
+      IPv6Address :: ip6_address().
 parse_ipv6strict_address(Addr) ->
     inet_parse:ipv6strict_address(Addr).
 
@@ -886,12 +916,38 @@ parse_ipv6strict_address(Addr) ->
 parse_address(Addr) ->
     inet_parse:address(Addr).
 
+-spec parse_address(Address, inet) ->
+          {ok, IPAddress} | {error, einval} when
+      Address :: string(),
+      IPAddress :: ip_address();
+                   (Address, inet6) ->
+          {ok, IPv6Address} | {error, einval} when
+      Address :: string(),
+      IPv6Address :: ip6_address().
+parse_address(Addr, inet) ->
+    inet_parse:ipv4_address(Addr);
+parse_address(Addr, inet6) ->
+    inet_parse:ipv6_address(Addr).
+
 -spec parse_strict_address(Address) ->
 	{ok, IPAddress} | {error, einval} when
       Address :: string(),
       IPAddress :: ip_address().
 parse_strict_address(Addr) ->
     inet_parse:strict_address(Addr).
+
+-spec parse_strict_address(Address, inet) ->
+          {ok, IPAddress} | {error, einval} when
+      Address :: string(),
+      IPAddress :: ip_address();
+                   (Address, inet6) ->
+          {ok, IPv6Address} | {error, einval} when
+      Address :: string(),
+      IPv6Address :: ip6_address().
+parse_strict_address(Addr, inet) ->
+    inet_parse:ipv4strict_address(Addr);
+parse_strict_address(Addr, inet6) ->
+    inet_parse:ipv6strict_address(Addr).
 
 -spec ipv4_mapped_ipv6_address(ip_address()) -> ip_address().
 ipv4_mapped_ipv6_address({D1,D2,D3,D4})
@@ -926,9 +982,10 @@ stats() ->
 %% Available options for tcp:connect
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 connect_options() ->
-    [tos, tclass, priority, reuseaddr, keepalive, linger, nodelay,
-     sndbuf, recbuf,
-     recvtos, recvtclass, ttl, recvttl,
+    [debug,
+     tos, tclass, priority, reuseaddr, reuseport, reuseport_lb,
+     exclusiveaddruse, keepalive,
+     linger, nodelay, sndbuf, recbuf, recvtos, recvtclass, ttl, recvttl,
      header, active, packet, packet_size, buffer, mode, deliver, line_delimiter,
      exit_on_close, high_watermark, low_watermark, high_msgq_watermark,
      low_msgq_watermark, send_timeout, send_timeout_close, delay_send, raw,
@@ -1015,8 +1072,10 @@ con_add(Name, Val, #connect_opts{} = R, Opts, AllOpts) ->
 %% Available options for tcp:listen
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 listen_options() ->
-    [tos, tclass, priority, reuseaddr, keepalive, linger, sndbuf, recbuf, nodelay,
-     recvtos, recvtclass, ttl, recvttl,
+    [debug,
+     tos, tclass,
+     priority, reuseaddr, reuseport, reuseport_lb, exclusiveaddruse, keepalive,
+     linger, sndbuf, recbuf, nodelay, recvtos, recvtclass, ttl, recvttl,
      header, active, packet, buffer, mode, deliver, backlog, ipv6_v6only,
      exit_on_close, high_watermark, low_watermark, high_msgq_watermark,
      low_msgq_watermark, send_timeout, send_timeout_close, delay_send,
@@ -1123,8 +1182,10 @@ gen_tcp_module(Opts, socket) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 udp_options() ->
     [
-     tos, tclass,
-     priority, reuseaddr, sndbuf, recbuf, header, active, buffer, mode,
+     debug,
+     tos, tclass, priority,
+     reuseaddr, reuseport, reuseport_lb, exclusiveaddruse,
+     sndbuf, recbuf, header, active, buffer, mode,
      recvtos, recvtclass, ttl, recvttl, deliver, ipv6_v6only,
      broadcast, dontroute, multicast_if, multicast_ttl, multicast_loop,
      add_membership, drop_membership, read_packets, raw,
@@ -1173,9 +1234,20 @@ udp_opt([Opt | Opts], #udp_opts{ifaddr = IfAddr} = R, As) ->
 		    {error, badarg}
 	    end;
         {active,N} when is_integer(N), N < 32768, N >= -32768 ->
-            NOpts = lists:keydelete(active, 1, R#udp_opts.opts),
-            udp_opt(Opts, R#udp_opts { opts = [{active,N}|NOpts] }, As);
+            POpts = lists:keydelete(active, 1, R#udp_opts.opts),
+            udp_opt(Opts, R#udp_opts { opts = [{active,N}|POpts] }, As);
+
+        {Membership, {MAddr, If}}
+          when ((Membership =:= add_membership) orelse
+                (Membership =:= drop_membership)) andalso
+               (tuple_size(MAddr) =:= 4) andalso
+               ((If =:= any) orelse (tuple_size(If) =:= 4)) ->
+            MembershipOpt = {Membership, {MAddr, If, 0}},
+            POpts         = R#udp_opts.opts,
+            udp_opt(Opts, R#udp_opts{opts = [MembershipOpt|POpts]}, As);
+
 	{Name,Val} when is_atom(Name) -> udp_add(Name, Val, R, Opts, As);
+
 	_ -> {error, badarg}
     end;
 udp_opt([], #udp_opts{} = R, _SockOpts) ->
@@ -1189,8 +1261,16 @@ udp_add(Name, Val, #udp_opts{} = R, Opts, As) ->
     end.
 
 udp_module(Opts) ->
+    udp_module_1(Opts, undefined).
+
+udp_module(Opts, Addr) ->
+    Address = {undefined, Addr},
+    %% Address has to be a 2-tuple but the first element is ignored
+    udp_module_1(Opts, Address).
+
+udp_module_1(Opts, Address) ->
     mod(
-      Opts, udp_module, undefined,
+      Opts, udp_module, Address,
       #{inet => inet_udp, inet6 => inet6_udp, local => local_udp}).
 
 gen_udp_module([{inet_backend, Flag}|Opts]) ->
@@ -1222,9 +1302,11 @@ gen_udp_module(Opts, socket) ->
 %  (*) passing of open FDs ("fdopen") is not supported.
 sctp_options() ->
 [   % The following are generic inet options supported for SCTP sockets:
+    debug,
     mode, active, buffer, tos, tclass, ttl,
-    priority, dontroute, reuseaddr, linger,
-    recvtos, recvtclass, recvttl,
+    priority, dontroute,
+    reuseaddr, reuseport, reuseport_lb, exclusiveaddruse,
+    linger, recvtos, recvtclass, recvttl,
     sndbuf, recbuf, ipv6_v6only, high_msgq_watermark, low_msgq_watermark,
     bind_to_device,
 
@@ -1752,7 +1834,7 @@ open_bind(
 open_fd(Fd, BAddr, BPort, Opts, Protocol, Family, Type, Module) ->
     DoNotBind =
 	%% We do not do any binding if no port+addr options
-	%% were given, in order to keep backwards compatability
+	%% were given, in order to keep backwards compatibility
 	%% with pre Erlang/OTP 17
         BAddr =:= undefined, % Presumably already bound
     if
@@ -2289,4 +2371,8 @@ lock_socket(S,Val) ->
 
 
 ensure_sockaddr(SockAddr) ->
-    prim_socket:enc_sockaddr(SockAddr).
+    try prim_socket:enc_sockaddr(SockAddr)
+    catch
+        throw : {invalid, _} = Invalid : Stacktrace ->
+            erlang:raise(error, Invalid, Stacktrace)
+    end.

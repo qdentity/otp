@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2020-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2020-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -74,19 +74,19 @@ void BeamModuleAssembler::emit_i_recv_set() {
 
 #endif /* ERTS_SUPPORT_OLD_RECV_MARK_INSTRS */
 
-void BeamModuleAssembler::emit_recv_marker_reserve(const ArgVal &Dst) {
-    emit_enter_runtime();
+void BeamModuleAssembler::emit_recv_marker_reserve(const ArgRegister &Dst) {
+    emit_enter_runtime<Update::eHeapAlloc>();
 
     a.mov(ARG1, c_p);
     runtime_call<1>(erts_msgq_recv_marker_insert);
 
-    emit_leave_runtime();
+    emit_leave_runtime<Update::eHeapAlloc>();
 
     mov_arg(Dst, RET);
 }
 
-void BeamModuleAssembler::emit_recv_marker_bind(const ArgVal &Marker,
-                                                const ArgVal &Reference) {
+void BeamModuleAssembler::emit_recv_marker_bind(const ArgRegister &Marker,
+                                                const ArgRegister &Reference) {
     mov_arg(ARG2, Marker);
     mov_arg(ARG3, Reference);
 
@@ -98,7 +98,7 @@ void BeamModuleAssembler::emit_recv_marker_bind(const ArgVal &Marker,
     emit_leave_runtime();
 }
 
-void BeamModuleAssembler::emit_recv_marker_clear(const ArgVal &Reference) {
+void BeamModuleAssembler::emit_recv_marker_clear(const ArgRegister &Reference) {
     mov_arg(ARG2, Reference);
 
     emit_enter_runtime();
@@ -109,7 +109,7 @@ void BeamModuleAssembler::emit_recv_marker_clear(const ArgVal &Reference) {
     emit_leave_runtime();
 }
 
-void BeamModuleAssembler::emit_recv_marker_use(const ArgVal &Reference) {
+void BeamModuleAssembler::emit_recv_marker_use(const ArgRegister &Reference) {
     mov_arg(ARG2, Reference);
 
     emit_enter_runtime();
@@ -150,6 +150,8 @@ void BeamGlobalAssembler::emit_i_loop_rec_shared() {
     x86::Mem await_addr = TMP_MEM1q, message_ptr = TMP_MEM2q,
              get_out = TMP_MEM3d;
 
+    emit_enter_frame();
+
     a.or_(x86::dword_ptr(c_p, offsetof(Process, flags)), imm(F_DELAY_GC));
     a.mov(x86::qword_ptr(c_p, offsetof(Process, i)), ARG1);
     a.mov(await_addr, ARG2);
@@ -181,8 +183,7 @@ void BeamGlobalAssembler::emit_i_loop_rec_shared() {
 
         comment("Inner queue empty, fetch more from outer/middle queues");
 
-        emit_enter_runtime<Update::eReductions | Update::eStack |
-                           Update::eHeap>();
+        emit_enter_runtime<Update::eReductions | Update::eHeapAlloc>();
 
         a.mov(message_ptr, imm(0));
         a.mov(ARG1, c_p);
@@ -202,8 +203,7 @@ void BeamGlobalAssembler::emit_i_loop_rec_shared() {
          * Also note that another process may have loaded new code and sent us
          * a message to notify us about it, so we must update the active code
          * index. */
-        emit_leave_runtime<Update::eStack | Update::eHeap |
-                           Update::eCodeIndex>();
+        emit_leave_runtime<Update::eHeapAlloc | Update::eCodeIndex>();
 
         a.sub(FCALLS, RET);
 
@@ -223,7 +223,7 @@ void BeamGlobalAssembler::emit_i_loop_rec_shared() {
          * Note that the message queue lock is still held in this case. */
         a.and_(x86::dword_ptr(c_p, offsetof(Process, flags)), imm(~F_DELAY_GC));
 
-        emit_discard_cp();
+        emit_unwind_frame();
         a.jmp(await_addr);
     }
 
@@ -235,7 +235,7 @@ void BeamGlobalAssembler::emit_i_loop_rec_shared() {
         a.mov(x86::qword_ptr(c_p, offsetof(Process, arity)), imm(0));
         a.mov(x86::qword_ptr(c_p, offsetof(Process, current)), imm(0));
 
-        emit_discard_cp();
+        emit_unwind_frame();
         a.jmp(labels[do_schedule]);
     }
 
@@ -269,18 +269,19 @@ void BeamGlobalAssembler::emit_i_loop_rec_shared() {
         a.mov(ARG1, x86::qword_ptr(ARG1, offsetof(ErtsMessage, m[0])));
         a.mov(getXRef(0), ARG1);
 
+        emit_leave_frame();
         a.ret();
     }
 }
 
-void BeamModuleAssembler::emit_i_loop_rec(const ArgVal &Wait) {
+void BeamModuleAssembler::emit_i_loop_rec(const ArgLabel &Wait) {
     Label entry = a.newLabel();
 
     align_erlang_cp();
     a.bind(entry);
 
     a.lea(ARG1, x86::qword_ptr(entry));
-    a.lea(ARG2, x86::qword_ptr(labels[Wait.getValue()]));
+    a.lea(ARG2, x86::qword_ptr(resolve_beam_label(Wait)));
     fragment_call(ga->get_i_loop_rec_shared());
 }
 
@@ -301,7 +302,7 @@ void BeamModuleAssembler::emit_remove_message() {
     emit_leave_runtime();
 }
 
-void BeamModuleAssembler::emit_loop_rec_end(const ArgVal &Dest) {
+void BeamModuleAssembler::emit_loop_rec_end(const ArgLabel &Dest) {
     emit_enter_runtime();
 
     a.mov(ARG1, c_p);
@@ -310,35 +311,35 @@ void BeamModuleAssembler::emit_loop_rec_end(const ArgVal &Dest) {
     emit_leave_runtime();
 
     a.dec(FCALLS);
-    a.jmp(labels[Dest.getValue()]);
+    a.jmp(resolve_beam_label(Dest));
 }
 
-void BeamModuleAssembler::emit_wait_unlocked(const ArgVal &Dest) {
+void BeamModuleAssembler::emit_wait_unlocked(const ArgLabel &Dest) {
     emit_enter_runtime();
 
     a.mov(ARG1, c_p);
-    a.lea(ARG2, x86::qword_ptr(labels[Dest.getValue()]));
+    a.lea(ARG2, x86::qword_ptr(resolve_beam_label(Dest)));
     runtime_call<2>(beam_jit_wait_unlocked);
 
     emit_leave_runtime();
 
-    abs_jmp(ga->get_do_schedule());
+    a.jmp(resolve_fragment(ga->get_do_schedule()));
 }
 
-void BeamModuleAssembler::emit_wait_locked(const ArgVal &Dest) {
+void BeamModuleAssembler::emit_wait_locked(const ArgLabel &Dest) {
     emit_enter_runtime();
 
     a.mov(ARG1, c_p);
-    a.lea(ARG2, x86::qword_ptr(labels[Dest.getValue()]));
+    a.lea(ARG2, x86::qword_ptr(resolve_beam_label(Dest)));
     runtime_call<2>(beam_jit_wait_locked);
 
     emit_leave_runtime();
 
-    abs_jmp(ga->get_do_schedule());
+    a.jmp(resolve_fragment(ga->get_do_schedule()));
 }
 
-void BeamModuleAssembler::emit_wait_timeout_unlocked(const ArgVal &Src,
-                                                     const ArgVal &Dest) {
+void BeamModuleAssembler::emit_wait_timeout_unlocked(const ArgSource &Src,
+                                                     const ArgLabel &Dest) {
     emit_enter_runtime();
 
     a.mov(ARG1, c_p);
@@ -349,8 +350,8 @@ void BeamModuleAssembler::emit_wait_timeout_unlocked(const ArgVal &Src,
     emit_wait_timeout_locked(Src, Dest);
 }
 
-void BeamModuleAssembler::emit_wait_timeout_locked(const ArgVal &Src,
-                                                   const ArgVal &Dest) {
+void BeamModuleAssembler::emit_wait_timeout_locked(const ArgSource &Src,
+                                                   const ArgLabel &Dest) {
     Label wait = a.newLabel(), next = a.newLabel();
 
     mov_arg(ARG2, Src);
@@ -372,7 +373,7 @@ void BeamModuleAssembler::emit_wait_timeout_locked(const ArgVal &Src,
     a.short_().jl(next);
 #endif
 
-    emit_handle_error(currLabel, (ErtsCodeMFA *)nullptr);
+    emit_raise_exception(current_label, (ErtsCodeMFA *)nullptr);
 
     a.bind(wait);
     emit_wait_locked(Dest);

@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2020-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2020-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,15 +31,20 @@ extern "C"
  *
  * RET = export entry */
 void BeamGlobalAssembler::emit_generic_bp_global() {
-    emit_enter_runtime<Update::eReductions | Update::eStack | Update::eHeap>();
+    emit_enter_frame();
+    emit_enter_runtime<Update::eReductions | Update::eHeapAlloc>();
 
     a.mov(ARG1, c_p);
     a.lea(ARG2, x86::qword_ptr(RET, offsetof(Export, info)));
     load_x_reg_array(ARG3);
     runtime_call<3>(erts_generic_breakpoint);
 
-    emit_leave_runtime<Update::eReductions | Update::eStack | Update::eHeap>();
+    emit_leave_runtime<Update::eReductions | Update::eHeapAlloc>();
 
+    /* This is technically a tail call so we must leave the current frame
+     * before jumping. Note that we might not leave the frame we entered
+     * earlier this function, but one added by `erts_generic_breakpoint`. */
+    emit_leave_frame();
     a.jmp(RET);
 }
 
@@ -52,8 +57,14 @@ void BeamGlobalAssembler::emit_generic_bp_local() {
     emit_assert_erlang_stack();
 
 #ifdef NATIVE_ERLANG_STACK
-    /* Since we've entered here on the Erlang stack, we need to stash our return
-     * addresses in case `erts_generic_breakpoint` pushes any trace frames. */
+    /* Since we've entered here on the Erlang stack, we need to stash our
+     * return addresses in case `erts_generic_breakpoint` pushes any trace
+     * frames.
+     *
+     * Note that both of these are return addresses even when frame pointers
+     * are enabled due to the way the breakpoint trampoline works. They must
+     * not be restored until we're ready to return to module code, lest we
+     * leave the stack in an inconsistent state. */
     a.pop(TMP_MEM2q);
     a.pop(ARG2);
 #else
@@ -81,22 +92,30 @@ void BeamGlobalAssembler::emit_generic_bp_local() {
     }
 #endif
 
-    emit_enter_runtime<Update::eReductions | Update::eStack | Update::eHeap>();
+    emit_enter_frame();
+    emit_enter_runtime<Update::eReductions | Update::eHeapAlloc>();
 
     a.mov(ARG1, c_p);
     /* ARG2 is already set above */
     load_x_reg_array(ARG3);
     runtime_call<3>(erts_generic_breakpoint);
 
-    emit_leave_runtime<Update::eReductions | Update::eStack | Update::eHeap>();
+    emit_leave_runtime<Update::eReductions | Update::eHeapAlloc>();
 
-#ifdef NATIVE_ERLANG_STACK
-    a.push(TMP_MEM1q);
-    a.push(TMP_MEM2q);
-#endif
+    /* This doesn't necessarily leave the frame entered above: see the
+     * corresponding comment in `generic_bp_global` */
+    emit_leave_frame();
 
     a.cmp(RET, imm(BeamOpCodeAddr(op_i_debug_breakpoint)));
     a.je(labels[debug_bp]);
+
+#ifdef NATIVE_ERLANG_STACK
+    /* Note that we don't restore our return addresses in the `debug_bp` case
+     * above, since it tail calls the error handler and thus never returns to
+     * module code or `call_nif_early`. */
+    a.push(TMP_MEM1q);
+    a.push(TMP_MEM2q);
+#endif
 
     a.ret();
 }
@@ -108,9 +127,16 @@ void BeamGlobalAssembler::emit_generic_bp_local() {
 void BeamGlobalAssembler::emit_debug_bp() {
     Label error = a.newLabel();
 
+#ifndef NATIVE_ERLANG_STACK
+    /* We're never going to return to module code, so we have to discard the
+     * return addresses added by the breakpoint trampoline. */
+    a.add(x86::rsp, imm(sizeof(ErtsCodePtr[2])));
+#endif
+
     emit_assert_erlang_stack();
 
-    emit_enter_runtime<Update::eReductions | Update::eStack | Update::eHeap>();
+    emit_enter_frame();
+    emit_enter_runtime<Update::eReductions | Update::eHeapAlloc>();
 
     /* Read and adjust the return address we saved in generic_bp_local. */
     a.mov(ARG2, TMP_MEM1q);
@@ -122,24 +148,18 @@ void BeamGlobalAssembler::emit_debug_bp() {
     a.mov(ARG4, imm(am_breakpoint));
     runtime_call<4>(call_error_handler);
 
-    emit_leave_runtime<Update::eReductions | Update::eStack | Update::eHeap>();
-
-    /* Skip two frames so we can make a direct jump to the error handler. This
-     * makes it so that if we are to do a call_nif_early, we skip that and call
-     * the error handler's code instead, mirroring the way the interpreter
-     * works. */
-    emit_discard_cp();
-    emit_discard_cp();
+    emit_leave_runtime<Update::eReductions | Update::eHeapAlloc>();
+    emit_leave_frame();
 
     a.test(RET, RET);
     a.je(error);
 
-    a.jmp(emit_setup_export_call(RET));
+    a.jmp(emit_setup_dispatchable_call(RET));
 
     a.bind(error);
     {
         a.mov(ARG2, TMP_MEM1q);
-        a.jmp(labels[handle_error_shared]);
+        a.jmp(labels[raise_exception]);
     }
 }
 
@@ -157,75 +177,51 @@ void BeamModuleAssembler::emit_return_trace() {
     a.mov(ARG3, getXRef(0));
     a.lea(ARG4, getYRef(1));
 
-    emit_enter_runtime<Update::eStack | Update::eHeap>();
+    emit_enter_runtime<Update::eHeapAlloc>();
 
     a.mov(ARG1, c_p);
     runtime_call<4>(return_trace);
 
-    emit_leave_runtime<Update::eStack | Update::eHeap>();
+    emit_leave_runtime<Update::eHeapAlloc>();
 
-    emit_deallocate(ArgVal(ArgVal::u, 2));
+    emit_deallocate(ArgWord(BEAM_RETURN_TRACE_FRAME_SZ));
     emit_return();
 }
 
-void BeamModuleAssembler::emit_i_return_time_trace() {
+void BeamModuleAssembler::emit_i_call_trace_return() {
     /* Pass prev_info if present (is a CP), otherwise null. */
     a.mov(ARG2, getYRef(0));
-    mov_imm(ARG3, 0);
+    mov_imm(ARG4, 0);
 
     a.test(ARG2, imm(_CPMASK));
     a.lea(ARG2, x86::qword_ptr(ARG2, -(Sint)sizeof(ErtsCodeInfo)));
-    a.cmovnz(ARG2, ARG3);
+    a.cmovnz(ARG2, ARG4);
+    a.mov(ARG3, getYRef(1));
 
-    emit_enter_runtime<Update::eStack | Update::eHeap>();
+    emit_enter_runtime<Update::eHeapAlloc>();
 
     a.mov(ARG1, c_p);
-    runtime_call<2>(erts_trace_time_return);
+    runtime_call<3>(erts_call_trace_return);
 
-    emit_leave_runtime<Update::eStack | Update::eHeap>();
+    emit_leave_runtime<Update::eHeapAlloc>();
 
-    emit_deallocate(ArgVal(ArgVal::u, 1));
+    emit_deallocate(ArgWord(BEAM_RETURN_CALL_ACC_TRACE_FRAME_SZ));
     emit_return();
 }
 
-static void i_return_to_trace(Process *c_p) {
-    if (IS_TRACED_FL(c_p, F_TRACE_RETURN_TO)) {
-        Uint *cpp = (Uint *)c_p->stop;
-        while (is_not_CP(*cpp)) {
-            cpp++;
-        }
-        for (;;) {
-            ErtsCodePtr w = cp_val(*cpp);
-            if (BeamIsReturnTrace(w)) {
-                do
-                    ++cpp;
-                while (is_not_CP(*cpp));
-                cpp += 2;
-            } else if (BeamIsReturnToTrace(w)) {
-                do
-                    ++cpp;
-                while (is_not_CP(*cpp));
-            } else {
-                break;
-            }
-        }
-        ERTS_UNREQ_PROC_MAIN_LOCK(c_p);
-        erts_trace_return_to(c_p, cp_val(*cpp));
-        ERTS_REQ_PROC_MAIN_LOCK(c_p);
-    }
-}
-
 void BeamModuleAssembler::emit_i_return_to_trace() {
-    emit_enter_runtime<Update::eStack | Update::eHeap>();
+    /* Remove our stack frame so that `beam_jit_return_to_trace` can inspect
+     * the next one.
+     *
+     * (This doesn't do anything if the native stack is used.) */
+    emit_deallocate(ArgWord(BEAM_RETURN_TO_TRACE_FRAME_SZ));
+
+    emit_enter_runtime<Update::eReductions | Update::eHeapAlloc>();
 
     a.mov(ARG1, c_p);
-    runtime_call<1>(i_return_to_trace);
+    runtime_call<1>(beam_jit_return_to_trace);
 
-    emit_leave_runtime<Update::eStack | Update::eHeap>();
-
-    /* Remove the zero-sized stack frame. (Will actually do nothing if
-     * the native stack is used.) */
-    emit_deallocate(ArgVal(ArgVal::u, 0));
+    emit_leave_runtime<Update::eReductions | Update::eHeapAlloc>();
 
     emit_return();
 }
@@ -233,13 +229,13 @@ void BeamModuleAssembler::emit_i_return_to_trace() {
 void BeamModuleAssembler::emit_i_hibernate() {
     Label error = a.newLabel();
 
-    emit_enter_runtime<Update::eReductions | Update::eStack | Update::eHeap>();
+    emit_enter_runtime<Update::eReductions | Update::eHeapAlloc>();
 
     a.mov(ARG1, c_p);
     load_x_reg_array(ARG2);
     runtime_call<2>(erts_hibernate);
 
-    emit_leave_runtime<Update::eReductions | Update::eStack | Update::eHeap>();
+    emit_leave_runtime<Update::eReductions | Update::eHeapAlloc>();
 
     a.test(RET, RET);
     a.je(error);
@@ -247,8 +243,8 @@ void BeamModuleAssembler::emit_i_hibernate() {
     a.mov(ARG1, x86::qword_ptr(c_p, offsetof(Process, flags)));
     a.and_(ARG1, imm(~F_HIBERNATE_SCHED));
     a.mov(x86::qword_ptr(c_p, offsetof(Process, flags)), ARG1);
-    abs_jmp(ga->get_do_schedule());
+    a.jmp(resolve_fragment(ga->get_do_schedule()));
 
     a.bind(error);
-    emit_handle_error(&BIF_TRAP_EXPORT(BIF_hibernate_3)->info.mfa);
+    emit_raise_exception(&BIF_TRAP_EXPORT(BIF_hibernate_3)->info.mfa);
 }

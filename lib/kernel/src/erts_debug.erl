@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 1999-2021. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2023. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@
 
 %%% BIFs
 
--export([breakpoint/2, disassemble/1, display/1, dist_ext_to_term/2,
+-export([breakpoint/2, disassemble/1, dist_ext_to_term/2,
          flat_size/1, get_internal_state/1, instructions/0,
          interpreter_size/0,
          map_info/1, same/2, set_internal_state/2,
@@ -67,12 +67,6 @@ breakpoint(_, _) ->
       Code :: binary().
 
 disassemble(_) ->
-    erlang:nif_error(undef).
-
--spec display(Term) -> string() when
-      Term :: term().
-
-display(_) ->
     erlang:nif_error(undef).
 
 -spec dist_ext_to_term(Tuple, Binary) -> term() when
@@ -256,6 +250,10 @@ size([H|T]=Term, Seen0, Sum0) ->
 	    {Sum,Seen} = size(H, Seen1, Sum0+2),
 	    size(T, Seen, Sum)
     end;
+size({}, Seen0, Sum0) ->
+    %% Tuples of size 0 all points to a constant literal so we count
+    %% them as size zero
+    {Sum0,Seen0};
 size(Tuple, Seen0, Sum0) when is_tuple(Tuple) ->
     case remember_term(Tuple, Seen0) of
 	seen -> {Sum0,Seen0};
@@ -443,7 +441,7 @@ lc_graph_to_dot(OutFile, InFile) ->
     {ok, [LL0]} = file:consult(InFile),
 
     [{"NO LOCK",0} | LL] = LL0,
-    Map = maps:from_list([{Id, Name} || {Name, Id, _, _} <- LL]),
+    Map = #{Id => Name || {Name, Id, _, _} <- LL},
 
     case file:open(OutFile, [exclusive]) of
         {ok, Out} ->

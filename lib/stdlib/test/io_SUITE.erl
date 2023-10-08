@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 1999-2021. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2023. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -28,12 +28,13 @@
 	 io_fread_newlines/1, otp_8989/1, io_lib_fread_literal/1,
 	 printable_range/1, bad_printable_range/1,
 	 io_lib_print_binary_depth_one/1, otp_10302/1, otp_10755/1,
-         otp_10836/1, io_lib_width_too_small/1,
+         otp_10836/1, io_lib_width_too_small/1, calling_self/1,
          io_with_huge_message_queue/1, format_string/1, format_neg_zero/1,
 	 maps/1, coverage/1, otp_14178_unicode_atoms/1, otp_14175/1,
          otp_14285/1, limit_term/1, otp_14983/1, otp_15103/1, otp_15076/1,
          otp_15159/1, otp_15639/1, otp_15705/1, otp_15847/1, otp_15875/1,
-         github_4801/1, chars_limit/1, error_info/1, otp_17525/1]).
+         github_4801/1, chars_limit/1, error_info/1, otp_17525/1,
+         unscan_format_without_maps_order/1, build_text_without_maps_order/1]).
 
 -export([pretty/2, trf/3]).
 
@@ -63,11 +64,12 @@ all() ->
      io_fread_newlines, otp_8989, io_lib_fread_literal,
      printable_range, bad_printable_range, format_neg_zero,
      io_lib_print_binary_depth_one, otp_10302, otp_10755, otp_10836,
-     io_lib_width_too_small, io_with_huge_message_queue,
+     io_lib_width_too_small, io_with_huge_message_queue, calling_self,
      format_string, maps, coverage, otp_14178_unicode_atoms, otp_14175,
      otp_14285, limit_term, otp_14983, otp_15103, otp_15076, otp_15159,
      otp_15639, otp_15705, otp_15847, otp_15875, github_4801, chars_limit,
-     error_info, otp_17525].
+     error_info, otp_17525, unscan_format_without_maps_order,
+     build_text_without_maps_order].
 
 %% Error cases for output.
 error_1(Config) when is_list(Config) ->
@@ -208,6 +210,10 @@ float_w(Config) when is_list(Config) ->
      "9.007199254740992e15"] =
         [begin g_t(X), fmt("~w", [X]) end || X <- Nums],
 
+    ok.
+
+calling_self(Config) when is_list(Config) ->
+    {'EXIT', {calling_self, _}} = (catch io:format(self(), "~p", [oops])),
     ok.
 
 %% OTP-5403. ~s formats I/O lists and a single binary.
@@ -1966,22 +1972,16 @@ io_lib_fread_literal(Suite) when is_list(Suite) ->
 
 %% Check that the printable range set by the user actually works.
 printable_range(Suite) when is_list(Suite) ->
-    Pa = filename:dirname(code:which(?MODULE)),
-    {ok, UNode} = test_server:start_node(printable_range_unicode, slave,
-					 [{args, " +pc unicode -pa " ++ Pa}]),
-    {ok, LNode} = test_server:start_node(printable_range_latin1, slave,
-					 [{args, " +pc latin1 -pa " ++ Pa}]),
-    {ok, DNode} = test_server:start_node(printable_range_default, slave,
-					 [{args, " -pa " ++ Pa}]),
-    unicode = rpc:call(UNode,io,printable_range,[]),
-    latin1 = rpc:call(LNode,io,printable_range,[]),
+    {ok, UPeer0, UNode0} = ?CT_PEER(["+pc", "unicode"]),
+    {ok, LPeer0, LNode0} = ?CT_PEER(["+pc", "latin1"]),
+    {ok, DPeer, DNode} = ?CT_PEER(),
+    unicode = rpc:call(UNode0,io,printable_range,[]),
+    latin1 = rpc:call(LNode0,io,printable_range,[]),
     latin1 = rpc:call(DNode,io,printable_range,[]),
-    test_server:stop_node(UNode),
-    test_server:stop_node(LNode),
-    {ok, UNode} = test_server:start_node(printable_range_unicode, slave,
-					 [{args, " +pcunicode -pa " ++ Pa}]),
-    {ok, LNode} = test_server:start_node(printable_range_latin1, slave,
-					 [{args, " +pclatin1 -pa " ++ Pa}]),
+    peer:stop(UPeer0),
+    peer:stop(LPeer0),
+    {ok, UPeer, UNode} = ?CT_PEER(["+pcunicode"]),
+    {ok, LPeer, LNode} = ?CT_PEER(["+pclatin1"]),
     unicode = rpc:call(UNode,io,printable_range,[]),
     latin1 = rpc:call(LNode,io,printable_range,[]),
     PrettyOptions = [{column,1},
@@ -2029,9 +2029,9 @@ printable_range(Suite) when is_list(Suite) ->
     $\e = format_max(LNode, ["~ts", [PrintableControls]]),
     $\e = format_max(DNode, ["~ts", [PrintableControls]]),
 
-    test_server:stop_node(UNode),
-    test_server:stop_node(LNode),
-    test_server:stop_node(DNode),
+    peer:stop(UPeer),
+    peer:stop(LPeer),
+    peer:stop(DPeer),
     ok.
 
 print_max(Node, Args) ->
@@ -2079,11 +2079,8 @@ io_lib_print_binary_depth_one(Suite) when is_list(Suite) ->
 
 %% OTP-10302. Unicode.
 otp_10302(Suite) when is_list(Suite) ->
-    Pa = filename:dirname(code:which(?MODULE)),
-    {ok, UNode} = test_server:start_node(printable_range_unicode, slave,
-					 [{args, " +pc unicode -pa " ++ Pa}]),
-    {ok, LNode} = test_server:start_node(printable_range_latin1, slave,
-					 [{args, " +pc latin1 -pa " ++ Pa}]),
+    {ok, UPeer, UNode} = ?CT_PEER(["+pc", "unicode"]),
+    {ok, LPeer, LNode} = ?CT_PEER(["+pc", "latin1"]),
     "\"\x{400}\"" = rpc:call(UNode,?MODULE,pretty,["\x{400}", -1]),
     "<<\"\x{400}\"/utf8>>" = rpc:call(UNode,?MODULE,pretty,
 				      [<<"\x{400}"/utf8>>, -1]),
@@ -2094,8 +2091,8 @@ otp_10302(Suite) when is_list(Suite) ->
     "<<208,128>>" = rpc:call(LNode,?MODULE,pretty,[<<"\x{400}"/utf8>>, -1]),
 
     "<<208,...>>" = rpc:call(LNode,?MODULE,pretty,[<<"\x{400}foo"/utf8>>, 2]),
-    test_server:stop_node(UNode),
-    test_server:stop_node(LNode),
+    peer:stop(UPeer),
+    peer:stop(LPeer),
 
     "<<\"äppl\"/utf8>>" = pretty(<<"äppl"/utf8>>, 2),
     "<<\"äppl\"/utf8...>>" = pretty(<<"äpple"/utf8>>, 2),
@@ -2189,14 +2186,16 @@ otp_10755(Suite) when is_list(Suite) ->
         "    io:format(\"~ltw\", [S]),\n"
         "    io:format(\"~tlw\", [S]),\n"
         "    io:format(\"~ltW\", [S, 1]),\n"
-        "    io:format(\"~tlW\", [S, 1]).\n",
+        "    io:format(\"~tlW\", [S, 1]),\n"
+        "    io:format(\"~ltp\", [S, 1]).\n",
     {ok,l_mod,[{_File,Ws}]} = compile_file("l_mod.erl", Text, Suite),
-    ["format string invalid (invalid control ~lw)",
-     "format string invalid (invalid control ~lW)",
-     "format string invalid (invalid control ~ltw)",
-     "format string invalid (invalid control ~ltw)",
-     "format string invalid (invalid control ~ltW)",
-     "format string invalid (invalid control ~ltW)"] =
+    ["format string invalid (invalid modifier/control combination ~lw)",
+     "format string invalid (invalid modifier/control combination ~lW)",
+     "format string invalid (invalid modifier/control combination ~lw)",
+     "format string invalid (invalid modifier/control combination ~lw)",
+     "format string invalid (invalid modifier/control combination ~lW)",
+     "format string invalid (invalid modifier/control combination ~lW)",
+     "format string invalid (conflicting modifiers ~ltp)"] =
         [lists:flatten(M:format_error(E)) || {_L,M,E} <- Ws],
     ok.
 
@@ -2276,34 +2275,64 @@ format_string(_Config) ->
     ok.
 
 maps(_Config) ->
-    %% Note that order in which a map is printed is arbitrary.  In
-    %% practice, small maps (non-HAMT) are printed in key order, but
-    %% the breakpoint for creating big maps (HAMT) is lower in the
-    %% debug-compiled run-time system than in the optimized run-time
-    %% system.
-    %%
+    %% Note that order in which a map is printed is arbitrary.
     %% Therefore, play it completely safe by not assuming any order
     %% in a map with more than one element.
 
+    AOrdCmpFun = fun(A, B) -> A =< B end,
+    ARevCmpFun = fun(A, B) -> B < A end,
+
+    AtomMap1 = #{a => b},
+    AtomMap2 = #{a => b, c => d},
+    AtomMap3 = #{a => b, c => d, e => f},
+
     "#{}" = fmt("~w", [#{}]),
-    "#{a => b}" = fmt("~w", [#{a=>b}]),
-    re_fmt(<<"#\\{(a => b),[.][.][.]\\}">>,
-	     "~W", [#{a => b,c => d},2]),
-    re_fmt(<<"#\\{(a => b),[.][.][.]\\}">>,
-	   "~W", [#{a => b,c => d,e => f},2]),
+    "#{a => b}" = fmt("~w", [AtomMap1]),
+    re_fmt(<<"#\\{(a => b|c => d),[.][.][.]\\}">>,
+	     "~W", [AtomMap2, 2]),
+    re_fmt(<<"#\\{(a => b|c => d|e => f),[.][.][.]\\}">>,
+	   "~W", [AtomMap3, 2]),
+    "#{a => b,c => d,e => f}" = fmt("~kw", [AtomMap3]),
+    re_fmt(<<"#\\{(a => b|c => d|e => f),[.][.][.]\\}">>,
+           "~KW", [undefined, AtomMap3, 2]),
+    "#{a => b,c => d,e => f}" = fmt("~Kw", [ordered, AtomMap3]),
+    "#{e => f,c => d,a => b}" = fmt("~Kw", [reversed, AtomMap3]),
+    "#{a => b,c => d,e => f}" = fmt("~Kw", [AOrdCmpFun, AtomMap3]),
+    "#{e => f,c => d,a => b}" = fmt("~Kw", [ARevCmpFun, AtomMap3]),
 
     "#{}" = fmt("~p", [#{}]),
-    "#{a => b}" = fmt("~p", [#{a => b}]),
-    "#{...}" = fmt("~P", [#{a => b},1]),
+    "#{a => b}" = fmt("~p", [AtomMap1]),
+    "#{...}" = fmt("~P", [AtomMap1, 1]),
     re_fmt(<<"#\\{(a => b|c => d),[.][.][.]\\}">>,
-	   "~P", [#{a => b,c => d},2]),
+	   "~P", [AtomMap2, 2]),
     re_fmt(<<"#\\{(a => b|c => d|e => f),[.][.][.]\\}">>,
-	   "~P", [#{a => b,c => d,e => f},2]),
+	   "~P", [AtomMap3, 2]),
+    "#{a => b,c => d,e => f}" = fmt("~kp", [AtomMap3]),
+    re_fmt(<<"#\\{(a => b|c => d|e => f),[.][.][.]\\}">>,
+           "~KP", [undefined, AtomMap3, 2]),
+    "#{a => b,c => d,e => f}" = fmt("~Kp", [ordered, AtomMap3]),
+    "#{e => f,c => d,a => b}" = fmt("~Kp", [reversed, AtomMap3]),
+    "#{a => b,c => d,e => f}" = fmt("~Kp", [AOrdCmpFun, AtomMap3]),
+    "#{e => f,c => d,a => b}" = fmt("~Kp", [ARevCmpFun, AtomMap3]),
 
-    List = [{I,I*I} || I <- lists:seq(1, 20)],
+    List = [{I, I * I} || I <- lists:seq(1, 64)],
     Map = maps:from_list(List),
 
-    "#{...}" = fmt("~P", [Map,1]),
+    "#{...}" = fmt("~P", [Map, 1]),
+    "#{1 => 1,...}" = fmt("~kP", [Map, 2]),
+    "#{1 => 1,...}" = fmt("~KP", [ordered, Map, 2]),
+    "#{64 => 4096,...}" = fmt("~KP", [reversed, Map, 2]),
+    "#{1 => 1,...}" = fmt("~KP", [AOrdCmpFun, Map, 2]),
+    "#{64 => 4096,...}" = fmt("~KP", [ARevCmpFun, Map, 2]),
+
+    FloatIntegerMap = #{-1.0 => a, 0.0 => b, -1 => c, 0 => d},
+    re_fmt(<<"#\\{(-1.0 => a|0.0 => b|-1 => c|0 => d),[.][.][.]\\}">>,
+           "~P", [FloatIntegerMap, 2]),
+    "#{-1 => c,0 => d,-1.0 => a,0.0 => b}" = fmt("~kp", [FloatIntegerMap]),
+    re_fmt(<<"#\\{(-1.0 => a|0.0 => b|-1 => c|0 => d),[.][.][.]\\}">>,
+           "~KP", [undefined, FloatIntegerMap, 2]),
+    "#{-1 => c,0 => d,-1.0 => a,0.0 => b}" = fmt("~Kp", [ordered, FloatIntegerMap]),
+    "#{0.0 => b,-1.0 => a,0 => d,-1 => c}" = fmt("~Kp", [reversed, FloatIntegerMap]),
 
     %% Print a map and parse it back to a map.
     S = fmt("~p\n", [Map]),
@@ -2740,9 +2769,7 @@ trunc_string() ->
     "str str" = trf("str ~s", ["str"], 7),
     "str str" = trf("str ~8s", ["str"], 6),
     "str ..." = trf("str ~8s", ["str1"], 6),
-    Pa = filename:dirname(code:which(?MODULE)),
-    {ok, UNode} = test_server:start_node(printable_range_unicode, slave,
-					 [{args, " +pc unicode -pa " ++ Pa}]),
+    {ok, UPeer, UNode} = ?CT_PEER(["+pc", "unicode"]),
     U = "кирилли́ческий атом",
     UFun = fun(Format, Args, CharsLimit) ->
                    rpc:call(UNode,
@@ -2760,7 +2787,7 @@ trunc_string() ->
     "<<\"кирилли́\"/utf8...>>" = UFun("~tp", [BU], 20),
     "<<\"кирилли́\"/utf8...>>" = UFun("~tp", [BU], 21),
     "<<\"кирилли́ческ\"/utf8...>>" = UFun("~tp", [BU], 22),
-    test_server:stop_node(UNode).
+    peer:stop(UPeer).
 
 trunc_depth(D, Fun) ->
     "..." = Fun("", D, 0),
@@ -3011,6 +3038,11 @@ error_info(Config) ->
                         Dev
                 end,
 
+    UnicodeDev = fun() ->
+                        {ok, Dev} = file:open(TmpFile, [read, write, {encoding, unicode}]),
+                        Dev
+                end,
+
     DeadDev = spawn(fun() -> ok end),
 
     UserDev = fun() -> whereis(user) end,
@@ -3032,8 +3064,12 @@ error_info(Config) ->
          {put_chars,["test"], [{gl,FullDev()},{general,"no space left on device"}]},
          {put_chars,[Latin1Dev(),"Спутник-1"], [{1,"transcode"}]},
          {put_chars,[a], [{1,"not valid character data"}]},
+         {put_chars,[UnicodeDev(), <<222>>], [{1,"transcode"}]},
+         {put_chars,[<<1:1>>], [{1,"not valid character data"}]},
          {put_chars,[UnknownDev(),"test"], [{general,"unknown error: 'Спутник-1'"}]},
          {put_chars,["test"], [{gl,UnknownDev()},{general,"unknown error: 'Спутник-1'"}]},
+         {put_chars,[self(),"test"],[{1,"the device is not allowed to be the current process"}]},
+         {put_chars,["test"],[{gl,self()},{general,"the device is not allowed to be the current process"}]},
 
          {write,[DeadDev,"test"],[{1,"terminated"}]},
          {write,["test"],[{gl,DeadDev},{general,"terminated"}]},
@@ -3148,3 +3184,29 @@ otp_17525(_Config) ->
     "                                                                         {...}|...]" =
     lists:flatten(S),
     ok.
+
+unscan_format_without_maps_order(_Config) ->
+    FormatSpec = #{
+        adjust => right,
+        args => [[<<"1">>]],
+        control_char => 115,
+        encoding => unicode,
+        pad_char => 32,
+        precision => none,
+        strings => true,
+        width => none
+    },
+    {"~ts",[[<<"1">>]]} = io_lib:unscan_format([FormatSpec]).
+
+build_text_without_maps_order(_Config) ->
+    FormatSpec = #{
+        adjust => right,
+        args => [[<<"1">>]],
+        control_char => 115,
+        encoding => unicode,
+        pad_char => 32,
+        precision => none,
+        strings => true,
+        width => none
+    },
+    [["1"]] = io_lib:build_text([FormatSpec]).

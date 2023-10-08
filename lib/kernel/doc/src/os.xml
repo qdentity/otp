@@ -4,7 +4,7 @@
 <erlref>
   <header>
     <copyright>
-      <year>1997</year><year>2021</year>
+      <year>1997</year><year>2023</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -115,8 +115,8 @@
       <fsummary>Execute a command in a shell of the target OS.</fsummary>
       <desc>
         <p>Executes <c><anno>Command</anno></c> in a command shell of the
-	  target OS, captures the standard output of the command,
-          and returns this result as a string.</p>
+          target OS, captures the standard output and standard error of the
+          command, and returns this result as a string.</p>
         <p><em>Examples:</em></p>
         <code type="none">
 LsOut = os:cmd("ls"), % on unix platform
@@ -345,7 +345,7 @@ calendar:now_to_universal_time(TS),
        <pre>
 1> <input>io:format("~s~n",[print_time:format_utc_timestamp()]).</input>
 29 Apr 2009  9:55:30.051711</pre>
-       <p>OS system time can also be retreived by
+       <p>OS system time can also be retrieved by
 	<seemfa marker="#system_time/0"><c>system_time/0</c></seemfa> and
 	<seemfa marker="#system_time/1"><c>system_time/1</c></seemfa>.</p>
       </desc>

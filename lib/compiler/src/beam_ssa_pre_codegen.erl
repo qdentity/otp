@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2018-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -69,31 +69,30 @@
 -export([module/2]).
 
 -include("beam_ssa.hrl").
+-include("beam_asm.hrl").
 
 -import(lists, [all/2,any/2,append/1,duplicate/2,
                 foldl/3,last/1,member/2,partition/2,
-                reverse/1,reverse/2,sort/1,splitwith/2,zip/2]).
+                reverse/1,reverse/2,seq/2,sort/1,sort/2,
+                usort/1,zip/2]).
 
 -spec module(beam_ssa:b_module(), [compile:option()]) ->
                     {'ok',beam_ssa:b_module()}.
 
 module(#b_module{body=Fs0}=Module, Opts) ->
-    UseBSM3 = not proplists:get_bool(no_bsm3, Opts),
     Ps = passes(Opts),
-    Fs = functions(Fs0, Ps, UseBSM3),
+    Fs1 = functions(Fs0, Ps),
+    Fs = create_fc_stubs(Fs1, Module),
     {ok,Module#b_module{body=Fs}}.
 
-functions([F|Fs], Ps, UseBSM3) ->
-    [function(F, Ps, UseBSM3)|functions(Fs, Ps, UseBSM3)];
-functions([], _Ps, _UseBSM3) -> [].
+functions([F|Fs], Ps) ->
+    [function(F, Ps)|functions(Fs, Ps)];
+functions([], _Ps) -> [].
 
 -type b_var() :: beam_ssa:b_var().
 -type var_name() :: beam_ssa:var_name().
 -type instr_number() :: pos_integer().
 -type range() :: {instr_number(),instr_number()}.
--type reg_num() :: beam_asm:reg_num().
--type xreg() :: {'x',reg_num()}.
--type yreg() :: {'y',reg_num()}.
 -type ypool() :: {'y',beam_ssa:label()}.
 -type reservation() :: 'fr' | {'prefer',xreg()} | 'x' | {'x',xreg()} |
                        ypool() | {yreg(),ypool()} | 'z'.
@@ -103,7 +102,6 @@ functions([], _Ps, _UseBSM3) -> [].
 -record(st, {ssa :: beam_ssa:block_map(),
              args :: [b_var()],
              cnt :: beam_ssa:label(),
-             use_bsm3 :: boolean(),
              frames=[] :: [beam_ssa:label()],
              intervals=[] :: [{b_var(),[range()]}],
              res=[] :: [{b_var(),reservation()}] | #{b_var():=reservation()},
@@ -115,28 +113,19 @@ functions([], _Ps, _UseBSM3) -> [].
 
 passes(Opts) ->
     AddPrecgAnnos = proplists:get_bool(dprecg, Opts),
-    FixTuples = proplists:get_bool(no_put_tuple2, Opts),
     Ps = [?PASS(assert_no_critical_edges),
 
           %% Preliminaries.
           ?PASS(fix_bs),
           ?PASS(sanitize),
-          ?PASS(match_fail_instructions),
-          case FixTuples of
-              false -> ignore;
-              true -> ?PASS(fix_tuples)
-          end,
-          ?PASS(use_set_tuple_element),
+          ?PASS(expand_match_fail),
+          ?PASS(expand_update_tuple),
           ?PASS(place_frames),
           ?PASS(fix_receives),
 
           %% Find and reserve Y registers.
           ?PASS(find_yregs),
           ?PASS(reserve_yregs),
-
-          %% Handle legacy binary match instruction that don't
-          %% accept a Y register as destination.
-          ?PASS(legacy_bs),
 
           %% Improve reuse of Y registers to potentially
           %% reduce the size of the stack frame.
@@ -163,11 +152,10 @@ passes(Opts) ->
           ?PASS(assert_no_critical_edges)],
     [P || P <- Ps, P =/= ignore].
 
-function(#b_function{anno=Anno,args=Args,bs=Blocks0,cnt=Count0}=F0,
-         Ps, UseBSM3) ->
+function(#b_function{anno=Anno,args=Args,bs=Blocks0,cnt=Count0}=F0, Ps) ->
     try
         Location = maps:get(location, Anno, none),
-        St0 = #st{ssa=Blocks0,args=Args,use_bsm3=UseBSM3,
+        St0 = #st{ssa=Blocks0,args=Args,
                   cnt=Count0,location=Location},
         St = compile:run_sub_passes(Ps, St0),
         #st{ssa=Blocks,cnt=Count,regs=Regs,extra_annos=ExtraAnnos} = St,
@@ -210,39 +198,32 @@ assert_no_ces(_, #b_blk{is=[#b_set{op=phi,args=[_,_]=Phis}|_]}, Blocks) ->
 assert_no_ces(_, _, Blocks) -> Blocks.
 
 %% fix_bs(St0) -> St.
-%%  Fix up the binary matching instructions:
-%%
-%%    * Insert bs_save and bs_restore instructions where needed.
-%%
-%%    * Combine bs_match and bs_extract instructions to bs_get
-%%      instructions.
+%%  Combine bs_match and bs_extract instructions to bs_get instructions.
 
-fix_bs(#st{ssa=Blocks,cnt=Count0,use_bsm3=UseBSM3}=St) ->
+fix_bs(#st{ssa=Blocks,cnt=Count0}=St) ->
     F = fun(#b_set{op=bs_start_match,dst=Dst}, A) ->
                 %% Mark the root of the match context list.
-                [{Dst,{context,Dst}}|A];
+                A#{Dst => {context,Dst}};
+           (#b_set{op=bs_ensure,dst=Dst,args=[ParentCtx|_]}, A) ->
+                %% Link this match context to the previous match context.
+                A#{Dst => ParentCtx};
            (#b_set{op=bs_match,dst=Dst,args=[_,ParentCtx|_]}, A) ->
-                %% Link this match context the previous match context.
-                [{Dst,ParentCtx}|A];
+                %% Link this match context to the previous match context.
+                A#{Dst => ParentCtx};
            (_, A) ->
                 A
         end,
     RPO = beam_ssa:rpo(Blocks),
-    case beam_ssa:fold_instrs(F, RPO, [], Blocks) of
-        [] ->
+    CtxChain = beam_ssa:fold_instrs(F, RPO, #{}, Blocks),
+    case map_size(CtxChain) of
+        0 ->
             %% No binary matching in this function.
             St;
-        [_|_]=M ->
-            CtxChain = maps:from_list(M),
+        _ ->
             Linear0 = beam_ssa:linearize(Blocks),
 
             %% Insert position instructions where needed.
-            {Linear1,Count} = case UseBSM3 of
-                                  true ->
-                                      bs_pos_bsm3(Linear0, CtxChain, Count0);
-                                  false ->
-                                      bs_pos_bsm2(Linear0, CtxChain, Count0)
-                              end,
+            {Linear1,Count} = bs_pos_bsm3(Linear0, CtxChain, Count0),
 
             %% Rename instructions.
             Linear = bs_instrs(Linear1, CtxChain, []),
@@ -295,60 +276,6 @@ make_bs_pos_dict_1([H|T], Ctx, I, Acc) ->
     make_bs_pos_dict_1(T, Ctx, I+1, [{{Ctx,H},I}|Acc]);
 make_bs_pos_dict_1([], Ctx, I, Acc) ->
     {[{Ctx,I}|Acc], I}.
-
-%% As bs_position but without OTP-22 instructions. This is only used when
-%% cross-compiling to older versions.
-bs_pos_bsm2(Linear0, CtxChain, Count0) ->
-    Rs0 = bs_restores(Linear0, CtxChain, #{}, #{}),
-    Rs = maps:values(Rs0),
-    S0 = sofs:relation(Rs, [{context,save_point}]),
-    S1 = sofs:relation_to_family(S0),
-    S = sofs:to_external(S1),
-    Slots = make_save_point_dict(S, []),
-    {Saves,Count1} = make_save_map(Rs, Slots, Count0, []),
-    {Restores,Count} = make_restore_map(maps:to_list(Rs0), Slots, Count1, []),
-
-    %% Now insert all saves and restores.
-    {bs_insert_bsm2(Linear0, Saves, Restores, Slots),Count}.
-
-make_save_map([{Ctx,Save}=Ps|T], Slots, Count, Acc) ->
-    Ignored = #b_var{name={'@ssa_ignored',Count}},
-    case make_slot(Ps, Slots) of
-        #b_literal{val=start} ->
-            make_save_map(T, Slots, Count, Acc);
-        Slot ->
-            I = #b_set{op=bs_save,dst=Ignored,args=[Ctx,Slot]},
-            make_save_map(T, Slots, Count+1, [{Save,I}|Acc])
-    end;
-make_save_map([], _, Count, Acc) ->
-    {maps:from_list(Acc),Count}.
-
-make_restore_map([{Bef,{Ctx,_}=Ps}|T], Slots, Count, Acc) ->
-    Ignored = #b_var{name={'@ssa_ignored',Count}},
-    I = #b_set{op=bs_restore,dst=Ignored,args=[Ctx,make_slot(Ps, Slots)]},
-    make_restore_map(T, Slots, Count+1, [{Bef,I}|Acc]);
-make_restore_map([], _, Count, Acc) ->
-    {maps:from_list(Acc),Count}.
-
-make_slot({Same,Same}, _Slots) ->
-    #b_literal{val=start};
-make_slot({_,_}=Ps, Slots) ->
-    #b_literal{val=map_get(Ps, Slots)}.
-
-make_save_point_dict([{Ctx,Pts}|T], Acc0) ->
-    Acc = make_save_point_dict_1(Pts, Ctx, 0, Acc0),
-    make_save_point_dict(T, Acc);
-make_save_point_dict([], Acc) ->
-    maps:from_list(Acc).
-
-make_save_point_dict_1([Ctx|T], Ctx, I, Acc) ->
-    %% Special {atom,start} save point. Does not need a
-    %% bs_save instruction.
-    make_save_point_dict_1(T, Ctx, I, Acc);
-make_save_point_dict_1([H|T], Ctx, I, Acc) ->
-    make_save_point_dict_1(T, Ctx, I+1, [{{Ctx,H},I}|Acc]);
-make_save_point_dict_1([], Ctx, I, Acc) ->
-    [{Ctx,I}|Acc].
 
 bs_restores([{L,#b_blk{is=Is,last=Last}}|Bs], CtxChain, D0, Rs0) ->
     InPos = maps:get(L, D0, #{}),
@@ -423,6 +350,45 @@ bs_restores_is([#b_set{op=bs_start_match,dst=Start}|Is],
     FPos = SPos0,
     SPos = SPos0#{Start=>Start},
     bs_restores_is(Is, CtxChain, SPos, FPos, Rs);
+bs_restores_is([#b_set{op=bs_ensure,dst=NewPos,args=Args}|Is],
+               CtxChain, SPos0, _FPos, Rs0) ->
+    Start = bs_subst_ctx(NewPos, CtxChain),
+    [FromPos,#b_literal{val=Bits}|_] = Args,
+    case SPos0 of
+        #{Start := FromPos} ->
+            %% Same position, no restore needed.
+            SPos = case Bits of
+                       0 -> SPos0;
+                       _ -> SPos0#{Start := NewPos}
+                   end,
+            FPos = SPos0,
+            bs_restores_is(Is, CtxChain, SPos, FPos, Rs0);
+        #{} ->
+            SPos = SPos0#{Start := NewPos},
+            FPos = SPos0#{Start := FromPos},
+            Rs = Rs0#{NewPos=>{Start,FromPos}},
+            bs_restores_is(Is, CtxChain, SPos, FPos, Rs)
+    end;
+bs_restores_is([#b_set{anno=#{ensured := _},
+                       op=bs_match,dst=NewPos,args=Args}|Is],
+               CtxChain, SPos0, _FPos, Rs) ->
+    %% This match instruction will be a part of a `bs_match` BEAM
+    %% instruction, so there will never be a restore to this
+    %% position.
+    Start = bs_subst_ctx(NewPos, CtxChain),
+    case Args of
+        [#b_literal{val=skip},_FromPos,_Type,_Flags,#b_literal{val=all},_] ->
+            %% This instruction will be optimized away. (The unit test
+            %% part of it has been take care of by the preceding
+            %% bs_ensure instruction.) All positions will be
+            %% unchanged.
+            SPos = FPos = SPos0,
+            bs_restores_is(Is, CtxChain, SPos, FPos, Rs);
+        [_,FromPos|_] ->
+            SPos = SPos0#{Start := NewPos},
+            FPos = SPos0#{Start := FromPos},
+            bs_restores_is(Is, CtxChain, SPos, FPos, Rs)
+    end;
 bs_restores_is([#b_set{op=bs_match,dst=NewPos,args=Args}=I|Is],
                CtxChain, SPos0, _FPos, Rs0) ->
     Start = bs_subst_ctx(NewPos, CtxChain),
@@ -559,27 +525,13 @@ bs_restore_args([], Pos, _CtxChain, _Dst, Rs) ->
 %% Insert all bs_save and bs_restore instructions.
 
 bs_insert_bsm3(Blocks, Saves, Restores) ->
-    bs_insert_1(Blocks, [], Saves, Restores, fun(I) -> I end).
+    bs_insert_1(Blocks, [], Saves, Restores).
 
-bs_insert_bsm2(Blocks, Saves, Restores, Slots) ->
-    %% The old instructions require bs_start_match to be annotated with the
-    %% number of position slots it needs.
-    bs_insert_1(Blocks, [], Saves, Restores,
-                fun(#b_set{op=bs_start_match,dst=Dst}=I0) ->
-                        NumSlots = case Slots of
-                                       #{Dst:=NumSlots0} -> NumSlots0;
-                                       #{} -> 0
-                                   end,
-                        beam_ssa:add_anno(num_slots, NumSlots, I0);
-                   (I) ->
-                        I
-                end).
-
-bs_insert_1([{L,#b_blk{is=Is0}=Blk} | Bs], Deferred0, Saves, Restores, XFrm) ->
+bs_insert_1([{L,#b_blk{is=Is0}=Blk} | Bs], Deferred0, Saves, Restores) ->
     Is1 = bs_insert_deferred(Is0, Deferred0),
-    {Is, Deferred} = bs_insert_is(Is1, Saves, Restores, XFrm, []),
-    [{L,Blk#b_blk{is=Is}} | bs_insert_1(Bs, Deferred, Saves, Restores, XFrm)];
-bs_insert_1([], [], _, _, _) ->
+    {Is, Deferred} = bs_insert_is(Is1, Saves, Restores, []),
+    [{L,Blk#b_blk{is=Is}} | bs_insert_1(Bs, Deferred, Saves, Restores)];
+bs_insert_1([], [], _, _) ->
     [].
 
 bs_insert_deferred([#b_set{op=bs_extract}=I | Is], Deferred) ->
@@ -587,8 +539,7 @@ bs_insert_deferred([#b_set{op=bs_extract}=I | Is], Deferred) ->
 bs_insert_deferred(Is, Deferred) ->
     Deferred ++ Is.
 
-bs_insert_is([#b_set{dst=Dst}=I0|Is], Saves, Restores, XFrm, Acc0) ->
-    I = XFrm(I0),
+bs_insert_is([#b_set{dst=Dst}=I|Is], Saves, Restores, Acc0) ->
     Pre = case Restores of
               #{Dst:=R} -> [R];
               #{} -> []
@@ -603,9 +554,9 @@ bs_insert_is([#b_set{dst=Dst}=I0|Is], Saves, Restores, XFrm, Acc0) ->
             %% Defer the save sequence to the success block.
             {reverse(Acc, Is), Post};
         _ ->
-            bs_insert_is(Is, Saves, Restores, XFrm, Post ++ Acc)
+            bs_insert_is(Is, Saves, Restores, Post ++ Acc)
     end;
-bs_insert_is([], _, _, _, Acc) ->
+bs_insert_is([], _, _, Acc) ->
     {reverse(Acc), []}.
 
 %% Translate bs_match instructions to bs_get, bs_match_string,
@@ -624,18 +575,45 @@ bs_instrs([{L,#b_blk{is=Is0}=Blk}|Bs], CtxChain, Acc0) ->
             bs_instrs(Bs, CtxChain, [{L,Blk#b_blk{is=Is}}|Acc0])
     end;
 bs_instrs([], _, Acc) ->
-    reverse(Acc).
+    bs_rewrite_skip(Acc).
+
+bs_rewrite_skip([{L,#b_blk{is=Is0,last=Last0}=Blk}|Bs]) ->
+    case bs_rewrite_skip_is(Is0, []) of
+        no ->
+            [{L,Blk}|bs_rewrite_skip(Bs)];
+        {yes,Is} ->
+            #b_br{succ=Succ} = Last0,
+            Last = beam_ssa:normalize(Last0#b_br{fail=Succ}),
+            [{L,Blk#b_blk{is=Is,last=Last}}|bs_rewrite_skip(Bs)]
+    end;
+bs_rewrite_skip([]) ->
+    [].
+
+bs_rewrite_skip_is([#b_set{anno=#{ensured := true},op=bs_skip}=I0,
+                    #b_set{op={succeeded,guard}}], Acc) ->
+    I = I0#b_set{op=bs_checked_skip},
+    {yes,reverse(Acc, [I])};
+bs_rewrite_skip_is([I|Is], Acc) ->
+    bs_rewrite_skip_is(Is, [I|Acc]);
+bs_rewrite_skip_is([], _Acc) ->
+    no.
 
 bs_instrs_is([#b_set{op={succeeded,_}}=I|Is], CtxChain, Acc) ->
     %% This instruction refers to a specific operation, so we must not
     %% substitute the context argument.
     bs_instrs_is(Is, CtxChain, [I | Acc]);
-bs_instrs_is([#b_set{op=Op,args=Args0}=I0|Is], CtxChain, Acc) ->
+bs_instrs_is([#b_set{anno=Anno0,op=Op,args=Args0}=I0|Is], CtxChain, Acc) ->
     Args = [bs_subst_ctx(A, CtxChain) || A <- Args0],
     I1 = I0#b_set{args=Args},
     I = case {Op,Args} of
             {bs_match,[#b_literal{val=skip},Ctx,Type|As]} ->
-                I1#b_set{op=bs_skip,args=[Type,Ctx|As]};
+                Anno = case Anno0 of
+                           #{arg_types := #{4 := SizeType}} ->
+                               Anno0#{arg_types := #{3 => SizeType}};
+                           #{} ->
+                               Anno0
+                       end,
+                I1#b_set{anno=Anno,op=bs_skip,args=[Type,Ctx|As]};
             {bs_match,[#b_literal{val=string},Ctx|As]} ->
                 I1#b_set{op=bs_match_string,args=[Ctx|As]};
             {_,_} ->
@@ -650,10 +628,19 @@ bs_instrs_is([], _, Acc) ->
 
 bs_combine(Dst, Ctx, [{L,#b_blk{is=Is0}=Blk}|Acc]) ->
     [#b_set{}=Succeeded,
-     #b_set{op=bs_match,args=[Type,_|As]}=BsMatch|Is1] = reverse(Is0),
-    Is = reverse(Is1, [BsMatch#b_set{op=bs_get,dst=Dst,args=[Type,Ctx|As]},
-                       Succeeded#b_set{args=[Dst]}]),
-    [{L,Blk#b_blk{is=Is}}|Acc].
+     #b_set{anno=Anno,op=bs_match,args=[Type,_|As]}=BsMatch|Is1] = reverse(Is0),
+    if
+        is_map_key(ensured, Anno) ->
+            Is = reverse(Is1, [BsMatch#b_set{op=bs_checked_get,dst=Dst,
+                                             args=[Type,Ctx|As]}]),
+            #b_blk{last=#b_br{succ=Succ}=Br0} = Blk,
+            Br = beam_ssa:normalize(Br0#b_br{fail=Succ}),
+            [{L,Blk#b_blk{is=Is,last=Br}}|Acc];
+        true ->
+            Is = reverse(Is1, [BsMatch#b_set{op=bs_get,dst=Dst,args=[Type,Ctx|As]},
+                               Succeeded#b_set{args=[Dst]}]),
+            [{L,Blk#b_blk{is=Is}}|Acc]
+    end.
 
 bs_subst_ctx(#b_var{}=Var, CtxChain) ->
     case CtxChain of
@@ -668,59 +655,6 @@ bs_subst_ctx(#b_var{}=Var, CtxChain) ->
 bs_subst_ctx(Other, _CtxChain) ->
     Other.
 
-%% legacy_bs(St0) -> St.
-%%  Binary matching instructions in OTP 21 and earlier don't support
-%%  a Y register as destination. If St#st.use_bsm3 is false,
-%%  we will need to rewrite those instructions so that the result
-%%  is first put in an X register and then moved to a Y register
-%%  if the operation succeeded.
-
-legacy_bs(#st{use_bsm3=false,ssa=Blocks0,cnt=Count0,res=Res}=St) ->
-    IsYreg = maps:from_list([{V,true} || {V,{y,_}} <- Res]),
-    Linear0 = beam_ssa:linearize(Blocks0),
-    {Linear,Count} = legacy_bs(Linear0, IsYreg, Count0, #{}, []),
-    Blocks = maps:from_list(Linear),
-    St#st{ssa=Blocks,cnt=Count};
-legacy_bs(#st{use_bsm3=true}=St) -> St.
-
-legacy_bs([{L,Blk}|Bs], IsYreg, Count0, Copies0, Acc) ->
-    #b_blk{is=Is0,last=Last} = Blk,
-    Is1 = case Copies0 of
-              #{L:=Copy} -> [Copy|Is0];
-              #{} -> Is0
-          end,
-    {Is,Count,Copies} = legacy_bs_is(Is1, Last, IsYreg, Count0, Copies0, []),
-    legacy_bs(Bs, IsYreg, Count, Copies, [{L,Blk#b_blk{is=Is}}|Acc]);
-legacy_bs([], _IsYreg, Count, _Copies, Acc) ->
-    {Acc,Count}.
-
-legacy_bs_is([#b_set{op=Op,dst=Dst}=I0,
-              #b_set{op=succeeded,dst=SuccDst,args=[Dst]}=SuccI0],
-             Last, IsYreg, Count0, Copies0, Acc) ->
-    NeedsFix = is_map_key(Dst, IsYreg) andalso
-        case Op of
-            bs_get -> true;
-            bs_init -> true;
-            _ -> false
-        end,
-    case NeedsFix of
-        true ->
-            TempDst = #b_var{name={'@bs_temp_dst',Count0}},
-            Count = Count0 + 1,
-            I = I0#b_set{dst=TempDst},
-            SuccI = SuccI0#b_set{args=[TempDst]},
-            Copy = #b_set{op=copy,dst=Dst,args=[TempDst]},
-            #b_br{bool=SuccDst,succ=SuccL} = Last,
-            Copies = Copies0#{SuccL=>Copy},
-            legacy_bs_is([], Last, IsYreg, Count, Copies, [SuccI,I|Acc]);
-        false ->
-            legacy_bs_is([], Last, IsYreg, Count0, Copies0, [SuccI0,I0|Acc])
-    end;
-legacy_bs_is([I|Is], Last, IsYreg, Count, Copies, Acc) ->
-    legacy_bs_is(Is, Last, IsYreg, Count, Copies, [I|Acc]);
-legacy_bs_is([], _Last, _IsYreg, Count, Copies, Acc) ->
-    {reverse(Acc),Count,Copies}.
-
 %% sanitize(St0) -> St.
 %%  Remove constructs that can cause problems later:
 %%
@@ -732,82 +666,89 @@ legacy_bs_is([], _Last, _IsYreg, Count, Copies, Acc) ->
 
 sanitize(#st{ssa=Blocks0,cnt=Count0}=St) ->
     Ls = beam_ssa:rpo(Blocks0),
-    {Blocks,Count} = sanitize(Ls, Count0, Blocks0, #{}),
+    {Blocks,Count} = sanitize(Ls, Blocks0, Count0, #{}, #{0 => reachable}),
     St#st{ssa=Blocks,cnt=Count}.
 
-sanitize([L|Ls], Count0, Blocks0, Values0) ->
-    #b_blk{is=Is0,last=Last0} = Blk0 = map_get(L, Blocks0),
-    case sanitize_is(Is0, Last0, Count0, Values0, false, []) of
-        no_change ->
-            sanitize(Ls, Count0, Blocks0, Values0);
-        {Is,Last,Count,Values} ->
-            Blk = Blk0#b_blk{is=Is,last=Last},
-            Blocks = Blocks0#{L:=Blk},
-            sanitize(Ls, Count, Blocks, Values)
+sanitize([L|Ls], InBlocks, Count0, Values0, Blocks0) ->
+    case is_map_key(L, Blocks0) of
+        false ->
+            %% This block will never be reached. Discard it.
+            sanitize(Ls, InBlocks, Count0, Values0, Blocks0);
+        true ->
+            #b_blk{is=Is0,last=Last0} = Blk0 = map_get(L, InBlocks),
+            case sanitize_is(Is0, Last0, InBlocks, Blocks0, Count0, Values0, false, []) of
+                no_change ->
+                    Blk = sanitize_last(Blk0, Values0),
+                    Blocks1 = Blocks0#{L := Blk},
+                    Blocks = sanitize_reachable(Blk, Blocks1),
+                    sanitize(Ls, InBlocks, Count0, Values0, Blocks);
+                {Is,Last,Count,Values} ->
+                    Blk1 = Blk0#b_blk{is=Is,last=Last},
+                    Blk = sanitize_last(Blk1, Values),
+                    Blocks1 = Blocks0#{L := Blk},
+                    Blocks = sanitize_reachable(Blk, Blocks1),
+                    sanitize(Ls, InBlocks, Count, Values, Blocks)
+            end
     end;
-sanitize([], Count, Blocks0, Values) ->
-    Blocks = if
-                 map_size(Values) =:= 0 ->
-                     Blocks0;
-                 true ->
-                     RPO = beam_ssa:rpo(Blocks0),
-                     beam_ssa:rename_vars(Values, RPO, Blocks0)
-             end,
+sanitize([], _InBlocks, Count, _Values, Blocks) ->
+    {Blocks,Count}.
 
-    %% Unreachable blocks can cause problems for the dominator calculations.
-    Ls = beam_ssa:rpo(Blocks),
-    Reachable = gb_sets:from_list(Ls),
-    {case map_size(Blocks) =:= gb_sets:size(Reachable) of
-         true -> Blocks;
-         false -> remove_unreachable(Ls, Blocks, Reachable, [])
-     end,Count}.
+sanitize_reachable(Blk, Blocks) ->
+    foldl(fun(S, A) when is_map_key(S, A) -> A;
+             (S, A) -> A#{S => reachable}
+          end, Blocks, beam_ssa:successors(Blk)).
 
 sanitize_is([#b_set{op=get_map_element,args=Args0}=I0|Is],
-            Last, Count0, Values, Changed, Acc) ->
+            Last, InBlocks, Blocks, Count0, Values, Changed, Acc) ->
     case sanitize_args(Args0, Values) of
         [#b_literal{}=Map,Key] ->
             %% Bind the literal map to a variable.
             {MapVar,Count} = new_var('@ssa_map', Count0),
             I = I0#b_set{args=[MapVar,Key]},
             Copy = #b_set{op=copy,dst=MapVar,args=[Map]},
-            sanitize_is(Is, Last, Count, Values, true, [I,Copy|Acc]);
+            sanitize_is(Is, Last, InBlocks, Blocks, Count,
+                        Values, true, [I,Copy|Acc]);
         [_,_]=Args0 ->
-            sanitize_is(Is, Last, Count0, Values, Changed, [I0|Acc]);
+            sanitize_is(Is, Last, InBlocks, Blocks, Count0,
+                        Values, Changed, [I0|Acc]);
         [_,_]=Args ->
             I = I0#b_set{args=Args},
-            sanitize_is(Is, Last, Count0, Values, true, [I|Acc])
+            sanitize_is(Is, Last, InBlocks, Blocks, Count0,
+                        Values, true, [I|Acc])
     end;
-sanitize_is([#b_set{op={succeeded,guard},dst=Dst,args=[Arg0]}=I0],
-            #b_br{bool=Dst}=Last, Count, Values, _Changed, Acc0) ->
-    %% We no longer need to distinguish between guard and body checks, so we'll
-    %% rewrite this as a plain 'succeeded'.
-    case sanitize_arg(Arg0, Values) of
-        #b_var{}=Arg ->
-            case Acc0 of
-                [#b_set{op=call,
-                        args=[#b_remote{mod=#b_literal{val=erlang},
-                                        name=#b_literal{val=error},
-                                        arity=1},_],
-                        dst=Arg0}|Acc] ->
-                    %% This erlang:error/1 is the result from a
-                    %% sanitized bs_add or bs_init instruction. Calls
-                    %% to erlang:error/1 in receive is not allowed, so
-                    %% we will have to rewrite this instruction
-                    %% sequence to an unconditional branch to the
-                    %% failure label.
-                    Fail = Last#b_br.fail,
-                    Br = #b_br{bool=#b_literal{val=true},succ=Fail,fail=Fail},
-                    {reverse(Acc), Br, Count, Values};
-                _ ->
-                    I = I0#b_set{op=succeeded,args=[Arg]},
-                    {reverse(Acc0, [I]), Last, Count, Values}
-            end;
-        #b_literal{} ->
-            Value = #b_literal{val=true},
-            {reverse(Acc0), Last, Count, Values#{ Dst => Value }}
+sanitize_is([#b_set{op=call,dst=CallDst}=Call,
+             #b_set{op={succeeded,body},dst=SuccDst,args=[CallDst]}=Succ],
+            #b_br{bool=SuccDst,succ=SuccLbl,fail=?EXCEPTION_BLOCK}=Last0,
+            InBlocks, Blocks, Count, Values, Changed, Acc) ->
+    case InBlocks of
+        #{SuccLbl := #b_blk{is=[],last=#b_ret{arg=CallDst}=Last}} ->
+            %% Tail call that may fail, translate the terminator to an ordinary
+            %% return to simplify code generation.
+            do_sanitize_is(Call, [], Last, InBlocks, Blocks,
+                           Count, Values, true, Acc);
+        #{} ->
+            do_sanitize_is(Call, [Succ], Last0, InBlocks, Blocks,
+                           Count, Values, Changed, Acc)
     end;
-sanitize_is([#b_set{op={succeeded,body},dst=Dst,args=[Arg0]}=I0],
-            #b_br{bool=Dst}=Last, Count, Values, _Changed, Acc) ->
+sanitize_is([#b_set{op=Op,dst=Dst}=Fail,
+             #b_set{op={succeeded,body},args=[Dst]}],
+            #b_br{fail=?EXCEPTION_BLOCK},
+            InBlocks, Blocks, Count, Values, _Changed, Acc)
+  when Op =:= match_fail; Op =:= resume ->
+    %% Match failure or rethrow without a local handler. Translate the
+    %% terminator to an ordinary return to simplify code generation.
+    Last = #b_ret{arg=Dst},
+    do_sanitize_is(Fail, [], Last, InBlocks, Blocks, Count, Values, true, Acc);
+sanitize_is([#b_set{op=match_fail,dst=RaiseDst},
+             #b_set{op={succeeded,guard},dst=SuccDst,args=[RaiseDst]}],
+            #b_br{bool=SuccDst}=Last0,
+            InBlocks, Blocks, Count, Values, _Changed, Acc) ->
+    %% Match failures may be present in guards when optimizations are turned
+    %% off. They must be treated as if they always fail.
+    Last = beam_ssa:normalize(Last0#b_br{bool=#b_literal{val=false}}),
+    sanitize_is([], Last, InBlocks, Blocks, Count, Values, true, Acc);
+sanitize_is([#b_set{op={succeeded,_Kind},dst=Dst,args=[Arg0]}=I0],
+            #b_br{bool=Dst}=Last, _InBlocks, _Blocks, Count, Values, _Changed, Acc) ->
     %% We no longer need to distinguish between guard and body checks, so we'll
     %% rewrite this as a plain 'succeeded'.
     case sanitize_arg(Arg0, Values) of
@@ -819,7 +760,7 @@ sanitize_is([#b_set{op={succeeded,body},dst=Dst,args=[Arg0]}=I0],
             {reverse(Acc), Last, Count, Values#{ Dst => Value }}
     end;
 sanitize_is([#b_set{op={succeeded,Kind},args=[Arg0]} | Is],
-            Last, Count, Values, _Changed, Acc) ->
+            Last, InBlocks, Blocks, Count, Values, _Changed, Acc) ->
     %% We're no longer branching on this instruction and can safely remove it.
     [] = Is, #b_br{succ=Same,fail=Same} = Last, %Assertion.
     if
@@ -828,23 +769,41 @@ sanitize_is([#b_set{op={succeeded,Kind},args=[Arg0]} | Is],
             %% in a try/catch; rewrite the terminator to a return.
             body = Kind,                        %Assertion.
             Arg = sanitize_arg(Arg0, Values),
-            sanitize_is(Is, #b_ret{arg=Arg}, Count, Values, true, Acc);
+            sanitize_is(Is, #b_ret{arg=Arg}, InBlocks, Blocks,
+                        Count, Values, true, Acc);
         Same =/= ?EXCEPTION_BLOCK ->
             %% We either always succeed, or always fail to somewhere other than
             %% the exception block.
             true = Kind =:= guard orelse Kind =:= body, %Assertion.
-            sanitize_is(Is, Last, Count, Values, true, Acc)
+            sanitize_is(Is, Last, InBlocks, Blocks, Count, Values, true, Acc)
     end;
-sanitize_is([#b_set{op=bs_test_tail}=I], Last, Count, Values, Changed, Acc) ->
+sanitize_is([#b_set{op=bs_test_tail}=I], Last, InBlocks, Blocks,
+            Count, Values, Changed, Acc) ->
     case Last of
         #b_br{succ=Same,fail=Same} ->
-            sanitize_is([], Last, Count, Values, true, Acc);
+            sanitize_is([], Last, InBlocks, Blocks,
+                        Count, Values, true, Acc);
         _ ->
-            do_sanitize_is(I, [], Last, Count, Values, Changed, Acc)
+            do_sanitize_is(I, [], Last, InBlocks, Blocks,
+                           Count, Values, Changed, Acc)
     end;
-sanitize_is([#b_set{}=I|Is], Last, Count, Values, Changed, Acc) ->
-    do_sanitize_is(I, Is,  Last, Count, Values, Changed, Acc);
-sanitize_is([], Last, Count, Values, Changed, Acc) ->
+sanitize_is([#b_set{op=bs_get,args=Args0}=I0|Is], Last, InBlocks, Blocks,
+            Count, Values, Changed, Acc) ->
+    case {Args0,sanitize_args(Args0, Values)} of
+        {[_,_,_,#b_var{},_],[Type,Val,Flags,#b_literal{val=all},Unit]} ->
+            %% The size `all` is used for the size of the final binary
+            %% segment in a pattern. Using `all` explicitly is not allowed,
+            %% so we convert it to an obvious invalid size.
+            Args = [Type,Val,Flags,#b_literal{val=bad_size},Unit],
+            I = I0#b_set{args=Args},
+            sanitize_is(Is, Last, InBlocks, Blocks, Count, Values, true, [I|Acc]);
+        {_,Args} ->
+            I = I0#b_set{args=Args},
+            sanitize_is(Is, Last, InBlocks, Blocks, Count, Values, Changed, [I|Acc])
+    end;
+sanitize_is([#b_set{}=I|Is], Last, InBlocks, Blocks, Count, Values, Changed, Acc) ->
+    do_sanitize_is(I, Is, Last, InBlocks, Blocks, Count, Values, Changed, Acc);
+sanitize_is([], Last, _InBlocks, _Blocks, Count, Values, Changed, Acc) ->
     case Changed of
         true ->
             {reverse(Acc), Last, Count, Values};
@@ -853,57 +812,108 @@ sanitize_is([], Last, Count, Values, Changed, Acc) ->
     end.
 
 do_sanitize_is(#b_set{op=Op,dst=Dst,args=Args0}=I0,
-               Is, Last, Count, Values, Changed0, Acc) ->
+               Is, Last, InBlocks, Blocks, Count, Values, Changed0, Acc) ->
     Args = sanitize_args(Args0, Values),
-    case sanitize_instr(Op, Args, I0) of
-        {value,Value0} ->
-            Value = #b_literal{val=Value0},
-            sanitize_is(Is, Last, Count, Values#{Dst=>Value}, true, Acc);
+    case sanitize_instr(Op, Args, I0, Blocks) of
+        {subst,Subst} ->
+            sanitize_is(Is, Last, InBlocks, Blocks, Count, Values#{Dst => Subst},
+                        true, Acc);
         {ok,I} ->
-            sanitize_is(Is, Last, Count, Values, true, [I|Acc]);
+            sanitize_is(Is, Last, InBlocks, Blocks, Count, Values, true, [I|Acc]);
         ok ->
             I = I0#b_set{args=Args},
             Changed = Changed0 orelse Args =/= Args0,
-            sanitize_is(Is, Last, Count, Values, Changed, [I|Acc])
+            sanitize_is(Is, Last, InBlocks, Blocks, Count, Values, Changed, [I|Acc])
+    end.
+
+sanitize_last(#b_blk{last=Last0}=Blk, Values) ->
+    Last = case Last0 of
+               #b_br{bool=#b_literal{}} ->
+                   Last0;
+               #b_br{bool=Bool} ->
+                   beam_ssa:normalize(Last0#b_br{bool=sanitize_arg(Bool, Values)});
+               #b_ret{arg=Arg} ->
+                   Last0#b_ret{arg=sanitize_arg(Arg, Values)};
+               #b_switch{arg=Arg} ->
+                   beam_ssa:normalize(Last0#b_switch{arg=sanitize_arg(Arg, Values)})
+           end,
+    if
+        Last =/= Last0 ->
+            Blk#b_blk{last=Last};
+        true ->
+            Blk
     end.
 
 sanitize_args(Args, Values) ->
     [sanitize_arg(Arg, Values) || Arg <- Args].
 
+sanitize_arg(#b_remote{mod=Mod0,name=Name0}=Remote, Values) ->
+    Mod = sanitize_arg(Mod0, Values),
+    Name = sanitize_arg(Name0, Values),
+    Remote#b_remote{mod=Mod,name=Name};
+sanitize_arg({#b_var{}=Var,L}, Values) ->
+    {sanitize_arg(Var, Values),L};
 sanitize_arg(#b_var{}=Var, Values) ->
     case Values of
-        #{Var:=New} -> New;
+        #{Var := New} -> New;
         #{} -> Var
     end;
 sanitize_arg(Arg, _Values) ->
     Arg.
 
-
-sanitize_instr(phi, PhiArgs, _I) ->
-    case phi_all_same_literal(PhiArgs) of
+sanitize_instr(phi, PhiArgs0, I, Blocks) ->
+    PhiArgs = [{V,L} || {V,L} <- PhiArgs0,
+                        is_map_key(L, Blocks)],
+    case phi_all_same(PhiArgs) of
         true ->
             %% (Can only happen when some optimizations have been
             %% turned off.)
             %%
-            %% This phi node always produces the same literal value.
-            %% We must do constant progation of the value to ensure
-            %% that we can sanitize any instructions that don't accept
-            %% literals (such as `get_hd`). This is necessary for
-            %% correctness, because beam_ssa_codegen:prefer_xregs/2
-            %% does constant propagation and could propagate a literal
-            %% into an instruction that don't accept literals.
-            [{#b_literal{val=Val},_}|_] = PhiArgs,
-            {value,Val};
+            %% This phi node always produces the same literal value or
+            %% variable.
+            %%
+            %% We must do constant propagation of literal values to
+            %% ensure that we can sanitize any instructions that don't
+            %% accept literals (such as `get_hd`). This is necessary
+            %% for correctness, because
+            %% beam_ssa_codegen:prefer_xregs/2 does constant
+            %% propagation and could propagate a literal into an
+            %% instruction that don't accept literals.
+            %%
+            %% The singleton phi nodes generated for the try/catch
+            %% construct are problematic. For example:
+            %%
+            %%   try B = (A = bit_size(iolist_to_binary("a"))) rem 1 of
+            %%      _ -> A;
+            %%      _ -> B
+            %%   after
+            %%      ok
+            %%   end.
+            %%
+            %% The try expression exports three values, resulting in three
+            %% singleton phi nodes (with optimizations disabled):
+            %%
+            %%   _4 = phi { B, ^15 }
+            %%    A = phi { _2, ^15 }
+            %%   _14 = phi { B, ^15 }
+            %%
+            %% All three variable will be assigned to the same register,
+            %% causing the correct variable (`A`) to be overwritten by `_14`.
+            [{Subst,_}|_] = PhiArgs,
+            {subst,Subst};
         false ->
-            ok
+            {ok,I#b_set{args=PhiArgs}}
     end;
+sanitize_instr(Op, Args, I, _Blocks) ->
+    sanitize_instr(Op, Args, I).
+
 sanitize_instr({bif,Bif}, [#b_literal{val=Lit}], _I) ->
     case erl_bifs:is_pure(erlang, Bif, 1) of
         false ->
             ok;
         true ->
             try
-                {value,erlang:Bif(Lit)}
+                {subst,#b_literal{val=erlang:Bif(Lit)}}
             catch
                 error:_ ->
                     ok
@@ -912,93 +922,55 @@ sanitize_instr({bif,Bif}, [#b_literal{val=Lit}], _I) ->
 sanitize_instr({bif,Bif}, [#b_literal{val=Lit1},#b_literal{val=Lit2}], _I) ->
     true = erl_bifs:is_pure(erlang, Bif, 2),    %Assertion.
     try
-        {value,erlang:Bif(Lit1, Lit2)}
+        {subst,#b_literal{val=erlang:Bif(Lit1, Lit2)}}
     catch
         error:_ ->
             ok
     end;
 sanitize_instr(bs_match, Args, I) ->
     %% Matching of floats are never changed to a bs_skip even when the
-    %% value is never used, because the match can always fail (for example,
-    %% if it is a NaN).
-    [#b_literal{val=float}|_] = Args,           %Assertion.
-    {ok,I#b_set{op=bs_get}};
+    %% value is never used, because the match can always fail (for
+    %% example, if it is a NaN). Sometimes (for contrived code) the
+    %% optimizing passes fail to do the conversion to bs_skip for
+    %% other data types as well.
+    {ok,I#b_set{op=bs_get,args=Args}};
 sanitize_instr(get_hd, [#b_literal{val=[Hd|_]}], _I) ->
-    {value,Hd};
+    {subst,#b_literal{val=Hd}};
 sanitize_instr(get_tl, [#b_literal{val=[_|Tl]}], _I) ->
-    {value,Tl};
+    {subst,#b_literal{val=Tl}};
 sanitize_instr(get_tuple_element, [#b_literal{val=T},
                                    #b_literal{val=I}], _I)
   when I < tuple_size(T) ->
-    {value,element(I+1, T)};
-sanitize_instr(is_nonempty_list, [#b_literal{val=Lit}], _I) ->
-    {value,case Lit of
-               [_|_] -> true;
-               _ -> false
-           end};
+    {subst,#b_literal{val=element(I+1, T)}};
+sanitize_instr(is_nonempty_list, [#b_literal{val=Term}], _I) ->
+    Lit = case Term of
+              [_|_] -> true;
+              _ -> false
+          end,
+    {subst,#b_literal{val=Lit}};
 sanitize_instr(is_tagged_tuple, [#b_literal{val=Tuple},
                                  #b_literal{val=Arity},
                                  #b_literal{val=Tag}], _I)
   when is_integer(Arity), is_atom(Tag) ->
     if
         tuple_size(Tuple) =:= Arity, element(1, Tuple) =:= Tag ->
-            {value,true};
+            {subst,#b_literal{val=true}};
         true ->
-            {value,false}
+            {subst,#b_literal{val=false}}
     end;
-sanitize_instr(bs_add, [Arg1,Arg2,_|_], I0) ->
-    case all(fun(#b_literal{val=Size}) -> is_integer(Size) andalso Size >= 0;
-                (#b_var{}) -> true
-             end, [Arg1,Arg2]) of
-        true -> ok;
-        false -> {ok,sanitize_badarg(I0)}
-    end;
-sanitize_instr(bs_init, [#b_literal{val=new},#b_literal{val=Sz}|_], I0) ->
-    if
-        is_integer(Sz), Sz >= 0 -> ok;
-        true -> {ok,sanitize_badarg(I0)}
-    end;
-sanitize_instr(bs_init, [#b_literal{},_,#b_literal{val=Sz}|_], I0) ->
-    if
-        is_integer(Sz), Sz >= 0 -> ok;
-        true -> {ok,sanitize_badarg(I0)}
-    end;
+sanitize_instr(succeeded, [#b_literal{}], _I) ->
+    {subst,#b_literal{val=true}};
 sanitize_instr(_, _, _) ->
     ok.
 
-sanitize_badarg(I) ->
-    Func = #b_remote{mod=#b_literal{val=erlang},
-                     name=#b_literal{val=error},arity=1},
-    I#b_set{op=call,args=[Func,#b_literal{val=badarg}]}.
+phi_all_same([{Arg,_From}|Phis]) ->
+    phi_all_same_1(Phis, Arg).
 
-remove_unreachable([L|Ls], Blocks, Reachable, Acc) ->
-    #b_blk{is=Is0} = Blk0 = map_get(L, Blocks),
-    case split_phis(Is0) of
-        {[_|_]=Phis,Rest} ->
-            Is = [prune_phi(Phi, Reachable) || Phi <- Phis] ++ Rest,
-            Blk = Blk0#b_blk{is=Is},
-            remove_unreachable(Ls, Blocks, Reachable, [{L,Blk}|Acc]);
-        {[],_} ->
-            remove_unreachable(Ls, Blocks, Reachable, [{L,Blk0}|Acc])
-    end;
-remove_unreachable([], _Blocks, _, Acc) ->
-    maps:from_list(Acc).
-
-prune_phi(#b_set{args=Args0}=Phi, Reachable) ->
-    Args = [A || {_,Pred}=A <- Args0,
-                 gb_sets:is_element(Pred, Reachable)],
-    Phi#b_set{args=Args}.
-
-phi_all_same_literal([{#b_literal{}=Arg, _From} | Phis]) ->
-    phi_all_same_literal_1(Phis, Arg);
-phi_all_same_literal([_|_]) ->
-    false.
-
-phi_all_same_literal_1([{Arg, _From} | Phis], Arg) ->
-    phi_all_same_literal_1(Phis, Arg);
-phi_all_same_literal_1([], _Arg) ->
+phi_all_same_1([{Arg,_From}|Phis], Arg) ->
+    phi_all_same_1(Phis, Arg);
+phi_all_same_1([], _Arg) ->
     true;
-phi_all_same_literal_1(_Phis, _Arg) ->
+phi_all_same_1(_Phis, _Arg) ->
     false.
 
 %%% Rewrite certain calls to erlang:error/{1,2} to specialized
@@ -1014,245 +986,200 @@ phi_all_same_literal_1(_Phis, _Arg) ->
 %%% instruction with the name of the BEAM instruction as the first
 %%% argument.
 
-match_fail_instructions(#st{ssa=Blocks0,args=Args,location=Location}=St) ->
-    Ls = maps:to_list(Blocks0),
-    Info = {length(Args),Location},
-    Blocks = match_fail_instrs_1(Ls, Info, Blocks0),
-    St#st{ssa=Blocks}.
-
-match_fail_instrs_1([{L,#b_blk{is=Is0}=Blk}|Bs], Arity, Blocks0) ->
-    case match_fail_instrs_blk(Is0, Arity, []) of
-        none ->
-            match_fail_instrs_1(Bs, Arity, Blocks0);
-        Is ->
-            Blocks = Blocks0#{L:=Blk#b_blk{is=Is}},
-            match_fail_instrs_1(Bs, Arity, Blocks)
-    end;
-match_fail_instrs_1([], _Arity, Blocks) -> Blocks.
-
-match_fail_instrs_blk([#b_set{op=put_tuple,dst=Dst,
-                              args=[#b_literal{val=Tag},Val]},
-                       #b_set{op=call,
-                              args=[#b_remote{mod=#b_literal{val=erlang},
-                                              name=#b_literal{val=error}},
-                                    Dst]}=Call|Is],
-                      _Arity, Acc) ->
-    match_fail_instr(Call, Tag, Val, Is, Acc);
-match_fail_instrs_blk([#b_set{op=call,
-                              args=[#b_remote{mod=#b_literal{val=erlang},
-                                              name=#b_literal{val=error}},
-                                    #b_literal{val={Tag,Val}}]}=Call|Is],
-                      _Arity, Acc) ->
-    match_fail_instr(Call, Tag, #b_literal{val=Val}, Is, Acc);
-match_fail_instrs_blk([#b_set{op=call,
-                              args=[#b_remote{mod=#b_literal{val=erlang},
-                                              name=#b_literal{val=error}},
-                                    #b_literal{val=if_clause}]}=Call|Is],
-                      _Arity, Acc) ->
-    I = Call#b_set{op=match_fail,args=[#b_literal{val=if_end}]},
-    reverse(Acc, [I|Is]);
-match_fail_instrs_blk([#b_set{op=call,anno=Anno,
-                              args=[#b_remote{mod=#b_literal{val=erlang},
-                                              name=#b_literal{val=error}},
-                                    #b_literal{val=function_clause},
-                                    Stk]}=Call],
-                      {Arity,Location}, Acc) ->
-    case match_fail_stk(Stk, Acc, [], []) of
-        {[_|_]=Vars,Is} when length(Vars) =:= Arity ->
-            case maps:get(location, Anno, none) of
-                Location ->
-                    I = Call#b_set{op=match_fail,
-                                   args=[#b_literal{val=function_clause}|Vars]},
-                    Is ++ [I];
-                _ ->
-                    %% erlang:error/2 has a different location than the
-                    %% func_info instruction at the beginning of the function
-                    %% (probably because of inlining). Keep the original call.
-                    reverse(Acc, [Call])
-            end;
-        _ ->
-            %% Either the stacktrace could not be picked apart (for example,
-            %% if the call to erlang:error/2 was handwritten) or the number
-            %% of arguments in the stacktrace was different from the arity
-            %% of the host function (because it is the implementation of a
-            %% fun). Keep the original call.
-            reverse(Acc, [Call])
-    end;
-match_fail_instrs_blk([I|Is], Arity, Acc) ->
-    match_fail_instrs_blk(Is, Arity, [I|Acc]);
-match_fail_instrs_blk(_, _, _) ->
-    none.
-
-match_fail_instr(Call, Tag, Val, Is, Acc) ->
-    Op = case Tag of
-             badmatch -> Tag;
-             case_clause -> case_end;
-             try_clause -> try_case_end;
-             _ -> none
-         end,
-    case Op of
-        none ->
-            none;
-        _ ->
-            I = Call#b_set{op=match_fail,args=[#b_literal{val=Op},Val]},
-            reverse(Acc, [I|Is])
-    end.
-
-match_fail_stk(#b_var{}=V, [#b_set{op=put_list,dst=V,args=[H,T]}|Is], IAcc, VAcc) ->
-    match_fail_stk(T, Is, IAcc, [H|VAcc]);
-match_fail_stk(#b_literal{val=[H|T]}, Is, IAcc, VAcc) ->
-    match_fail_stk(#b_literal{val=T}, Is, IAcc, [#b_literal{val=H}|VAcc]);
-match_fail_stk(#b_literal{val=[]}, [], IAcc, VAcc) ->
-    {reverse(VAcc),IAcc};
-match_fail_stk(T, [#b_set{op=Op}=I|Is], IAcc, VAcc)
-  when Op =:= bs_get_tail; Op =:= bs_set_position ->
-    match_fail_stk(T, Is, [I|IAcc], VAcc);
-match_fail_stk(_, _, _, _) -> none.
-
-%%%
-%%% Fix tuples.
-%%%
-
-%% fix_tuples(St0) -> St.
-%%  If compatibility with a previous version of Erlang has been
-%%  requested, tuple creation must be split into two instruction to
-%%  mirror the the way tuples are created in BEAM prior to OTP 22.
-%%  Each put_tuple instruction is split into put_tuple_arity followed
-%%  by put_tuple_elements.
-
-fix_tuples(#st{ssa=Blocks0,cnt=Count0}=St) ->
-    F = fun (#b_set{op=put_tuple,args=Args}=Put, C0) ->
-                Arity = #b_literal{val=length(Args)},
-                {Ignore,C} = new_var('@ssa_ignore', C0),
-                {[Put#b_set{op=put_tuple_arity,args=[Arity]},
-                  #b_set{dst=Ignore,op=put_tuple_elements,args=Args}],C};
-           (I, C) -> {[I],C}
-        end,
-    RPO = beam_ssa:rpo(Blocks0),
-    {Blocks,Count} = beam_ssa:flatmapfold_instrs(F, RPO, Count0, Blocks0),
+expand_match_fail(#st{ssa=Blocks0,
+                      cnt=Count0,
+                      args=Args,
+                      location=Location}=St) ->
+    Bs = maps:to_list(Blocks0),
+    {Blocks, Count} = expand_mf_bs(Bs, length(Args), Location, Blocks0, Count0),
     St#st{ssa=Blocks,cnt=Count}.
 
-%%%
-%%% Introduce the set_tuple_element instructions to make
-%%% multiple-field record updates faster.
-%%%
-%%% The expansion of record field updates, when more than one field is
-%%% updated, but not a majority of the fields, will create a sequence of
-%%% calls to `erlang:setelement(Index, Value, Tuple)` where Tuple in the
-%%% first call is the original record tuple, and in the subsequent calls
-%%% Tuple is the result of the previous call. Furthermore, all Index
-%%% values are constant positive integers, and the first call to
-%%% `setelement` will have the greatest index. Thus all the following
-%%% calls do not actually need to test at run-time whether Tuple has type
-%%% tuple, nor that the index is within the tuple bounds.
-%%%
-%%% Since this optimization introduces destructive updates, it used to
-%%% be done as the very last Core Erlang pass before going to
-%%% lower-level code. However, it turns out that this kind of destructive
-%%% updates are awkward also in SSA code and can prevent or complicate
-%%% type analysis and aggressive optimizations.
-%%%
-%%% NOTE: Because there no write barriers in the system, this kind of
-%%% optimization can only be done when we are sure that garbage
-%%% collection will not be triggered between the creation of the tuple
-%%% and the destructive updates - otherwise we might insert pointers
-%%% from an older generation to a newer.
-%%%
-
-use_set_tuple_element(#st{ssa=Blocks0}=St) ->
-    Uses = count_uses(Blocks0),
-    RPO = reverse(beam_ssa:rpo(Blocks0)),
-    Blocks = use_ste_1(RPO, Uses, Blocks0),
-    St#st{ssa=Blocks}.
-
-use_ste_1([L|Ls], Uses, Blocks) ->
-    #b_blk{is=Is0} = Blk0 = map_get(L, Blocks),
-    case use_ste_is(Is0, Uses) of
-        Is0 ->
-            use_ste_1(Ls, Uses, Blocks);
-        Is ->
-            Blk = Blk0#b_blk{is=Is},
-            use_ste_1(Ls, Uses, Blocks#{L:=Blk})
-    end;
-use_ste_1([], _, Blocks) -> Blocks.
-
-%%% Optimize within a single block.
-
-use_ste_is([#b_set{}=I|Is0], Uses) ->
-    Is = use_ste_is(Is0, Uses),
-    case extract_ste(I) of
+expand_mf_bs([{L,#b_blk{is=Is0}=Blk} | Bs], Arity, Location, Blocks0, Count0) ->
+    case expand_mf_is(Is0, Arity, Location, Count0, []) of
         none ->
-            [I|Is];
-        Extracted ->
-            use_ste_call(Extracted, I, Is, Uses)
+            expand_mf_bs(Bs, Arity, Location, Blocks0, Count0);
+        {Is, Count} ->
+            Blocks = Blocks0#{L:=Blk#b_blk{is=Is}},
+            expand_mf_bs(Bs, Arity, Location, Blocks, Count)
     end;
-use_ste_is([], _Uses) -> [].
+expand_mf_bs([], _Arity, _Location, Blocks, Count) ->
+    {Blocks, Count}.
 
-use_ste_call({Dst0,Pos0,_Var0,_Val0}, Call1, Is0, Uses) ->
-    case get_ste_call(Is0, []) of
-        {Prefix,{Dst1,Pos1,Dst0,Val1},Call2,Is}
-          when Pos1 > 0, Pos0 > Pos1 ->
-            case is_single_use(Dst0, Uses) of
-                true ->
-                    Call = Call1#b_set{dst=Dst1},
-                    Args = [Val1,Dst1,#b_literal{val=Pos1-1}],
-                    Dsetel = Call2#b_set{op=set_tuple_element,
-                                         dst=Dst0,
-                                         args=Args},
-                    [Call|Prefix] ++ [Dsetel|Is];
-                false ->
-                    [Call1|Is0]
-            end;
-        _ ->
-            [Call1|Is0]
-    end.
-
-get_ste_call([#b_set{op=get_tuple_element}=I|Is], Acc) ->
-    get_ste_call(Is, [I|Acc]);
-get_ste_call([#b_set{op=call}=I|Is], Acc) ->
-    case extract_ste(I) of
-        none ->
+expand_mf_is([#b_set{op=match_fail,
+                     anno=Anno,
+                     args=[#b_literal{val=function_clause} | Args]}=I0 | Is],
+             Arity, Location, Count0, Acc) ->
+    case Anno of
+        #{ location := Location } when length(Args) =:= Arity ->
+            %% We have the same location as the `func_info` instruction at the
+            %% beginning of the function; keep the instruction.
             none;
-        Extracted ->
-            {reverse(Acc),Extracted,I,Is}
+        #{ inlined := {Name,InlinedArity} } when length(Args) =:= InlinedArity ->
+            %% We're raising this for an inlined function, convert it to a call
+            %% to a stub function that will raise a proper `function_clause`
+            %% exception. The stub function will be created later by
+            %% `create_fc_stubs/2`.
+            Target = #b_local{name=#b_literal{val=Name},arity=InlinedArity},
+            I = I0#b_set{op=call,args=[Target | Args]},
+            {reverse(Acc, [I | Is]), Count0}
     end;
-get_ste_call(_, _) -> none.
+expand_mf_is([#b_set{op=match_fail}=I | Is], _Arity, _Location, Count, Acc) ->
+    expand_mf_instr(I, Is, Count, Acc);
+expand_mf_is([I | Is], Arity, Location, Count, Acc) ->
+    expand_mf_is(Is, Arity, Location, Count, [I | Acc]);
+expand_mf_is(_, _, _, _, _) ->
+    none.
 
-extract_ste(#b_set{op=call,dst=Dst,
-                   args=[#b_remote{mod=#b_literal{val=M},
-                                  name=#b_literal{val=F}}|Args]}) ->
-    case {M,F,Args} of
-        {erlang,setelement,[#b_literal{val=Pos},Tuple,Val]} ->
-            {Dst,Pos,Tuple,Val};
-        {_,_,_} ->
-            none
-    end;
-extract_ste(#b_set{}) -> none.
+expand_mf_instr(#b_set{args=[#b_literal{val=case_clause} | Args]}=I0,
+                Is, Count, Acc) ->
+    I = I0#b_set{args=[#b_literal{val=case_end} | Args]},
+    {reverse(Acc, [I | Is]), Count};
+expand_mf_instr(#b_set{args=[#b_literal{val=if_clause} | Args]}=I0,
+                Is, Count, Acc) ->
+    I = I0#b_set{args=[#b_literal{val=if_end} | Args]},
+    {reverse(Acc, [I | Is]), Count};
+expand_mf_instr(#b_set{args=[#b_literal{val=try_clause} | Args]}=I0,
+                Is, Count, Acc) ->
+    I = I0#b_set{args=[#b_literal{val=try_case_end} | Args]},
+    {reverse(Acc, [I | Is]), Count};
+expand_mf_instr(#b_set{args=[#b_literal{val=badmatch} | _Args]}=I,
+                Is, Count, Acc) ->
+    {reverse(Acc, [I | Is]), Count};
+expand_mf_instr(#b_set{args=[#b_literal{val=badrecord} | _Args]}=I,
+                Is, Count, Acc) ->
+    {reverse(Acc, [I | Is]), Count};
+expand_mf_instr(#b_set{args=[#b_literal{}|_]=Args}=I0, Is, Count0, Acc) ->
+    %% We don't have a specialized instruction for this: simulate it with
+    %% `erlang:error/1` instead.
+    {Tuple, Count} = new_var('@match_fail', Count0),
+    Put = #b_set{op=put_tuple,dst=Tuple,args=Args},
+    Call = I0#b_set{op=call,
+                    args=[#b_remote{mod=#b_literal{val=erlang},
+                                    name=#b_literal{val=error},
+                                    arity=1},
+                         Tuple]},
+    {reverse(Acc, [Put, Call | Is]), Count}.
 
-%% Count how many times each variable is used.
+%% Create stubs for `function_clause` exceptions generated by
+%% inlined code.
+create_fc_stubs(Fs, #b_module{name=Mod}) ->
+    Stubs0 = usort(find_fc_errors(Fs, [])),
+    Stubs = [begin
+                 Seq = seq(0, Arity-1),
+                 Args = [#b_var{name=V} || V <- Seq],
+                 XRegs = [{x,V} || V <- Seq],
+                 Ret = #b_var{name='@ssa_ret'},
+                 Regs = maps:from_list([{Ret,{x,0}}|zip(Args, XRegs)]),
+                 Anno = #{func_info => {Mod,Name,Arity},
+                          location => Location,
+                          parameter_info => #{},
+                          registers => Regs},
+                 Fc = #b_set{op=match_fail,dst=Ret,
+                             args=[#b_literal{val=function_clause}|Args]},
+                 Blk = #b_blk{is=[Fc],last=#b_ret{arg=Ret}},
+                 #b_function{anno=Anno,args=Args,
+                             bs=#{0 => Blk},
+                             cnt=1}
+             end || {{Name,Arity},Location} <- Stubs0],
+    Fs ++ Stubs.
 
-count_uses(Blocks) ->
-    count_uses_blk(maps:values(Blocks), #{}).
-
-count_uses_blk([#b_blk{is=Is,last=Last}|Bs], CountMap0) ->
-    F = fun(I, CountMap) ->
-                foldl(fun(Var, Acc) ->
-                              case Acc of
-                                  #{Var:=2} -> Acc;
-                                  #{Var:=C} -> Acc#{Var:=C+1};
-                                  #{} ->       Acc#{Var=>1}
-                              end
-                      end, CountMap, beam_ssa:used(I))
+find_fc_errors([#b_function{bs=Blocks}|Fs], Acc0) ->
+    F = fun(#b_set{anno=Anno,op=call,args=[#b_local{} | _]}, A) ->
+                case Anno of
+                    #{ inlined := FA } ->
+                        [{FA, maps:get(location, Anno, [])} | A];
+                    #{} ->
+                        A
+                end;
+           (_, A) ->
+                A
         end,
-    CountMap = F(Last, foldl(F, CountMap0, Is)),
-    count_uses_blk(Bs, CountMap);
-count_uses_blk([], CountMap) -> CountMap.
+    Acc = beam_ssa:fold_instrs(F, maps:keys(Blocks), Acc0, Blocks),
+    find_fc_errors(Fs, Acc);
+find_fc_errors([], Acc) ->
+    Acc.
 
-is_single_use(V, Uses) ->
-    case Uses of
-        #{V:=1} -> true;
-        #{} -> false
-    end.
+%%% expand_update_tuple(St0) -> St
+%%%
+%%%   Expands the update_tuple psuedo-instruction into its actual instructions.
+%%%
+expand_update_tuple(#st{ssa=Blocks0,cnt=Count0}=St) ->
+    Linear0 = beam_ssa:linearize(Blocks0),
+    {Linear, Count} = expand_update_tuple_1(Linear0, Count0, []),
+    Blocks = maps:from_list(Linear),
+    St#st{ssa=Blocks,cnt=Count}.
+
+expand_update_tuple_1([{L, #b_blk{is=Is0}=B0} | Bs], Count0, Acc0) ->
+    case expand_update_tuple_is(Is0, Count0, []) of
+        {Is, Count} ->
+            expand_update_tuple_1(Bs, Count, [{L, B0#b_blk{is=Is}} | Acc0]);
+        {Is, NextIs, Count1} ->
+            %% There are `set_tuple_element` instructions that we must put into
+            %% a new block to avoid separating the `setelement` instruction from
+            %% its `succeeded` instruction.
+            #b_blk{last=Br} = B0,
+            #b_br{succ=Succ} = Br,
+            NextL = Count1,
+            Count = Count1 + 1,
+            NextBr = #b_br{bool=#b_literal{val=true},succ=Succ,fail=Succ},
+            NextB = #b_blk{is=NextIs,last=NextBr},
+            B = B0#b_blk{is=Is,last=Br#b_br{succ=NextL}},
+            Acc = [{NextL, NextB}, {L, B} | Acc0],
+            expand_update_tuple_1(Bs, Count, Acc)
+    end;
+expand_update_tuple_1([], Count, Acc) ->
+    {Acc, Count}.
+
+expand_update_tuple_is([#b_set{op=update_tuple, args=[Src | Args]}=I0 | Is],
+                        Count0, Acc) ->
+    {SetElement, Sets, Count} = expand_update_tuple_list(Args, I0, Src, Count0),
+    case {Sets, Is} of
+        {[_ | _], [#b_set{op=succeeded}]} ->
+            {reverse(Acc, [SetElement | Is]), reverse(Sets), Count};
+        {_, _} ->
+            expand_update_tuple_is(Is, Count, Sets ++ [SetElement | Acc])
+    end;
+expand_update_tuple_is([I | Is], Count, Acc) ->
+    expand_update_tuple_is(Is, Count, [I | Acc]);
+expand_update_tuple_is([], Count, Acc) ->
+    {reverse(Acc), Count}.
+
+%% Expands an update_tuple list into setelement/3 + set_tuple_element.
+%%
+%% Note that it returns the instructions in reverse order.
+expand_update_tuple_list(Args, I0, Src, Count0) ->
+    [Index, Value | Rest] = sort_update_tuple(Args, []),
+
+    %% set_tuple_element is destructive, so we have to start off with a
+    %% setelement/3 call to give them something to work on.
+    I = I0#b_set{op=call,
+                 args=[#b_remote{mod=#b_literal{val=erlang},
+                       name=#b_literal{val=setelement},
+                       arity=3},
+                 Index, Src, Value]},
+    {Sets, Count} = expand_update_tuple_list_1(Rest, I#b_set.dst, Count0, []),
+    {I, Sets, Count}.
+
+expand_update_tuple_list_1([], _Src, Count, Acc) ->
+    {Acc, Count};
+expand_update_tuple_list_1([Index0, Value | Updates], Src, Count0, Acc) ->
+    %% Change to the 0-based indexing used by `set_tuple_element`.
+    Index = #b_literal{val=(Index0#b_literal.val - 1)},
+    {Dst, Count} = new_var('@ssa_dummy', Count0),
+    SetOp = #b_set{op=set_tuple_element,
+                   dst=Dst,
+                   args=[Value, Src, Index]},
+    expand_update_tuple_list_1(Updates, Src, Count, [SetOp | Acc]).
+
+%% Sorts updates so that the highest index comes first, letting us use
+%% set_tuple_element for all subsequent operations as we know their indexes
+%% will be valid.
+sort_update_tuple([_Index, _Value]=Args, []) ->
+    Args;
+sort_update_tuple([#b_literal{}=Index, Value | Updates], Acc) ->
+    sort_update_tuple(Updates, [{Index, Value} | Acc]);
+sort_update_tuple([], Acc) ->
+    append([[Index, Value] || {Index, Value} <- sort(fun erlang:'>='/2, Acc)]).
 
 %%%
 %%% Find out where frames should be placed.
@@ -1315,7 +1242,7 @@ place_frames_1([], _, _, Tried, Frames) ->
 
 %% do_place_frame(Label, Blocks, Dominators, Tried0, Frames0) -> {Frames,Tried}.
 %%  Try to place a frame in this block. This function returns
-%%  successfully if it either succeds at placing a frame in this
+%%  successfully if it either succeeds at placing a frame in this
 %%  block, if an ancestor that dominates this block has already placed
 %%  a frame, or if we have already tried to put a frame in this block.
 %%
@@ -1503,22 +1430,55 @@ fix_receives(#st{ssa=Blocks0,cnt=Count0}=St) ->
 fix_receives_1([{L,Blk}|Ls], Blocks0, Count0) ->
     case Blk of
         #b_blk{is=[#b_set{op=peek_message}|_]} ->
-            Rm = find_rm_blocks(L, Blocks0),
-            LoopExit = find_loop_exit(Rm, Blocks0),
-            RPO = beam_ssa:rpo([L], Blocks0),
-            Defs0 = beam_ssa:def(RPO, Blocks0),
-            CommonUsed = recv_common(Defs0, LoopExit, Blocks0),
-            {Blocks1,Count1} = recv_crit_edges(Rm, LoopExit, Blocks0, Count0),
-            {Blocks2,Count2} = recv_fix_common(CommonUsed, LoopExit, Rm,
-                                               Blocks1, Count1),
+            Rm0 = find_rm_blocks(L, Blocks0),
+            {Rm,Blocks1,Count1} = split_rm_blocks(Rm0, Blocks0, Count0, []),
+            LoopExit = find_loop_exit(Rm, Blocks1),
+            RPO = beam_ssa:rpo([L], Blocks1),
+            Defs0 = beam_ssa:def(RPO, Blocks1),
+            CommonUsed = recv_common(Defs0, LoopExit, Blocks1),
+            {Blocks2,Count2} = recv_crit_edges(Rm, LoopExit, Blocks1, Count1),
+            {Blocks3,Count3} = recv_fix_common(CommonUsed, LoopExit, Rm,
+                                               Blocks2, Count2),
             Defs = ordsets:subtract(Defs0, CommonUsed),
-            {Blocks,Count} = fix_receive(Rm, Defs, Blocks2, Count2),
+            {Blocks,Count} = fix_receive(Rm, Defs, Blocks3, Count3),
             fix_receives_1(Ls, Blocks, Count);
         #b_blk{} ->
             fix_receives_1(Ls, Blocks0, Count0)
     end;
 fix_receives_1([], Blocks, Count) ->
     {Blocks,Count}.
+
+split_rm_blocks([L|Ls], Blocks0, Count0, Acc) ->
+    #b_blk{is=Is} = map_get(L, Blocks0),
+    case need_split(Is) of
+        false ->
+            %% Don't split because there are no unsafe instructions.
+            split_rm_blocks(Ls, Blocks0, Count0, [L|Acc]);
+        true ->
+            %% An unsafe instruction, such as `bs_get_tail`, was
+            %% found. Split the block before `remove_message`.
+            P = fun(#b_set{op=Op}) ->
+                        Op =:= remove_message
+                end,
+            Next = Count0,
+            {Blocks,Count} = beam_ssa:split_blocks([L], P, Blocks0, Count0),
+            true = Count0 =/= Count,            %Assertion.
+            split_rm_blocks(Ls, Blocks, Count, [Next|Acc])
+    end;
+split_rm_blocks([], Blocks, Count, Acc) ->
+    {reverse(Acc),Blocks,Count}.
+
+need_split([#b_set{op=Op}|T]) ->
+    case Op of
+        %% Unnecessarily splitting the block can introduce extra
+        %% `move` instructions, so we will avoid splitting as long
+        %% there are only known safe instructions before the
+        %% `remove_message` instruction.
+        get_tuple_element -> need_split(T);
+        recv_marker_clear -> need_split(T);
+        remove_message -> false;
+        _ -> true
+    end.
 
 recv_common(_Defs, none, _Blocks) ->
     %% There is no common exit block because receive is used
@@ -1608,7 +1568,7 @@ recv_fix_common_1([V|Vs], [Rm|Rms], Msg, Blocks0) ->
     Blocks1 = beam_ssa:rename_vars(Ren, RPO, Blocks0),
     #b_blk{is=Is0} = Blk0 = map_get(Rm, Blocks1),
     Copy = #b_set{op=copy,dst=V,args=[Msg]},
-    Is = insert_after_phis(Is0, [Copy]),
+    Is = [Copy|Is0],
     Blk = Blk0#b_blk{is=Is},
     Blocks = Blocks1#{Rm:=Blk},
     recv_fix_common_1(Vs, Rms, Msg, Blocks);
@@ -1643,8 +1603,8 @@ fix_receive([L|Ls], Defs, Blocks0, Count0) ->
     Ren = zip(Used, NewVars),
     Blocks1 = beam_ssa:rename_vars(Ren, RPO, Blocks0),
     #b_blk{is=Is0} = Blk1 = map_get(L, Blocks1),
-    CopyIs = [#b_set{op=copy,dst=New,args=[Old]} || {Old,New} <- Ren],
-    Is = insert_after_phis(Is0, CopyIs),
+    Is = [#b_set{op=copy,dst=New,args=[Old]} ||
+             {Old,New} <- Ren] ++ Is0,
     Blk = Blk1#b_blk{is=Is},
     Blocks = Blocks1#{L:=Blk},
     fix_receive(Ls, Defs, Blocks, Count);
@@ -2021,10 +1981,6 @@ copy_retval_2([L|Ls], Yregs, Copy0, Blocks0, Count0) ->
 copy_retval_2([], _Yregs, none, Blocks, Count) ->
     {Blocks,Count}.
 
-copy_retval_is([#b_set{op=put_tuple_elements,args=Args0}=I0], false, _Yregs,
-           Copy, Count, Acc) ->
-    I = I0#b_set{args=copy_sub_args(Args0, Copy)},
-    {reverse(Acc, [I|acc_copy([], Copy)]),Count};
 copy_retval_is([#b_set{op=Op}=I0], false, Yregs, Copy, Count0, Acc0)
   when Op =:= call; Op =:= old_make_fun ->
     {I,Count,Acc} = place_retval_copy(I0, Yregs, Copy, Count0, Acc0),
@@ -2455,7 +2411,7 @@ reserve_yregs_1(L, #st{ssa=Blocks0,cnt=Count0,res=Res0}=St) ->
 reserve_try_tags(L, Blocks) ->
     Seen = gb_sets:empty(),
     {Res0,_} = reserve_try_tags_1([L], Blocks, Seen, #{}),
-    Res1 = [maps:to_list(M) || {_,M} <- maps:to_list(Res0)],
+    Res1 = [maps:to_list(M) || M <- maps:values(Res0)],
     Res = [{V,{y,Y}} || {V,Y} <- append(Res1)],
     ordsets:from_list(Res).
 
@@ -2655,7 +2611,7 @@ reserve_zreg([#b_set{op=Op,dst=Dst}], #b_br{bool=Dst}, ShortLived, A) ->
     case use_zreg(Op) of
         yes -> [{Dst,z} | A];
         no -> A;
-        maybe -> reserve_test_zreg(Dst, ShortLived, A)
+        'maybe' -> reserve_test_zreg(Dst, ShortLived, A)
     end;
 reserve_zreg([#b_set{op=Op,dst=Dst} | Is], Last, ShortLived, A) ->
     case use_zreg(Op) of
@@ -2664,13 +2620,12 @@ reserve_zreg([#b_set{op=Op,dst=Dst} | Is], Last, ShortLived, A) ->
     end;
 reserve_zreg([], _, _, A) -> A.
 
+use_zreg(bs_checked_skip) -> yes;
+use_zreg(bs_ensure) -> yes;
 use_zreg(bs_match_string) -> yes;
-use_zreg(bs_save) -> yes;
-use_zreg(bs_restore) -> yes;
 use_zreg(bs_set_position) -> yes;
 use_zreg(kill_try_tag) -> yes;
 use_zreg(landingpad) -> yes;
-use_zreg(put_tuple_elements) -> yes;
 use_zreg(recv_marker_bind) -> yes;
 use_zreg(recv_marker_clear) -> yes;
 use_zreg(remove_message) -> yes;
@@ -2680,6 +2635,7 @@ use_zreg(wait_timeout) -> yes;
 %% There's no way we can combine these into a test instruction, so we must
 %% avoid using a z register if their result is used directly in a branch.
 use_zreg(call) -> no;
+use_zreg({bif,element}) -> no;
 use_zreg({bif,is_map_key}) -> no;
 use_zreg({bif,is_record}) -> no;
 use_zreg({bif,map_get}) -> no;
@@ -2689,7 +2645,7 @@ use_zreg(get_tl) -> no;
 use_zreg(get_tuple_element) -> no;
 %% Assume the instruction can use a z register, provided it's the last in its
 %% block and that the result is only used in the terminator.
-use_zreg(_) -> maybe.
+use_zreg(_) -> 'maybe'.
 
 %% If V is defined just before a branch, we may be able to combine it into a
 %% test instruction.
@@ -2867,6 +2823,12 @@ reserve_terminator(L, Is, #b_br{bool=#b_var{},succ=Succ,fail=Fail},
                         #{Arg:=Reg} -> #{Arg=>Reg};
                         #{} -> #{}
                     end;
+                #b_set{op=new_try_tag} ->
+                    %% We know that no X registers will be used at the
+                    %% failure label (a block starting with the
+                    %% landingpad instruction), so we can pick up
+                    %% register hints from the success label.
+                    reserve_terminator_1(L, Succ, Is, Blocks, XsMap, Res);
                 _ ->
                     %% Register hints from the success block may not
                     %% be safe at the failure block, and vice versa.
@@ -2929,9 +2891,9 @@ reserve_call_args(Args) ->
     reserve_call_args(Args, 0, #{}).
 
 reserve_call_args([#b_var{}=Var|As], X, Xs) ->
-    reserve_call_args(As, X+1, Xs#{Var=>{x,X}});
+    reserve_call_args(As, X+1, Xs#{Var => {x,X}});
 reserve_call_args([#b_literal{}|As], X, Xs) ->
-    reserve_call_args(As, X+1, Xs);
+    reserve_call_args(As, X+1, Xs#{{x,X} => hole});
 reserve_call_args([], _, Xs) -> Xs.
 
 reserve_xreg(V, Xs, Res) ->
@@ -2957,21 +2919,29 @@ reserve_xreg(V, Xs, Res) ->
 %%  invoking the garbage collector.
 
 res_xregs_prune(Xs, Used, Res) when map_size(Xs) =/= 0 ->
-    %% The number of safe registers is the number of the X registers
-    %% used after this point. The actual number of safe registers may
-    %% be higher than this number, but this is a conservative safe
-    %% estimate.
-    NumSafe = foldl(fun(V, N) ->
-                            case Res of
-                                #{V:={x,_}} -> N + 1;
-                                #{V:=_} -> N;
-                                #{} -> N + 1
+    %% Calculate a conservative estimate for the number of safe
+    %% registers based on the used X register after this point. The
+    %% actual number of safe registers may be higher than this number.
+    NumSafe0 = foldl(fun(V, N) ->
+                             %% Count the number of used variables
+                             %% allocated to X registers.
+                             case Res of
+                                 #{V := {x,_}} -> N + 1;
+                                 #{V := _} -> N;
+                                 #{} -> N + 1
+                             end
+                     end, 0, Used),
+    NumSafe = foldl(fun(X, N) ->
+                            %% Decrement the count if there are holes.
+                            case Xs of
+                                #{{x,X} := hole} -> N - 1;
+                                #{} -> N
                             end
-                    end, 0, Used),
+                    end, NumSafe0, seq(0, NumSafe0-1)),
 
     %% Remove unsafe registers from the list of potential
     %% preferred registers.
-    maps:filter(fun(_, {x,X}) -> X < NumSafe end, Xs);
+    #{Var => Reg || Var := {x,X}=Reg <- Xs, X < NumSafe};
 res_xregs_prune(Xs, _Used, _Res) -> Xs.
 
 %%%
@@ -3044,8 +3014,8 @@ init_free(Res) ->
     #{x:=Xs0} = Free1 = maps:from_list(Free0),
     Xs = init_xregs(Xs0),
     Free = Free1#{x:=Xs},
-    Next = maps:fold(fun(K, V, A) -> [{{next,K},length(V)}|A] end, [], Free),
-    maps:merge(Free, maps:from_list(Next)).
+    Next = #{{next,K} => length(V) || K := V <- Free},
+    maps:merge(Free, Next).
 
 init_free_1([{_,{prefer,{x,_}=Reg}}|Res]) ->
     [{x,Reg}|init_free_1(Res)];
@@ -3274,9 +3244,6 @@ rel2fam(S0) ->
     S1 = sofs:relation(S0),
     S = sofs:rel2fam(S1),
     sofs:to_external(S).
-
-split_phis(Is) ->
-    splitwith(fun(#b_set{op=Op}) -> Op =:= phi end, Is).
 
 is_yreg({y,_}) -> true;
 is_yreg({x,_}) -> false;

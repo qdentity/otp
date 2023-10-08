@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2020. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -104,6 +104,9 @@
 
 #define ErtsInArea(ptr,start,nbytes) \
     ((UWord)((char*)(ptr) - (char*)(start)) < (nbytes))
+
+#define ErtsInBetween(ptr,start,end) \
+    ErtsInArea(ptr, start, (char*)(end) - (char*)(start))
 
 #define ErtsContainerStruct(ptr, type, member) \
     ((type *)((char *)(1 ? (ptr) : &((type *)0)->member) - offsetof(type, member)))
@@ -242,6 +245,7 @@ typedef ERTS_SYS_FD_TYPE ErtsSysFdType;
 __decl_noreturn void __noreturn erl_assert_error(const char* expr, const char *func,
 						 const char* file, int line);
 
+#undef ASSERT
 #ifdef DEBUG
 #  define ASSERT(e) ERTS_ASSERT(e)
 #else
@@ -267,7 +271,7 @@ __decl_noreturn void __noreturn erl_assert_error(const char* expr, const char *f
  * static int test(){ return 0;}
  * GCC_DIAG_ON(unused-function)
  *
- * These macros were orginally authored by Jonathan Wakely and has
+ * These macros were originally authored by Jonathan Wakely and has
  * been modified by Patrick Horgan.
  *
  * Source: http://dbp-consulting.com/tutorials/SuppressingGCCWarnings.html
@@ -346,7 +350,7 @@ __decl_noreturn void __noreturn erl_assert_error(const char* expr, const char *f
 ** Eterm: A tagged erlang term (possibly 64 bits)
 ** BeamInstr: A beam code instruction unit, possibly larger than Eterm, not smaller.
 ** Uint:  An unsigned integer exactly as large as an Eterm.
-** Sint:  A signed integer exactly as large as an eterm and therefor large
+** Sint:  A signed integer exactly as large as an eterm and therefore large
 **        enough to hold the return value of the signed_val() macro.
 ** UWord: An unsigned integer at least as large as a void * and also as large
 **          or larger than an Eterm
@@ -605,7 +609,7 @@ extern erts_tsd_key_t erts_is_crash_dumping_key;
 static unsigned long zero_value = 0, one_value = 1;
 #    define SET_BLOCKING(fd)	{ if (ioctlsocket((fd), FIONBIO, &zero_value) != 0) fprintf(stderr, "Error setting socket to non-blocking: %d\n", WSAGetLastError()); }
 #    define SET_NONBLOCKING(fd)	ioctlsocket((fd), FIONBIO, &one_value)
-
+#    define ERRNO_BLOCK EAGAIN /* We use the posix way for windows */
 #  else
 #    ifdef NB_FIONBIO		/* Old BSD */
 #      include <sys/ioctl.h>
@@ -767,6 +771,8 @@ extern void *erts_sys_ddll_call_init(void *function);
 extern void *erts_sys_ddll_call_nif_init(void *function);
 extern int erts_sys_ddll_sym2(void *handle, const char *name, void **function, ErtsSysDdllError*);
 #define erts_sys_ddll_sym(H,N,F) erts_sys_ddll_sym2(H,N,F,NULL)
+extern int erts_sys_ddll_vsym2(void *handle, const char *name, const char *vers, void **function, ErtsSysDdllError*);
+#define erts_sys_ddll_vsym(H,N,V,F) erts_sys_ddll_vsym2(H,N,V,F,NULL)
 extern char *erts_sys_ddll_error(int code);
 
 
@@ -842,6 +848,7 @@ int sys_double_to_chars(double, char*, size_t);
 int sys_double_to_chars_ext(double, char*, size_t, size_t);
 int sys_double_to_chars_fast(double, char*, int, int, int);
 void sys_get_pid(char *, size_t);
+int sys_get_hostname(char *buf, size_t size);
 
 /* erl_drv_get/putenv have been implicitly 8-bit for so long that we can't
  * change them without breaking things on Windows. Their return values are
@@ -1074,6 +1081,8 @@ ERTS_GLB_INLINE void *sys_memmove(void *dest, const void *src, size_t n);
 ERTS_GLB_INLINE int sys_memcmp(const void *s1, const void *s2, size_t n);
 ERTS_GLB_INLINE void *sys_memset(void *s, int c, size_t n);
 ERTS_GLB_INLINE void *sys_memzero(void *s, size_t n);
+ERTS_GLB_INLINE void *sys_memchr(const void *s, int c, size_t n);
+ERTS_GLB_INLINE void *sys_memrchr(const void *s, int c, size_t n);
 ERTS_GLB_INLINE int sys_strcmp(const char *s1, const char *s2);
 ERTS_GLB_INLINE int sys_strncmp(const char *s1, const char *s2, size_t n);
 ERTS_GLB_INLINE char *sys_strcpy(char *dest, const char *src);
@@ -1106,6 +1115,26 @@ ERTS_GLB_INLINE void *sys_memzero(void *s, size_t n)
 {
     ASSERT(s != NULL);
     return memset(s,'\0',n);
+}
+ERTS_GLB_INLINE void *sys_memchr(const void *s, int c, size_t n)
+{
+    ASSERT(s != NULL);
+    return (void*)memchr(s, c, n);
+}
+ERTS_GLB_INLINE void *sys_memrchr(const void *s, int c, size_t n)
+{
+    ASSERT(s != NULL);
+#ifdef HAVE_MEMRCHR
+    return (void*)memrchr(s, c, n);
+#else
+    {
+        const unsigned char* ptr = (const unsigned char*)s + n;
+        while (ptr != s)
+            if (*(--ptr) == (unsigned char)c)
+                return (void*)ptr;
+        return NULL;
+    }
+#endif
 }
 ERTS_GLB_INLINE int sys_strcmp(const char *s1, const char *s2)
 {
@@ -1368,4 +1397,60 @@ erts_raw_env_next_char(byte *p, int encoding)
 #define ERTS_SPAWN_DRV_CONTROL_MAGIC_NUMBER  0x04c76a00U
 #define ERTS_FORKER_DRV_CONTROL_MAGIC_NUMBER 0x050a7800U
 
+#define ERTS_ATTR_WUR
+#define ERTS_ATTR_ALLOC_SIZE(SZPOS)
+#define ERTS_ATTR_MALLOC_U
+#define ERTS_ATTR_MALLOC_US(SZPOS)
+#define ERTS_ATTR_MALLOC_UD(DTOR, PTRPOS)
+#define ERTS_ATTR_MALLOC_USD(SZPOS, DTOR, PTRPOS)
+#define ERTS_ATTR_MALLOC_D(DTOR, PTRPOS)
+
+/* ERTS_ATTR_MALLOC_xxx:
+ * U: Returns pointer to Undefined data. ((malloc))
+ * S: Has Size argument with nr of bytes of returned data. ((alloc_size(SZPOS)))
+ * D: Has 1-to-1 Deallocator function with ptr argument. ((malloc(DTOR,PTRPOS)))
+ *    (D does not work on INLINE functions)
+ */
+
+#ifdef __has_attribute
+#  if __has_attribute(warn_unused_result)
+#    undef  ERTS_ATTR_WUR
+#    define ERTS_ATTR_WUR __attribute__((warn_unused_result))
+#  endif
+#  if __has_attribute(alloc_size)
+#    undef  ERTS_ATTR_ALLOC_SIZE
+#    define ERTS_ATTR_ALLOC_SIZE(SZPOS) __attribute__((alloc_size(SZPOS)))
+#  endif
+#  if __has_attribute(malloc)
+#    undef  ERTS_ATTR_MALLOC_U
+#    define ERTS_ATTR_MALLOC_U __attribute__((malloc)) ERTS_ATTR_WUR
+
+#    undef  ERTS_ATTR_MALLOC_US
+#    define ERTS_ATTR_MALLOC_US(SZPOS)                                 \
+         __attribute__((malloc))                                       \
+         ERTS_ATTR_ALLOC_SIZE(SZPOS)                                   \
+         ERTS_ATTR_WUR
+
+#    undef  ERTS_ATTR_MALLOC_D
+#    if defined(__GNUC__) && __GNUC__ >= 11
+#      define ERTS_ATTR_MALLOC_D(DTOR, PTRPOS)                         \
+         __attribute__((malloc(DTOR,PTRPOS)))                          \
+         ERTS_ATTR_WUR
+#    else
+#      define ERTS_ATTR_MALLOC_D(DTOR, PTRPOS)                         \
+         ERTS_ATTR_WUR
+#    endif
+
+#    undef  ERTS_ATTR_MALLOC_UD
+#    define ERTS_ATTR_MALLOC_UD(DTOR, PTRPOS)                          \
+       ERTS_ATTR_MALLOC_U                                              \
+       ERTS_ATTR_MALLOC_D(DTOR, PTRPOS)
+
+#    undef  ERTS_ATTR_MALLOC_USD
+#    define ERTS_ATTR_MALLOC_USD(SZPOS, DTOR, PTRPOS)                  \
+       ERTS_ATTR_MALLOC_US(SZPOS)                                      \
+       ERTS_ATTR_MALLOC_D(DTOR, PTRPOS)
+#  endif
 #endif
+
+#endif /* __SYS_H__ */

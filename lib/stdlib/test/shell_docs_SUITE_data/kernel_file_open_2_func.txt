@@ -113,6 +113,10 @@
     [;;4mread_file_info/1[0m does probably not match the number of bytes
     that can be read from a compressed file.
 
+  [;;4m[;;4mcompressed_one[0m[0m:
+    Read one member of a gzip compressed file. Option [;;4m[0m
+    [;;4mcompressed_one[0m can only be combined with [;;4mread[0m.
+
   [;;4m[;;4m{encoding, Encoding}[0m[0m:
     Makes the file perform automatic translation of characters to
     and from a specific (Unicode) encoding. Notice that the data
@@ -216,6 +220,15 @@
   closed and the process itself terminates too. An [;;4mIoDevice[0m
   returned from this call can be used as an argument to the I/O
   functions (see [;;4mio(3)[0m).
+
+  Warning:
+    While this function can be used to open any file, we recommend
+    against using it for NFS-mounted files, FIFOs, devices, or
+    similar since they can cause IO threads to hang forever.
+
+    If your application needs to interact with these kinds of
+    files we recommend breaking out those parts to a port program
+    instead.
 
   Note:
     In previous versions of [;;4mfile[0m, modes were specified as one of

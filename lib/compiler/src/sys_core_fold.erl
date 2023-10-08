@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1999-2021. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -92,6 +92,9 @@
 -else.
 -define(ASSERT(E), ignore).
 -endif.
+
+-define(MAX_FUNC_ARGS, 255).
+-define(IS_FUNC_ARITY(A), is_integer(A) andalso 0 =< A andalso A =< ?MAX_FUNC_ARGS).
 
 %% Variable value info.
 -record(sub, {v=[],                                 %Variable substitutions
@@ -215,15 +218,15 @@ expr(#c_tuple{anno=Anno,es=Es0}=Tuple, Ctxt, Sub) ->
 	    ann_c_tuple(Anno, Es)
     end;
 expr(#c_map{anno=Anno,arg=V0,es=Es0}=Map, Ctxt, Sub) ->
-    Es = pair_list(Es0, Ctxt, descend(Map, Sub)),
+    %% Warn for useless building, but always build the map
+    %% anyway to preserve a possible exception.
     case Ctxt of
-	effect ->
-            warn_useless_building(Map, Sub),
-	    make_effect_seq(Es, Sub);
-	value ->
-	    V = expr(V0, Ctxt, Sub),
-	    ann_c_map(Anno,V,Es)
-    end;
+        effect -> warn_useless_building(Map, Sub);
+        value -> ok
+    end,
+    Es = pair_list(Es0, descend(Map, Sub)),
+    V = expr(V0, value, Sub),
+    ann_c_map(Anno, V, Es);
 expr(#c_binary{segments=Ss}=Bin0, Ctxt, Sub) ->
     %% Warn for useless building, but always build the binary
     %% anyway to preserve a possible exception.
@@ -269,17 +272,8 @@ expr(#c_seq{arg=Arg0,body=B0}=Seq0, Ctxt, Sub) ->
     end;
 expr(#c_let{}=Let0, Ctxt, Sub) ->
     Let = opt_case_in_let(Let0),
-    case simplify_let(Let, Sub) of
-	impossible ->
-	    %% The argument for the let is "simple", i.e. has no
-	    %% complex structures such as let or seq that can be entered.
-	    ?ASSERT(verify_scope(Let, Sub)),
-	    opt_fun_call(opt_simple_let(Let, Ctxt, Sub));
-	Expr ->
-	    %% The let body was successfully moved into the let argument.
-	    %% Now recursively re-process the new expression.
-	    Expr
-    end;
+    ?ASSERT(verify_scope(Let, Sub)),
+    opt_fun_call(opt_let(Let, Ctxt, Sub));
 expr(#c_letrec{body=#c_var{}}=Letrec, effect, _Sub) ->
     %% This is named fun in an 'effect' context. Warn and ignore.
     add_warning(Letrec, {ignored,useless_building}),
@@ -324,19 +318,16 @@ expr(#c_case{}=Case0, Ctxt, Sub) ->
     %%   (in addition to any warnings that may have been emitted
     %%   according to the rules above).
     %%
-    case opt_bool_case(Case0, Sub) of
-	#c_case{anno=Anno,arg=Arg0,clauses=Cs0}=Case1 ->
-	    Arg1 = body(Arg0, value, Sub),
-	    LitExpr = cerl:is_literal(Arg1),
-	    {Arg2,Cs1} = case_opt(Arg1, Cs0, Sub),
-	    Cs2 = clauses(Arg2, Cs1, Ctxt, Sub, LitExpr, Anno),
-	    Case = Case1#c_case{arg=Arg2,clauses=Cs2},
-	    warn_no_clause_match(Case1, Case),
-	    Expr = eval_case(Case, Sub),
-            move_case_into_arg(Expr, Sub);
-	Other ->
-	    expr(Other, Ctxt, Sub)
-    end;
+    Case1 = opt_bool_case(Case0, Sub),
+    #c_case{anno=Anno,arg=Arg0,clauses=Cs0} = Case1,
+    Arg1 = body(Arg0, value, Sub),
+    LitExpr = cerl:is_literal(Arg1),
+    {Arg2,Cs1} = case_opt(Arg1, Cs0, Sub),
+    Cs2 = clauses(Arg2, Cs1, Ctxt, Sub, LitExpr, Anno),
+    Case = Case1#c_case{arg=Arg2,clauses=Cs2},
+    warn_no_clause_match(Case1, Case),
+    Expr = eval_case(Case, Sub),
+    move_case_into_arg(Expr, Sub);
 expr(#c_apply{anno=Anno,op=Op0,args=As0}=Apply0, _, Sub) ->
     Op1 = expr(Op0, value, Sub),
     As1 = expr_list(As0, value, Sub),
@@ -412,7 +403,9 @@ expr(#c_try{anno=A,arg=E0,vars=Vs0,body=B0,evars=Evs0,handler=H0}=Try, _, Sub0) 
 	    {Evs1,Sub2} = var_list(Evs0, Sub0),
 	    H1 = body(H0, value, Sub2),
 	    Try#c_try{arg=E1,vars=Vs1,body=B1,evars=Evs1,handler=H1}
-    end.
+    end;
+expr(#c_opaque{}=O, effect, _Sub) ->
+    O.
 
 %% If a fun or its application is used as an argument, then it's unsafe to
 %% handle it in effect context as the side-effects may rely on its return
@@ -493,14 +486,12 @@ ifes_list(_FVar, [], _Safe) ->
 expr_list(Es, Ctxt, Sub) ->
     [expr(E, Ctxt, Sub) || E <- Es].
 
-pair_list(Es, Ctxt, Sub) ->
-    [pair(E, Ctxt, Sub) || E <- Es].
+pair_list(Es, Sub) ->
+    [pair(E, Sub) || E <- Es].
 
-pair(#c_map_pair{key=K,val=V}, effect, Sub) ->
-    make_effect_seq([K,V], Sub);
-pair(#c_map_pair{key=K0,val=V0}=Pair, value=Ctxt, Sub) ->
-    K = expr(K0, Ctxt, Sub),
-    V = expr(V0, Ctxt, Sub),
+pair(#c_map_pair{key=K0,val=V0}=Pair, Sub) ->
+    K = expr(K0, value, Sub),
+    V = expr(V0, value, Sub),
     Pair#c_map_pair{key=K,val=V}.
 
 bitstr_list(Es, Sub) ->
@@ -604,10 +595,7 @@ eval_binary(#c_binary{anno=Anno,segments=Ss}=Bin) ->
 	    Bin;
 	  throw:{badarg,Warning} ->
 	    add_warning(Bin, {failed,Warning}),
-	    #c_call{anno=Anno,
-		    module=#c_literal{val=erlang},
-		    name=#c_literal{val=error},
-		    args=[#c_literal{val=badarg}]}
+            Bin
     end.
 
 eval_binary_1([#c_bitstr{val=#c_literal{val=Val},size=#c_literal{val=Sz},
@@ -810,8 +798,6 @@ fold_apply(Apply, _, _) -> Apply.
 call(#c_call{args=As0}=Call0, #c_literal{val=M}=M0, #c_literal{val=N}=N0, Sub) ->
     As1 = expr_list(As0, value, Sub),
     case simplify_call(Call0, M, N, As1) of
-        #c_literal{}=Lit ->
-            Lit;
         #c_call{args=As}=Call ->
             case get(no_inline_list_funcs) of
                 true ->
@@ -821,7 +807,11 @@ call(#c_call{args=As0}=Call0, #c_literal{val=M}=M0, #c_literal{val=N}=N0, Sub) -
                         none -> fold_call(Call, M0, N0, As, Sub);
                         Core -> expr(Core, Sub)
                     end
-            end
+            end;
+        #c_let{}=Let ->
+            Let;
+        #c_literal{}=Lit ->
+            Lit
     end;
 call(#c_call{args=As0}=Call, M, N, Sub) ->
     As = expr_list(As0, value, Sub),
@@ -831,6 +821,33 @@ call(#c_call{args=As0}=Call, M, N, Sub) ->
 %% slightly at the cost of making tracing and stack traces incorrect.
 simplify_call(Call, maps, get, [Key, Map]) ->
     rewrite_call(Call, erlang, map_get, [Key, Map]);
+simplify_call(#c_call{anno=Anno0}, maps, get, [Key0, Map, Default]) ->
+    Anno = [compiler_generated | Anno0],
+
+    Key = make_var(Anno),
+    Value = make_var(Anno),
+    Fail = make_var(Anno),
+    Raise = #c_primop{name=#c_literal{val=match_fail},
+                      args=[#c_tuple{es=[#c_literal{val=badmap},
+                                         Fail]}]},
+
+    Cs = [#c_clause{anno=Anno,
+                    pats=[#c_map{es=[#c_map_pair{op=#c_literal{val=exact},
+                                                 key=Key,
+                                                 val=Value}],
+                                 is_pat=true}],
+                    guard=#c_literal{val=true},
+                    body=Value},
+          #c_clause{anno=Anno,
+                    pats=[#c_map{es=[],is_pat=true}],
+                    guard=#c_literal{val=true},
+                    body=Default},
+          #c_clause{anno=Anno,
+                    pats=[Fail],
+                    guard=#c_literal{val=true},
+                    body=Raise}],
+
+    cerl:ann_c_let(Anno, [Key], Key0, #c_case{anno=Anno,arg=Map,clauses=Cs});
 simplify_call(Call, maps, is_key, [Key, Map]) ->
     rewrite_call(Call, erlang, is_map_key, [Key, Map]);
 simplify_call(_Call, maps, new, []) ->
@@ -1439,15 +1456,15 @@ shadow_warning([C|Cs], Line, Anno) ->
     shadow_warning(Cs, Line, Anno);
 shadow_warning([], _, _) -> ok.
 
-%% will_succeed(Guard) -> yes | maybe | no.
+%% will_succeed(Guard) -> yes | 'maybe' | no.
 %%  Test if we know whether a guard will succeed/fail or just don't
 %%  know.  Be VERY conservative!
 
 will_succeed(#c_literal{val=true}) -> yes;
 will_succeed(#c_literal{val=false}) -> no;
-will_succeed(_Guard) -> maybe.
+will_succeed(_Guard) -> 'maybe'.
 
-%% will_match(Expr, [Pattern]) -> yes | maybe.
+%% will_match(Expr, [Pattern]) -> yes | 'maybe'.
 %%  We KNOW that this function is only used after optimizations
 %%  in case_opt/4. Therefore clauses that can definitely not match
 %%  have already been pruned.
@@ -1457,7 +1474,7 @@ will_match(#c_values{es=Es}, Ps) ->
 will_match(E, [P]) ->
     will_match_1(cerl_clauses:match(P, E)).
 
-will_match_1({false,_}) -> maybe;
+will_match_1({false,_}) -> 'maybe';
 will_match_1({true,_}) -> yes.
 
 %% opt_bool_case(CoreExpr, Sub) - CoreExpr'.
@@ -1591,33 +1608,11 @@ opt_bool_not(#c_case{arg=Arg,clauses=Cs0}=Case0) ->
 	    Case = Case0#c_case{arg=Expr,clauses=Cs},
 	    opt_bool_not(Case);
 	_ ->
-	    opt_bool_case_redundant(Case0)
+            Case0
     end.
 
 opt_bool_not_invert(#c_clause{pats=[#c_literal{val=Bool}]}=C) ->
     C#c_clause{pats=[#c_literal{val=not Bool}]}.
-
-%% opt_bool_case_redundant(Core) -> Core'.
-%%  If the sole purpose of the case is to verify that the case
-%%  expression is indeed boolean, we do not need the case
-%%  (since we have already verified that the case expression is
-%%  boolean).
-%%
-%%    case BoolExpr of
-%%      true -> true   	       	       ==>      BoolExpr
-%%      false -> false
-%%    end.
-%%
-opt_bool_case_redundant(#c_case{arg=Arg,clauses=Cs}=Case) ->
-    case all(fun opt_bool_case_redundant_1/1, Cs) of
-	true -> Arg;
-	false -> Case
-    end.
-
-opt_bool_case_redundant_1(#c_clause{pats=[#c_literal{val=B}],
-				    body=#c_literal{val=B}}) ->
-    true;
-opt_bool_case_redundant_1(_) -> false.
 
 %% eval_case(Case) -> #c_case{} | #c_let{}.
 %%  If possible, evaluate a case at compile time.  We know that the
@@ -1894,6 +1889,7 @@ case_opt_data_2(P, TypeSig, Bs0) ->
 	{[V|Vs],none} ->
 	    {Type,Arity} = TypeSig,
 	    Ann = [compiler_generated],
+            true = ?IS_FUNC_ARITY(Arity),
 	    Vars = make_vars(Ann, Arity),
 	    Data = cerl:ann_make_data(Ann, Type, Vars),
 	    Bs = [{V,Data} | [{Var,V} || Var <- Vs] ++ Bs0],
@@ -1951,7 +1947,7 @@ pat_to_expr(P) ->
 
 pat_to_expr_list(Ps) -> [pat_to_expr(P) || P <- Ps].
 
-make_vars(A, Max) ->
+make_vars(A, Max) when ?IS_FUNC_ARITY(Max) ->
     make_vars(A, 1, Max).
 
 make_vars(A, I, Max) when I =< Max ->
@@ -2213,112 +2209,6 @@ simplify_fun_call(V, Values, #c_fun{vars=Vars,body=FunBody}, CallArgs) ->
             throw(impossible)
     end.
 
-%% simplify_let(Let, Sub) -> Expr | impossible
-%%  If the argument part of an let contains a complex expression, such
-%%  as a let or a sequence, move the original let body into the complex
-%%  expression.
-
-simplify_let(#c_let{arg=Arg}=Let, Sub) ->
-    move_let_into_expr(Let, Arg, Sub).
-
-move_let_into_expr(#c_let{vars=InnerVs0,body=InnerBody0}=Inner,
-		   #c_let{vars=OuterVs0,arg=Arg0,body=OuterBody0}=Outer, Sub0) ->
-    %%
-    %% let <InnerVars> = let <OuterVars> = <Arg>
-    %%                   in <OuterBody>
-    %% in <InnerBody>
-    %%
-    %%       ==>
-    %%
-    %% let <OuterVars> = <Arg>
-    %% in let <InnerVars> = <OuterBody>
-    %%    in <InnerBody>
-    %%
-    Arg = body(Arg0, Sub0),
-    ScopeSub0 = sub_subst_scope(Sub0#sub{t=#{}}),
-    {OuterVs,ScopeSub} = var_list(OuterVs0, ScopeSub0),
-
-    OuterBody = body(OuterBody0, ScopeSub),
-
-    {InnerVs,Sub} = var_list(InnerVs0, Sub0),
-    InnerBody = body(InnerBody0, Sub),
-    Outer#c_let{vars=OuterVs,arg=Arg,
-		body=Inner#c_let{vars=InnerVs,arg=OuterBody,body=InnerBody}};
-move_let_into_expr(#c_let{vars=Lvs0,body=Lbody0}=Let,
-		   #c_case{arg=Cexpr0,clauses=[Ca0|Cs0]}=Case, Sub0) ->
-    case not is_failing_clause(Ca0) andalso
-        are_all_failing_clauses(Cs0) of
-	true ->
-	    %% let <Lvars> = case <Case-expr> of
-	    %%                  <Cpats> -> <Clause-body>;
-	    %%                  <OtherCpats> -> erlang:error(...)
-	    %%               end
-	    %% in <Let-body>
-	    %%
-	    %%     ==>
-	    %%
-	    %% case <Case-expr> of
-	    %%   <Cpats> ->
-	    %%       let <Lvars> = <Clause-body>
-	    %%       in <Let-body>;
-	    %%   <OtherCpats> -> erlang:error(...)
-	    %% end
-
-	    Cexpr = body(Cexpr0, Sub0),
-	    CaPats0 = Ca0#c_clause.pats,
-	    G0 = Ca0#c_clause.guard,
-	    B0 = Ca0#c_clause.body,
-	    ScopeSub0 = sub_subst_scope(Sub0#sub{t=#{}}),
-	    try pattern_list(CaPats0, ScopeSub0) of
-		{CaPats,ScopeSub} ->
-		    G = guard(G0, ScopeSub),
-
-		    B1 = body(B0, ScopeSub),
-
-		    {Lvs,B2,Sub1} = let_substs(Lvs0, B1, Sub0),
-		    Sub2 = Sub1#sub{s=sets:union(ScopeSub#sub.s,
-						      Sub1#sub.s)},
-		    Lbody = body(Lbody0, Sub2),
-		    B = Let#c_let{vars=Lvs,
-				  arg=core_lib:make_values(B2),
-				  body=Lbody},
-
-		    Ca = Ca0#c_clause{pats=CaPats,guard=G,body=B},
-		    Cs = [clause(C, Cexpr, value, Sub0) || C <- Cs0],
-		    Case#c_case{arg=Cexpr,clauses=[Ca|Cs]}
-	    catch
-		nomatch ->
-		    %% This is not a defeat. The code will eventually
-		    %% be optimized to erlang:error(...) by the other
-		    %% optimizations done in this module.
-		    impossible
-	    end;
-	false -> impossible
-    end;
-move_let_into_expr(#c_let{vars=Lvs0,body=Lbody0}=Let,
-		   #c_seq{arg=Sarg0,body=Sbody0}=Seq, Sub0) ->
-    %%
-    %% let <Lvars> = do <Seq-arg>
-    %%                  <Seq-body>
-    %% in <Let-body>
-    %%
-    %%       ==>
-    %%
-    %% do <Seq-arg>
-    %%    let <Lvars> = <Seq-body>
-    %%    in <Let-body>
-    %%
-    Sarg = body(Sarg0, Sub0),
-    Sbody1 = body(Sbody0, Sub0),
-    {Lvs,Sbody,Sub} = let_substs(Lvs0, Sbody1, Sub0),
-    Lbody = body(Lbody0, Sub),
-    Seq#c_seq{arg=Sarg,body=Let#c_let{vars=Lvs,arg=core_lib:make_values(Sbody),
-				      body=Lbody}};
-move_let_into_expr(_Let, _Expr, _Sub) -> impossible.
-
-are_all_failing_clauses(Cs) ->
-    all(fun is_failing_clause/1, Cs).
-
 is_failing_clause(#c_clause{body=B}) ->
     will_fail(B).
 
@@ -2471,6 +2361,7 @@ delay_build_1(Core0, TypeSig) ->
 	Core ->
 	    {Type,Arity} = TypeSig,
 	    Ann = [compiler_generated],
+            true = ?IS_FUNC_ARITY(Arity),
 	    Vars = make_vars(Ann, Arity),
 	    Data = cerl:ann_make_data(Ann, Type, Vars),
 	    {yes,Vars,Core,Data}
@@ -2513,42 +2404,41 @@ delay_build_expr_1(Core, _TypeSig) ->
 	false -> throw(impossible)
     end.
 
-%% opt_simple_let(#c_let{}, Context, Sub) -> CoreTerm
-%%  Optimize a let construct that does not contain any lets in
-%%  in its argument.
+%% opt_let(#c_let{}, Context, Sub) -> CoreTerm
+%%  Optimize a let construct.
 
-opt_simple_let(Let0, Ctxt, Sub) ->
+opt_let(Let0, Ctxt, Sub) ->
     case opt_not_in_let(Let0) of
 	#c_let{}=Let ->
-	    opt_simple_let_0(Let, Ctxt, Sub);
+	    opt_let_0(Let, Ctxt, Sub);
 	Expr ->
 	    expr(Expr, Ctxt, Sub)
     end.
 
-opt_simple_let_0(#c_let{arg=Arg0}=Let, Ctxt, Sub) ->
+opt_let_0(#c_let{arg=Arg0}=Let, Ctxt, Sub) ->
     Arg = body(Arg0, value, Sub),		%This is a body
     case will_fail(Arg) of
 	true -> Arg;
-	false -> opt_simple_let_1(Let, Arg, Ctxt, Sub)
+	false -> opt_let_1(Let, Arg, Ctxt, Sub)
     end.
 
-opt_simple_let_1(#c_let{vars=Vs0,body=B0}=Let, Arg0, Ctxt, Sub0) ->
+opt_let_1(#c_let{vars=Vs0,body=B0}=Let, Arg0, Ctxt, Sub0) ->
     %% Optimise let and add new substitutions.
     {Vs,Args,Sub1} = let_substs(Vs0, Arg0, Sub0),
     BodySub = update_let_types(Vs, Args, Sub1),
     Sub = Sub1#sub{v=[],s=sets:new([{version, 2}])},
     B = body(B0, Ctxt, BodySub),
     Arg = core_lib:make_values(Args),
-    opt_simple_let_2(Let, Vs, Arg, B, B0, Sub).
+    opt_let_2(Let, Vs, Arg, B, B0, Sub).
 
 
-%% opt_simple_let_2(Let0, Vs0, Arg0, Body, PrevBody, Ctxt, Sub) -> Core.
+%% opt_let_2(Let0, Vs0, Arg0, Body, PrevBody, Ctxt, Sub) -> Core.
 %%  Do final simplifications of the let.
 %%
 %%  Note that the substitutions and scope in Sub have been cleared
 %%  and should not be used.
 
-opt_simple_let_2(Let0, Vs0, Arg0, Body, PrevBody, Sub) ->
+opt_let_2(Let0, Vs0, Arg0, Body, PrevBody, Sub) ->
     case {Vs0,Arg0,Body} of
 	{[#c_var{name=V}],Arg1,#c_var{name=V}} ->
             %% let <Var> = Arg in <Var>  ==>  Arg
@@ -2734,17 +2624,11 @@ update_types(_, _, Sub) -> Sub.
 %%  Kill any entries that references the variable,
 %%  either in the key or in the value.
 
-kill_types(V, Tdb) ->
-    maps:from_list(kill_types2(V,maps:to_list(Tdb))).
-
-kill_types2(V, [{V,_}|Tdb]) ->
-    kill_types2(V, Tdb);
-kill_types2(V, [{_,#c_tuple{}=Tuple}=Entry|Tdb]) ->
-    case core_lib:is_var_used(V, Tuple) of
-	false -> [Entry|kill_types2(V, Tdb)];
-	true -> kill_types2(V, Tdb)
-    end;
-kill_types2(_, []) -> [].
+kill_types(Var, Tdb) ->
+    #{Key => Value ||
+         Key := Value <- Tdb,
+         Key =/= Var,
+         not core_lib:is_var_used(Var, Value)}.
 
 %% copy_type(DestVar, SrcVar, Tdb) -> Tdb'
 %%  If the SrcVar has a type, assign it to DestVar.
@@ -2773,7 +2657,7 @@ void() -> #c_literal{val=ok}.
 %%% While optimizing this code fragment, two warnings for useless
 %%% building will be generated: one for the list and one for the tuple
 %%% inside. Before the introduction of column numbers, those two warnings
-%%% would be coalesced to one becuase they had the same line number.
+%%% would be coalesced to one because they had the same line number.
 %%%
 %%% With column numbers, we will need a more sophisticated solution to
 %%% avoid emitting annoying duplicate warnings.

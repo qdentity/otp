@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2008-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2023. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@
 %%
 
 
-%%  Se specification here:
+%%  See specification here:
 %%  http://csrc.nist.gov/groups/ST/crypto_apps_infra/pki/pkitesting.html
 
 -module(pkits_SUITE).
@@ -300,24 +300,24 @@ end_per_testcase(_Func, Config) ->
 
 %%--------------------------- signature_verification--------------------------------------------------
 valid_rsa_signature() ->
-    [{doc, "Test rsa signatur verification"}].
+    [{doc, "Test rsa signature verification"}].
 valid_rsa_signature(Config) when is_list(Config) ->
     run([{ "4.1.1", "Valid Certificate Path Test1 EE", ok}]).
 
 invalid_rsa_signature() ->
-    [{doc,"Test rsa signatur verification"}].
+    [{doc,"Test rsa signature verification"}].
 invalid_rsa_signature(Config) when is_list(Config) ->
     run([{ "4.1.2", "Invalid CA Signature Test2 EE", {bad_cert,invalid_signature}},
 	 { "4.1.3", "Invalid EE Signature Test3 EE", {bad_cert,invalid_signature}}]).
 
 valid_dsa_signature() ->
-    [{doc,"Test dsa signatur verification"}].
+    [{doc,"Test dsa signature verification"}].
 valid_dsa_signature(Config) when is_list(Config) ->
     run([{ "4.1.4", "Valid DSA Signatures Test4 EE", ok},
 	 { "4.1.5", "Valid DSA Parameter Inheritance Test5 EE", ok}]).
 
 invalid_dsa_signature() ->
-    [{doc,"Test dsa signatur verification"}].
+    [{doc,"Test dsa signature verification"}].
 invalid_dsa_signature(Config) when is_list(Config) ->
     run([{ "4.1.6", "Invalid DSA Signature Test6 EE",{bad_cert,invalid_signature}}]).
 
@@ -332,7 +332,7 @@ not_before_valid() ->
     [{doc,"Test valid periods"}].
 not_before_valid(Config) when is_list(Config) ->
     run([{ "4.2.3", "Valid pre2000 UTC notBefore Date Test3 EE", ok},
-	 { "4.2.4", "Valid GeneralizedTime notBefore Date Test4 EE", ok}]).
+         { "4.2.4", "Valid GeneralizedTime notBefore Date Test4 EE", ok}]).
 
 not_after_invalid() ->
     [{doc,"Test valid periods"}].
@@ -379,7 +379,7 @@ string_name_chain() ->
     [{doc,"Test name chaining"}].
 string_name_chain(Config) when is_list(Config) ->
     run([{ "4.3.9", "Valid UTF8String Encoded Names Test9 EE", ok},
-	 %%{ "4.3.10", "Valid Rollover from PrintableString to UTF8String Test10 EE", ok},
+         { "4.3.10", "Valid Rollover from PrintableString to UTF8String Test10 EE", ok},
 	 { "4.3.11", "Valid UTF8String Case Insensitive Match Test11 EE", ok}]).
 
 %%----------------------------verifying_paths_with_self_issued_certificates-------------------------------------------------
@@ -805,7 +805,7 @@ invalid_crl_issuer(Config) when is_list(Config) ->
 	]).
 
 %% Although this test is valid it has a circular dependency. As a result
-%% an attempt is made to reursively checks a CRL path and rejected due to
+%% an attempt is made to recursively checks a CRL path and rejected due to
 %% a CRL path validation error. PKITS notes suggest this test does not
 %% need to be run due to this issue.
 %%	 { "4.14.30", "Valid cRLIssuer Test30", 54 }
@@ -828,13 +828,24 @@ unknown_not_critical_extension(Config) when is_list(Config) ->
 %% Internal functions ------------------------------------------------
 %%--------------------------------------------------------------------
 
+-spec run([tuple()]) -> ok.
 run(Tests) ->    
     [TA] = read_certs("Trust Anchor Root Certificate"),
     run(Tests, TA).
 
+-spec run([Entry] | Entry, TA) -> ok when
+      TA :: public_key:pem_entry(),
+      Entry :: {CA, Test, Result} | {CA, Test, Result, CertificateBodies},
+      CA :: public_key:pem_entry(),
+      Test :: string(),
+      Result :: atom(),
+      CertificateBodies :: [binary()].
 run({Chap, Test, Result}, TA) ->
-    CertChain = cas(Chap) ++ read_certs(Test),
-    Options = path_validation_options(TA, Chap,Test),
+    run({Chap, Test, Result, read_certs(Test)}, TA);
+
+run({Chap, Test, Result, CertsBody}, TA) ->
+    CertChain = cas(Chap) ++ CertsBody,
+    Options = path_validation_options(Chap),
     try public_key:pkix_path_validation(TA, CertChain, Options) of
 	{Result, _} -> ok;
 	{error,Result} when Result =/= ok ->
@@ -851,15 +862,14 @@ run({Chap, Test, Result}, TA) ->
             exit(crash)
     end;
 
-run([Test|Rest],TA) ->
-    run(Test,TA),
-    run(Rest,TA);
-run([],_) -> ok.
+run(Tests,TA) when is_list(Tests) ->
+    lists:foreach(fun (T) -> run(T, TA) end, Tests),
+    ok.
 
-path_validation_options(TA, Chap, Test) ->
+path_validation_options(Chap) ->
     case needs_crl_options(Chap) of
 	true ->
-	    crl_options(TA, Chap, Test);
+	    crl_options(Chap);
 	false ->
 	     Fun =
 		fun(_,{bad_cert, _} = Reason, _) ->
@@ -873,9 +883,14 @@ path_validation_options(TA, Chap, Test) ->
 	    [{verify_fun, {Fun, []}}]
     end.
 
+-spec read_certs(TestCase :: string()) -> [CertificateContent :: binary()].
 read_certs(Test) ->
     File = cert_file(Test),
     Ders = erl_make_certs:pem_to_der(File),
+    extract_certificate(Ders).
+
+-spec extract_certificate(Certificates :: [public_key:pem_entry()]) -> CertificateContent :: binary().
+extract_certificate(Ders) ->
     [Cert || {'Certificate', Cert, not_encrypted} <- Ders].
 
 read_crls(Test) ->
@@ -883,13 +898,15 @@ read_crls(Test) ->
     Ders = erl_make_certs:pem_to_der(File),
     [CRL || {'CertificateList', CRL, not_encrypted} <- Ders].
 
+-spec cert_file(TestCase :: string()) -> FilenamePath :: string().
 cert_file(Test) ->
     file(?CONV, lists:append(string:tokens(Test, " -")) ++ ".pem").
 
+-spec crl_file(TestCase :: string()) -> FilenamePath :: string().
 crl_file(Test) ->
     file(?CRL, lists:append(string:tokens(Test, " -")) ++ ".pem").
 
-
+-spec file(Subdir :: string(), Filename :: string()) -> FilenamePath :: string().
 file(Sub,File) ->
     TestDir = case get(datadir) of
 		  undefined -> "./pkits_SUITE_data";
@@ -939,7 +956,7 @@ needs_crl_options("4.15" ++ _) ->
 needs_crl_options(_) ->
     false.
 
-crl_options(_TA, Chap, _Test) ->
+crl_options(Chap) ->
     CRLNames = crl_names(Chap),
     CRLs = crls(CRLNames),
     Paths = lists:map(fun(CRLName) -> crl_path(CRLName) end, CRLNames),
@@ -966,16 +983,12 @@ crl_options(_TA, Chap, _Test) ->
 		CRLInfo = lists:reverse(CRLInfo0),
 		PathDb = crl_path_db(lists:reverse(Crls), Paths, []),
 
-		Fun = fun(DP, CRLtoValidate, Id, PathDb0) ->
-			      trusted_cert_and_path(DP, CRLtoValidate, Id, PathDb0)
-		      end,
-
 		case CRLInfo of
 		    [] ->
 			{valid, UserState};
 		    [_|_] ->
 			case public_key:pkix_crls_validate(OtpCert, CRLInfo,
-							   [{issuer_fun,{Fun, PathDb}}]) of
+							   [{issuer_fun,{fun trusted_cert_and_path/4, PathDb}}]) of
 			    valid ->
 				{valid, UserState};
 			    Reason  ->
@@ -1089,6 +1102,7 @@ dp_crlissuer_to_issuer(DPCRLIssuer) ->
 
 %%%%%%%%%%%%%%% CA mappings %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+-spec cas(Chap :: string()) -> [Certificates :: public_key:pem_entry()].
 cas(Chap) ->
     CAS = intermidiate_cas(Chap),
     lists:foldl(fun([], Acc) ->
@@ -1097,7 +1111,8 @@ cas(Chap) ->
 			[CACert] = read_certs(CA),
 			[CACert | Acc]
 		end, [], CAS).
- 
+
+-spec intermidiate_cas(Chap :: string()) -> [CACert :: string()].
 intermidiate_cas(Chap) when Chap == "4.1.1";
 			    Chap == "4.1.3";
 			    Chap == "4.2.2";
@@ -1463,7 +1478,8 @@ intermidiate_cas(Chap) when Chap == "4.5.8" ->
 
 
 %%%%%%%%%%%%%%% CRL mappings %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
+crl_names("4.3.10") ->
+    ["PrintableString to UTF8String CA CRL"];
 crl_names("4.4.1") ->
     ["Trust Anchor Root CRL"];
 crl_names("4.4.2") ->

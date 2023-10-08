@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2022. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
 -export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1, 
 	 init_per_group/2,end_per_group/2, pcre/1,compile_options/1,
 	 run_options/1,combined_options/1,replace_autogen/1,
-	 global_capture/1,replace_input_types/1,replace_return/1,
+	 global_capture/1,replace_input_types/1,replace_with_fun/1,replace_return/1,
 	 split_autogen/1,split_options/1,split_specials/1,
 	 error_handling/1,pcre_cve_2008_2371/1,re_version/1,
 	 pcre_compile_workspace_overflow/1,re_infinite_loop/1, 
@@ -42,7 +42,7 @@ suite() ->
 all() -> 
     [pcre, compile_options, run_options, combined_options,
      replace_autogen, global_capture, replace_input_types,
-     replace_return, split_autogen, split_options,
+     replace_with_fun, replace_return, split_autogen, split_options,
      split_specials, error_handling, pcre_cve_2008_2371,
      pcre_compile_workspace_overflow, re_infinite_loop, 
      re_backwards_accented, opt_dupnames, opt_all_names, 
@@ -162,7 +162,7 @@ run_options(Config) when is_list(Config) ->
     {match,["ABCabcdABC","abcd"]} = re:run("ABCabcdABC",MP,[{capture,all,list}]),
     {match,[<<"ABCabcdABC">>,<<"abcd">>]} = re:run("ABCabcdABC",MP,[{capture,all,binary}]),
     {match,[{0,10}]} = re:run("ABCabcdABC",MP,[{capture,first}]),
-    {match,[{0,10}]} = re:run("ABCabcdABC",MP,[{capture,first,index}]),       ?line {match,["ABCabcdABC"]} = re:run("ABCabcdABC",MP,[{capture,first,list}]),
+    {match,[{0,10}]} = re:run("ABCabcdABC",MP,[{capture,first,index}]),       {match,["ABCabcdABC"]} = re:run("ABCabcdABC",MP,[{capture,first,list}]),
     {match,[<<"ABCabcdABC">>]} = re:run("ABCabcdABC",MP,[{capture,first,binary}]),
 
     {match,[{3,4}]} = re:run("ABCabcdABC",MP,[{capture,all_but_first}]),
@@ -363,6 +363,16 @@ replace_input_types(Config) when is_list(Config) ->
     <<"abcd">> = re:replace("abcd","Z","X",[{return,binary},unicode]),
     <<"abcd">> = re:replace("abcd","\x{400}","X",[{return,binary},unicode]),
     <<"a",208,128,"cd">> = re:replace(<<"abcd">>,"b","\x{400}",[{return,binary},unicode]),
+    ok.
+
+%% Test replace with a replacement function.
+replace_with_fun(Config) when is_list(Config) ->
+    <<"ABCD">> = re:replace("abcd", ".", fun(<<C>>, []) -> <<(C - $a + $A)>> end, [global, {return, binary}]),
+    <<"AbCd">> = re:replace("abcd", ".", fun(<<C>>, []) when (C - $a) rem 2 =:= 0 -> <<(C - $a + $A)>>; (C, []) -> C end, [global, {return, binary}]),
+    <<"b-ad-c">> = re:replace("abcd", "(.)(.)", fun(_, [A, B]) -> <<B/binary, $-, A/binary>> end, [global, {return, binary}]),
+    <<"#ab-B#cd">> = re:replace("abcd", ".(.)", fun(Whole, [<<C>>]) -> <<$#, Whole/binary, $-, (C - $a + $A), $#>> end, [{return, binary}]),
+    <<"#ab#cd">> = re:replace("abcd", ".(x)?(.)", fun(Whole, [<<>>, _]) -> <<$#, Whole/binary, $#>> end, [{return, binary}]),
+    <<"#ab#cd">> = re:replace("abcd", ".(.)(x)?", fun(Whole, [_]) -> <<$#, Whole/binary, $#>> end, [{return, binary}]),
     ok.
 
 %% Test return options of replace together with global searching.

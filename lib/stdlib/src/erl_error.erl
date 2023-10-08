@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 1996-2021. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2023. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -216,6 +216,8 @@ explain_reason({case_clause,V}, error=Cl, [], PF, S, _Enc, CL) ->
     %% "there is no case clause with a true guard sequence and a
     %% pattern matching..."
     format_value(V, <<"no case clause matching ">>, Cl, PF, S, CL);
+explain_reason({else_clause,V}, error=Cl, [], PF, S, _Enc, CL) ->
+    format_value(V, <<"no else clause matching ">>, Cl, PF, S, CL);
 explain_reason(function_clause, error, [{F,A}], _PF, _S, _Enc, _CL) ->
     %% Shell commands
     FAs = io_lib:fwrite(<<"~w/~w">>, [F, A]),
@@ -269,6 +271,8 @@ explain_reason(restricted_shell_started, exit, [], _PF, _S, _Enc, _CL) ->
     <<"restricted shell starts now">>;
 explain_reason(restricted_shell_stopped, exit, [], _PF, _S, _Enc, _CL) ->
     <<"restricted shell stopped">>;
+explain_reason(calling_self, exit, [], _PF, _S, _Enc, _CL) ->
+    <<"the current process attempted to call itself">>;
 %% Other exit code:
 explain_reason(Reason, Class, [], PF, S, _Enc, CL) ->
     {L, _} = PF(Reason, (iolist_size(S)+1) + exited_size(Class), CL),
@@ -319,7 +323,7 @@ format_stacktrace2(S, [{M,F,As,_Info}|Fs], N, PF, Enc, CL, Reason, ErrorMap)
                        [sep(N, S), origin(N, M, F, A),
                         mfa_to_string(M, F, A, Enc),
                         CalledAs, C, FormattedError]),
-    CL1 = sub(CL, Enc, Cs),
+    CL1 = sub(CL, Cs, Enc),
     [Cs | format_stacktrace2(S, Fs, N + 1, PF, Enc, CL1, Reason, #{})];
 format_stacktrace2(_S, [], _N, _PF, _Enc, _CL, _Reason, _ErrorMap) ->
     "".

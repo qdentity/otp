@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2018-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2023. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -24,9 +24,13 @@
 %% Variable that controls which 'groups' are to run (with default values)
 %%
 %%         ESOCK_TEST_API:         include
+%%         ESOCK_TEST_REG:         include
+%%         ESOCK_TEST_MON:         include
+%%         ESOCK_TEST_IOCTL:       include
 %%         ESOCK_TEST_SOCK_CLOSE:  include
 %%         ESOCK_TEST_TRAFFIC:     include
-%%         ESOCK_TEST_TTEST:       exclude
+%%         ESOCK_TEST_TICKETS:     include
+%%         ESOCK_TEST_TTEST:       include
 %%
 %% Variable that controls "verbosity" of the test case(s):
 %%
@@ -37,22 +41,52 @@
 %%  the actual time it takes for the test case to complete
 %%  will be longer; setup, completion, ...)
 %%
-%%          ESOCK_TEST_TTEST_RUNTIME: 10 seconds
+%%          ESOCK_TEST_TTEST_RUNTIME: 1 second
 %%              Format of values: <integer>[<unit>]
 %%              Where unit is: ms | s | m
 %%                 ms - milli seconds
 %%                 s  - seconds (default)
 %%                 m  - minutes
 %%
+%% The ttest takes a long time to run, even when the runtime is small,
+%% because there are such a large number of test cases.
+%% So, by default only the 'small' test cases are included in a test run.
+%% The following environment variables control which are included and 
+%% excluded.
+%%
+%%          ESOCK_TEST_TTEST_SMALL:  included
+%%          ESOCK_TEST_TTEST_MEDIUM: excluded
+%%          ESOCK_TEST_TTEST_LARGE:  excluded
+%%
 
 %% Run the entire test suite: 
-%% ts:run(emulator, socket_SUITE, [batch]).
+%% ts:run(kernel, socket_SUITE, [batch]).
 %%
 %% Run a specific group:
-%% ts:run(emulator, socket_SUITE, {group, foo}, [batch]).
+%% ts:run(kernel, socket_SUITE, {group, foo}, [batch]).
 %%
 %% Run a specific test case:
-%% ts:run(emulator, socket_SUITE, foo, [batch]).
+%% ts:run(kernel, socket_SUITE, foo, [batch]).
+%%
+%% (cd /mnt/c/$LOCAL_TESTS/26/kernel_test/ && $ERL_TOP/bin/win32/erl.exe -sname kernel-26-tester -pa c:$LOCAL_TESTS/26/test_server)
+%% application:set_env(kernel, test_inet_backends, true).
+%% S = fun() -> ts:run(kernel, socket_SUITE, [batch]) end.
+%% S = fun(SUITE) -> ts:run(kernel, SUITE, [batch]) end.
+%% S = fun() -> ct:run_test([{suite, socket_SUITE}]) end.
+%% S = fun(SUITE) -> ct:run_test([{suite, SUITE}]) end.
+%% G = fun(GROUP) -> ts:run(kernel, socket_SUITE, {group, GROUP}, [batch]) end.
+%% G = fun(SUITE, GROUP) -> ts:run(kernel, SUITE, {group, GROUP}, [batch]) end.
+%% G = fun(GROUP) -> ct:run_test([{suite, socket_SUITE}, {group, GROUP}]) end.
+%% G = fun(SUITE, GROUP) -> ct:run_test([{suite, SUITE}, {group, GROUP}]) end.
+%% T = fun(TC) -> ts:run(kernel, socket_SUITE, TC, [batch]) end.
+%% T = fun(TC) -> ct:run_test([{suite, socket_SUITE}, {testcase, TC}]) end.
+%% T = fun(S, TC) -> ct:run_test([{suite, S}, {testcase, TC}]) end.
+%% T = fun(S, G, TC) -> ct:run_test([{suite, S}, {group, G}, {testcase, TC}]) end.
+%%
+%% Some official info about AF_UNIX
+%% https://devblogs.microsoft.com/commandline/windowswsl-interop-with-af_unix/
+
+
 
 -module(socket_SUITE).
 
@@ -75,6 +109,10 @@
          api_m_error_bind/1,
 
          %% *** API Basic ***
+         api_b_simple_open_and_close_udp4/1,
+         api_b_simple_open_and_close_udp6/1,
+         api_b_simple_open_and_close_tcp4/1,
+         api_b_simple_open_and_close_tcp6/1,
          api_b_open_and_info_udp4/1,
          api_b_open_and_info_udp6/1,
          api_b_open_and_info_tcp4/1,
@@ -183,6 +221,8 @@
          api_opt_sock_keepalive/1,
          api_opt_sock_linger/1,
          api_opt_sock_mark/1,
+         api_opt_sock_maxdg/1,
+         api_opt_sock_max_msg_size/1,
          api_opt_sock_oobinline/1,
          api_opt_sock_passcred_tcp4/1,
          api_opt_sock_peek_off_tcpL/1,
@@ -192,12 +232,15 @@
          api_opt_sock_rcvbuf_udp4/1,
          api_opt_sock_rcvlowat_udp4/1,
          api_opt_sock_rcvtimeo_udp4/1,
+         api_opt_sock_reuseaddr/1,
+         api_opt_sock_exclusiveaddruse/1,
+         api_opt_sock_bsp_state/1,
          api_opt_sock_sndbuf_udp4/1,
          api_opt_sock_sndlowat_udp4/1,
          api_opt_sock_sndtimeo_udp4/1,
          api_opt_sock_timestamp_udp4/1,
          api_opt_sock_timestamp_tcp4/1,
-         api_opt_ip_add_drop_membership/1,
+         api_opt_ip_add_drop_membership/0, api_opt_ip_add_drop_membership/1,
          api_opt_ip_pktinfo_udp4/1,
          api_opt_ip_recvopts_udp4/1,
          api_opt_ip_recvorigdstaddr_udp4/1,
@@ -216,6 +259,9 @@
          api_opt_tcp_cork_tcp4/1,
          api_opt_tcp_maxseg_tcp4/1,
          api_opt_tcp_nodelay_tcp4/1,
+         api_opt_tcp_keepcnt_tcp4/1,
+         api_opt_tcp_keepidle_tcp4/1,
+         api_opt_tcp_keepintvl_tcp4/1,
          api_opt_udp_cork_udp4/1,
 
          %% *** API Operation Timeout ***
@@ -300,6 +346,8 @@
 
          %% Socket IOCTL simple
          ioctl_simple1/1,
+         ioctl_simple2/1,
+         ioctl_nread/1,
          %% Socket IOCTL get requests
          ioctl_get_gifname/1,
          ioctl_get_gifindex/1,
@@ -312,6 +360,7 @@
          ioctl_get_giftxqlen/1,
          ioctl_get_gifflags/1,
          ioctl_get_gifmap/1,
+         ioctl_tcp_info/1,
          %% ioctl_set_requests/1,
 
          %% *** Traffic ***
@@ -413,6 +462,15 @@
          ttest_sgenf_csockt_large_tcp4/1,
          ttest_sgenf_csockt_large_tcp6/1,
 
+         %% Server: transport = gen_tcp(socket), active = false
+         %% Client: transport = socket(tcp)
+         ttest_sgsf_csockf_small_tcp4/1,
+         ttest_sgsf_csockf_small_tcp6/1,
+         ttest_sgsf_csockf_medium_tcp4/1,
+         ttest_sgsf_csockf_medium_tcp6/1,
+         ttest_sgsf_csockf_large_tcp4/1,
+         ttest_sgsf_csockf_large_tcp6/1,
+
          %% Server: transport = gen_tcp, active = once
          %% Client: transport = gen_tcp
          ttest_sgeno_cgenf_small_tcp4/1,
@@ -477,10 +535,10 @@
 
          ttest_sgent_cgent_small_tcp4/1,
          ttest_sgent_cgent_small_tcp6/1,
-         ttest_sgent_cgent_medium_tcp4/1,
-         ttest_sgent_cgent_medium_tcp6/1,
-         ttest_sgent_cgent_large_tcp4/1,
-         ttest_sgent_cgent_large_tcp6/1,
+         ttest_sgent_cgent_medium_tcp4/0, ttest_sgent_cgent_medium_tcp4/1,
+         ttest_sgent_cgent_medium_tcp6/0, ttest_sgent_cgent_medium_tcp6/1,
+         ttest_sgent_cgent_large_tcp4/0, ttest_sgent_cgent_large_tcp4/1,
+         ttest_sgent_cgent_large_tcp6/0, ttest_sgent_cgent_large_tcp6/1,
 
          %% Server: transport = gen_tcp, active = true
          %% Client: transport = socket(tcp)
@@ -527,6 +585,15 @@
          ttest_ssockf_cgent_medium_tcp6/1,
          ttest_ssockf_cgent_large_tcp4/1,
          ttest_ssockf_cgent_large_tcp6/1,
+
+         %% Server: transport = socket(tcp), active = false
+         %% Client: transport = gen_tcp(socket)
+         ttest_ssockf_cgsf_small_tcp4/1,
+         ttest_ssockf_cgsf_small_tcp6/1,
+         ttest_ssockf_cgsf_medium_tcp4/1,
+         ttest_ssockf_cgsf_medium_tcp6/1,
+         ttest_ssockf_cgsf_large_tcp4/1,
+         ttest_ssockf_cgsf_large_tcp6/1,
 
          %% Server: transport = socket(tcp), active = false
          %% Client: transport = socket(tcp)
@@ -670,10 +737,17 @@
          ttest_ssockt_csockt_large_tcp6/1,
          ttest_ssockt_csockt_large_tcpL/1,
 
+         ttest_simple_ssockt_csocko_small_tcp4/1,
+         ttest_simple_ssockt_csocko_small_tcp6/1,
+         ttest_simple_ssockt_csocko_small_tcpL/1,
+
          %% Tickets
          otp16359_maccept_tcp4/1,
          otp16359_maccept_tcp6/1,
-         otp16359_maccept_tcpL/1
+         otp16359_maccept_tcpL/1,
+         otp18240_accept_mon_leak_tcp4/1,
+         otp18240_accept_mon_leak_tcp6/1,
+         otp18635/1
         ]).
 
 
@@ -684,6 +758,7 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -define(LIB,        socket_test_lib).
+-define(KLIB,       kernel_test_lib).
 -define(TTEST_LIB,  socket_test_ttest_lib).
 -define(LOGGER,     socket_test_logger).
 
@@ -712,9 +787,32 @@
 -define(TPP_SMALL_NUM,  5000).
 -define(TPP_MEDIUM_NUM, 500).
 -define(TPP_LARGE_NUM,  50).
--define(TPP_NUM(Config, Base), (Base) div lookup(esock_factor, 1, Config)).
+-define(TPP_NUM(Config, Base), (Base) div lookup(kernel_factor, 1, Config)).
 
--define(TTEST_RUNTIME,  ?SECS(10)).
+-define(WINDOWS, {win32,nt}).
+
+-define(TTEST_RUNTIME,                       ?SECS(1)).
+-define(TTEST_MIN_FACTOR,                    3).
+-define(TTEST_MIN_FACTOR_WIN,                ?TTEST_MIN_FACTOR-1).
+-define(TTEST_DEFAULT_SMALL_MAX_OUTSTANDING, 50).
+-define(TTEST_DEFAULT_MEDIUM_MAX_OUTSTANDING,
+        ?TTEST_MK_DEFAULT_MAX_OUTSTANDING(
+           ?TTEST_DEFAULT_SMALL_MAX_OUTSTANDING)).
+-define(TTEST_DEFAULT_LARGE_MAX_OUTSTANDING,
+        ?TTEST_MK_DEFAULT_MAX_OUTSTANDING(
+           ?TTEST_DEFAULT_MEDIUM_MAX_OUTSTANDING)).
+
+-define(TTEST_MK_DEFAULT_MAX_OUTSTANDING(__X__),
+        if ((__X__) >= 5) ->
+                (__X__) div 5;
+           true ->
+                1
+        end).
+
+-define(START_NODE(NamePre),
+        ?START_NODE(NamePre, 5000)).
+-define(START_NODE(NamePre, Timeout),
+        start_node(?CT_PEER_NAME(NamePre), Timeout)).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -725,12 +823,12 @@ suite() ->
 
 all() -> 
     Groups = [{api,          "ESOCK_TEST_API",        include},
-              {reg,          undefined,               include},
-              {monitor,      undefined,               include},
-              {ioctl,        undefined,               include},
+              {reg,          "ESOCK_TEST_REG",        include},
+              {monitor,      "ESOCK_TEST_MON",        include},
+              {ioctl,        "ESOCK_TEST_IOCTL",      include},
 	      {socket_close, "ESOCK_TEST_SOCK_CLOSE", include},
 	      {traffic,      "ESOCK_TEST_TRAFFIC",    include},
-	      {ttest,        "ESOCK_TEST_TTEST",      exclude},
+	      {ttest,        "ESOCK_TEST_TTEST",      include},
 	      {tickets,      "ESOCK_TEST_TICKETS",    include}],
     [use_group(Group, Env, Default) || {Group, Env, Default} <- Groups].
 
@@ -808,6 +906,9 @@ groups() ->
      {ttest_sgenf_csockf,          [], ttest_sgenf_csockf_cases()},
      {ttest_sgenf_csocko,          [], ttest_sgenf_csocko_cases()},
      {ttest_sgenf_csockt,          [], ttest_sgenf_csockt_cases()},
+     {ttest_sgsf,                  [], ttest_sgsf_cases()},
+     {ttest_sgsf_csock,            [], ttest_sgsf_csock_cases()},
+     {ttest_sgsf_csockf,           [], ttest_sgsf_csockf_cases()},
      {ttest_sgeno,                 [], ttest_sgeno_cases()},
      {ttest_sgeno_cgen,            [], ttest_sgeno_cgen_cases()},
      {ttest_sgeno_cgenf,           [], ttest_sgeno_cgenf_cases()},
@@ -831,6 +932,8 @@ groups() ->
      {ttest_ssockf_cgenf,          [], ttest_ssockf_cgenf_cases()},
      {ttest_ssockf_cgeno,          [], ttest_ssockf_cgeno_cases()},
      {ttest_ssockf_cgent,          [], ttest_ssockf_cgent_cases()},
+     {ttest_ssockf_cgs,            [], ttest_ssockf_cgs_cases()},
+     {ttest_ssockf_cgsf,           [], ttest_ssockf_cgsf_cases()},
      {ttest_ssockf_csock,          [], ttest_ssockf_csock_cases()},
      {ttest_ssockf_csockf,         [], ttest_ssockf_csockf_cases()},
      {ttest_ssockf_csocko,         [], ttest_ssockf_csocko_cases()},
@@ -853,10 +956,14 @@ groups() ->
      {ttest_ssockt_csockf,         [], ttest_ssockt_csockf_cases()},
      {ttest_ssockt_csocko,         [], ttest_ssockt_csocko_cases()},
      {ttest_ssockt_csockt,         [], ttest_ssockt_csockt_cases()},
+     {ttest_simple_ssockt,         [], ttest_simple_ssockt_cases()},
+     {ttest_simple_ssockt_csock,   [], ttest_simple_ssockt_csock_cases()},
+     {ttest_simple_ssockt_csocko,  [], ttest_simple_ssockt_csocko_cases()},
 
      %% Ticket groups
      {tickets,                     [], tickets_cases()},
-     {otp16359,                    [], otp16359_cases()}
+     {otp16359,                    [], otp16359_cases()},
+     {otp18240,                    [], otp18240_cases()}
     ].
      
 api_cases() ->
@@ -880,6 +987,10 @@ api_misc_cases() ->
 
 api_basic_cases() ->
     [
+     api_b_simple_open_and_close_udp4,
+     api_b_simple_open_and_close_udp6,
+     api_b_simple_open_and_close_tcp4,
+     api_b_simple_open_and_close_tcp6,
      api_b_open_and_info_udp4,
      api_b_open_and_info_udp6,
      api_b_open_and_info_tcp4,
@@ -1008,6 +1119,8 @@ api_options_socket_cases() ->
      api_opt_sock_keepalive,
      api_opt_sock_linger,
      api_opt_sock_mark,
+     api_opt_sock_maxdg,
+     api_opt_sock_max_msg_size,
      api_opt_sock_oobinline,
      {group, api_option_sock_passcred},
      api_opt_sock_peek_off_tcpL,
@@ -1016,7 +1129,11 @@ api_options_socket_cases() ->
      {group, api_option_sock_buf},
      {group, api_option_sock_lowat},
      {group, api_option_sock_timeo},
-     {group, api_option_sock_timestamp}
+     {group, api_option_sock_timestamp},
+     api_opt_sock_reuseaddr,
+     api_opt_sock_exclusiveaddruse,
+     api_opt_sock_bsp_state
+
     ].
 
 api_option_sock_acceptconn_cases() ->
@@ -1098,8 +1215,11 @@ api_options_tcp_cases() ->
      %% api_opt_tcp_cork_tcp6,
      api_opt_tcp_maxseg_tcp4,
      %% api_opt_tcp_maxseg_tcp6,
-     api_opt_tcp_nodelay_tcp4%,
+     api_opt_tcp_nodelay_tcp4,
      %% api_opt_tcp_nodelay_tcp6
+     api_opt_tcp_keepcnt_tcp4,
+     api_opt_tcp_keepidle_tcp4,
+     api_opt_tcp_keepintvl_tcp4
     ].
 
 api_options_udp_cases() ->
@@ -1240,7 +1360,9 @@ ioctl_cases() ->
 
 ioctl_simple_cases() ->
     [
-     ioctl_simple1
+     ioctl_simple1,
+     ioctl_simple2,
+     ioctl_nread
     ].
 
 
@@ -1256,7 +1378,8 @@ ioctl_get_cases() ->
      ioctl_get_gifhwaddr,
      ioctl_get_giftxqlen,
      ioctl_get_gifflags,
-     ioctl_get_gifmap
+     ioctl_get_gifmap,
+     ioctl_tcp_info
     ].
 
 
@@ -1344,7 +1467,82 @@ traffic_pp_sendmsg_recvmsg_cases() ->
      traffic_ping_pong_medium_sendmsg_and_recvmsg_udp6,
      traffic_ping_pong_medium_sendmsg_and_recvmsg_udpL
     ].
-    
+
+%% Condition for running the ttest cases.
+%% No point in running these cases unless the machine is
+%% reasonably fast.
+ttest_condition(Config) ->
+    OsType = os:type(),
+    case ?config(kernel_factor, Config) of
+        Factor when (OsType =:= ?WINDOWS) andalso
+                    is_integer(Factor) andalso
+                    (Factor =< ?TTEST_MIN_FACTOR_WIN) ->
+            ok;
+        Factor when is_integer(Factor) andalso (Factor =< ?TTEST_MIN_FACTOR) ->
+            ok;
+        Factor when is_integer(Factor) ->
+            {skip, ?F("Too slow for TTest (~w)", [Factor])};
+        _ ->
+            {skip, "Too slow for TTest (undef)"}
+    end.
+
+ttest_small_max_outstanding(Config) ->
+    EnvKey                = "ESOCK_TEST_TTEST_SMALL_MAX_OUTSTANDING",
+    Default               = ?TTEST_DEFAULT_SMALL_MAX_OUTSTANDING,
+    DefaultMaxOutstanding = ttest_max_outstanding(Config, EnvKey, Default),
+    ttest_max_outstanding(Config, DefaultMaxOutstanding).
+
+ttest_medium_max_outstanding(Config) ->
+    SmallMaxOutstanding   = ttest_small_max_outstanding(Config),
+    EnvKey                = "ESOCK_TEST_TTEST_MEDIUM_MAX_OUTSTANDING",
+    Default               = ?TTEST_MK_DEFAULT_MAX_OUTSTANDING(
+                               SmallMaxOutstanding),
+    DefaultMaxOutstanding = ttest_max_outstanding(Config, EnvKey, Default),
+    ttest_max_outstanding(Config, DefaultMaxOutstanding).
+
+ttest_large_max_outstanding(Config) ->
+    MediumMaxOutstanding  = ttest_medium_max_outstanding(Config),
+    EnvKey                = "ESOCK_TEST_TTEST_LARGE_MAX_OUTSTANDING",
+    Default               = ?TTEST_MK_DEFAULT_MAX_OUTSTANDING(
+                               MediumMaxOutstanding),
+    DefaultMaxOutstanding = ttest_max_outstanding(Config, EnvKey, Default),
+    ttest_max_outstanding(Config, DefaultMaxOutstanding).
+
+ttest_max_outstanding(Config, Default)
+  when is_integer(Default) andalso (Default > 1) ->
+    %% Note that we should not even get here if factor > 4
+    case ?config(kernel_factor, Config) of
+        1                     -> Default;
+        2 when (Default >= 2) -> Default div 2;
+        3 when (Default >= 4) -> Default div 4;
+        _ when (Default >= 8) -> Default div 8;
+        _                     -> 1
+    end;
+ttest_max_outstanding(_, _) ->
+    1.
+
+ttest_max_outstanding(Config, EnvKey, Default) ->
+    Key = list_to_atom(string:to_lower(EnvKey)),
+    case lists:keysearch(Key, 1, Config) of
+        {value, {Key, MO}} when is_integer(MO) andalso (MO > 0) ->
+            MO;
+        _ ->
+            case os:getenv(EnvKey) of
+                false ->
+                    Default;
+                Val ->
+                    try list_to_integer(Val) of
+                        MO when (MO > 0) ->
+                            MO;
+                        _ ->
+                            1
+                    catch
+                        _:_:_ ->
+                            Default
+                    end
+            end
+    end.
+
 ttest_cases() ->
     [
      %% Server: transport = gen_tcp, active = false
@@ -1356,6 +1554,9 @@ ttest_cases() ->
      %% Server: transport = gen_tcp, active = true
      {group, ttest_sgent},
 
+     %% Server: transport = gen_tcp(socket), active = false
+     {group, ttest_sgsf},
+
      %% Server: transport = socket(tcp), active = false
      {group, ttest_ssockf},
 
@@ -1363,7 +1564,10 @@ ttest_cases() ->
      {group, ttest_ssocko},
 
      %% Server: transport = socket(tcp), active = true
-     {group, ttest_ssockt}
+     {group, ttest_ssockt},
+
+     %% simple: Server: transport = socket(tcp), active = true
+     {group, ttest_simple_ssockt}
 
     ].
 
@@ -1384,47 +1588,84 @@ ttest_sgenf_cgen_cases() ->
      {group, ttest_sgenf_cgent}
     ].
 
+%% Server: transport = gen_tcp(socket), active = false
+ttest_sgsf_cases() ->
+    [
+     %% {group, ttest_sgenf_cgen},
+     {group, ttest_sgsf_csock}
+    ].
+
 %% Server: transport = gen_tcp, active = false
 %% Client: transport = gen_tcp, active = false
+
+ttest_conditional_cases(Env, Default, Cases) ->
+    case os:getenv(Env) of
+        false ->
+            Default;
+        Val ->
+            case list_to_atom(string:to_lower(Val)) of
+                Use when (Use =:= include) orelse 
+                         (Use =:= enable) orelse 
+                         (Use =:= true) ->
+                    Cases;
+                _ -> % Assumed to be explicitly *disabled*
+                    []
+            end
+    end.
+
+ttest_small_conditional_cases(Cases) ->
+    ttest_conditional_cases("ESOCK_TEST_TTEST_SMALL", Cases, Cases).
+
+ttest_medium_conditional_cases(Cases) ->
+    ttest_conditional_cases("ESOCK_TEST_TTEST_MEDIUM", [], Cases).
+
+ttest_large_conditional_cases(Cases) ->
+    ttest_conditional_cases("ESOCK_TEST_TTEST_LARGE", [], Cases).
+
+ttest_select_conditional_cases(Small, Medium, Large) ->
+    ttest_small_conditional_cases(Small) ++
+        ttest_medium_conditional_cases(Medium) ++
+        ttest_large_conditional_cases(Large).
+
 ttest_sgenf_cgenf_cases() ->
-    [
-     ttest_sgenf_cgenf_small_tcp4,
-     ttest_sgenf_cgenf_small_tcp6,
-
-     ttest_sgenf_cgenf_medium_tcp4,
-     ttest_sgenf_cgenf_medium_tcp6,
-
-     ttest_sgenf_cgenf_large_tcp4,
-     ttest_sgenf_cgenf_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgenf_cgenf_small_tcp4,
+       ttest_sgenf_cgenf_small_tcp6],
+      %% Medium
+      [ttest_sgenf_cgenf_medium_tcp4,
+       ttest_sgenf_cgenf_medium_tcp6],
+      %% Large
+      [ttest_sgenf_cgenf_large_tcp4,
+       ttest_sgenf_cgenf_large_tcp6]).
 
 %% Server: transport = gen_tcp, active = false
 %% Client: transport = gen_tcp, active = once
 ttest_sgenf_cgeno_cases() ->
-    [
-     ttest_sgenf_cgeno_small_tcp4,
-     ttest_sgenf_cgeno_small_tcp6,
-
-     ttest_sgenf_cgeno_medium_tcp4,
-     ttest_sgenf_cgeno_medium_tcp6,
-
-     ttest_sgenf_cgeno_large_tcp4,
-     ttest_sgenf_cgeno_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgenf_cgeno_small_tcp4,
+       ttest_sgenf_cgeno_small_tcp6],
+      %% Medium
+      [ttest_sgenf_cgeno_medium_tcp4,
+       ttest_sgenf_cgeno_medium_tcp6],
+      %% Large
+      [ttest_sgenf_cgeno_large_tcp4,
+       ttest_sgenf_cgeno_large_tcp6]).
 
 %% Server: transport = gen_tcp, active = false
 %% Client: transport = gen_tcp, active = true
 ttest_sgenf_cgent_cases() ->
-    [
-     ttest_sgenf_cgent_small_tcp4,
-     ttest_sgenf_cgent_small_tcp6,
-
-     ttest_sgenf_cgent_medium_tcp4,
-     ttest_sgenf_cgent_medium_tcp6,
-
-     ttest_sgenf_cgent_large_tcp4,
-     ttest_sgenf_cgent_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgenf_cgent_small_tcp4,
+       ttest_sgenf_cgent_small_tcp6],
+      %% Medium
+      [ttest_sgenf_cgent_medium_tcp4,
+       ttest_sgenf_cgent_medium_tcp6],
+      %% Large
+      [ttest_sgenf_cgent_large_tcp4,
+       ttest_sgenf_cgent_large_tcp6]).
 
 %% Server: transport = gen_tcp, active = false
 %% Client: transport = socket(tcp)
@@ -1436,40 +1677,61 @@ ttest_sgenf_csock_cases() ->
     ].
 
 ttest_sgenf_csockf_cases() ->
-    [
-     ttest_sgenf_csockf_small_tcp4,
-     ttest_sgenf_csockf_small_tcp6,
-
-     ttest_sgenf_csockf_medium_tcp4,
-     ttest_sgenf_csockf_medium_tcp6,
-
-     ttest_sgenf_csockf_large_tcp4,
-     ttest_sgenf_csockf_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgenf_csockf_small_tcp4,
+       ttest_sgenf_csockf_small_tcp6],
+      %% Medium
+      [ttest_sgenf_csockf_medium_tcp4,
+       ttest_sgenf_csockf_medium_tcp6],
+      %% Large
+      [ttest_sgenf_csockf_large_tcp4,
+       ttest_sgenf_csockf_large_tcp6]).
 
 ttest_sgenf_csocko_cases() ->
-    [
-     ttest_sgenf_csocko_small_tcp4,
-     ttest_sgenf_csocko_small_tcp6,
-
-     ttest_sgenf_csocko_medium_tcp4,
-     ttest_sgenf_csocko_medium_tcp6,
-
-     ttest_sgenf_csocko_large_tcp4,
-     ttest_sgenf_csocko_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgenf_csocko_small_tcp4,
+       ttest_sgenf_csocko_small_tcp6],
+      %% Medium
+      [ttest_sgenf_csocko_medium_tcp4,
+       ttest_sgenf_csocko_medium_tcp6],
+      %% Large
+      [ttest_sgenf_csocko_large_tcp4,
+       ttest_sgenf_csocko_large_tcp6]).
 
 ttest_sgenf_csockt_cases() ->
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgenf_csockt_small_tcp4,
+       ttest_sgenf_csockt_small_tcp6],
+      %% Medium
+      [ttest_sgenf_csockt_medium_tcp4,
+       ttest_sgenf_csockt_medium_tcp6],
+      %% Large
+     [ttest_sgenf_csockt_large_tcp4,
+      ttest_sgenf_csockt_large_tcp6]).
+
+%% Server: transport = gen_tcp(socket), active = false
+%% Client: transport = socket(tcp)
+ttest_sgsf_csock_cases() ->
     [
-     ttest_sgenf_csockt_small_tcp4,
-     ttest_sgenf_csockt_small_tcp6,
-
-     ttest_sgenf_csockt_medium_tcp4,
-     ttest_sgenf_csockt_medium_tcp6,
-
-     ttest_sgenf_csockt_large_tcp4,
-     ttest_sgenf_csockt_large_tcp6
+     {group, ttest_sgsf_csockf}%% ,
+     %% {group, ttest_sgsf_csocko},
+     %% {group, ttest_sgsf_csockt}
     ].
+
+ttest_sgsf_csockf_cases() ->
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgsf_csockf_small_tcp4,
+       ttest_sgsf_csockf_small_tcp6],
+      %% Medium
+      [ttest_sgsf_csockf_medium_tcp4,
+       ttest_sgsf_csockf_medium_tcp6],
+      %% Large
+      [ttest_sgsf_csockf_large_tcp4,
+       ttest_sgsf_csockf_large_tcp6]).
 
 %% Server: transport = gen_tcp, active = once
 ttest_sgeno_cases() ->
@@ -1490,44 +1752,44 @@ ttest_sgeno_cgen_cases() ->
 %% Server: transport = gen_tcp, active = once
 %% Client: transport = gen_tcp, active = false
 ttest_sgeno_cgenf_cases() ->
-    [
-     ttest_sgeno_cgenf_small_tcp4,
-     ttest_sgeno_cgenf_small_tcp6,
-
-     ttest_sgeno_cgenf_medium_tcp4,
-     ttest_sgeno_cgenf_medium_tcp6,
-
-     ttest_sgeno_cgenf_large_tcp4,
-     ttest_sgeno_cgenf_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgeno_cgenf_small_tcp4,
+       ttest_sgeno_cgenf_small_tcp6],
+      %% Medium
+      [ttest_sgeno_cgenf_medium_tcp4,
+       ttest_sgeno_cgenf_medium_tcp6],
+      %% Large
+      [ttest_sgeno_cgenf_large_tcp4,
+       ttest_sgeno_cgenf_large_tcp6]).
 
 %% Server: transport = gen_tcp, active = once
 %% Client: transport = gen_tcp, active = once
 ttest_sgeno_cgeno_cases() ->
-    [
-     ttest_sgeno_cgeno_small_tcp4,
-     ttest_sgeno_cgeno_small_tcp6,
-
-     ttest_sgeno_cgeno_medium_tcp4,
-     ttest_sgeno_cgeno_medium_tcp6,
-
-     ttest_sgeno_cgeno_large_tcp4,
-     ttest_sgeno_cgeno_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgeno_cgeno_small_tcp4,
+       ttest_sgeno_cgeno_small_tcp6],
+      %% Medium
+      [ttest_sgeno_cgeno_medium_tcp4,
+       ttest_sgeno_cgeno_medium_tcp6],
+      %% Large
+      [ttest_sgeno_cgeno_large_tcp4,
+       ttest_sgeno_cgeno_large_tcp6]).
 
 %% Server: transport = gen_tcp, active = once
 %% Client: transport = gen_tcp, active = true
 ttest_sgeno_cgent_cases() ->
-    [
-     ttest_sgeno_cgent_small_tcp4,
-     ttest_sgeno_cgent_small_tcp6,
-
-     ttest_sgeno_cgent_medium_tcp4,
-     ttest_sgeno_cgent_medium_tcp6,
-
-     ttest_sgeno_cgent_large_tcp4,
-     ttest_sgeno_cgent_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgeno_cgent_small_tcp4,
+       ttest_sgeno_cgent_small_tcp6],
+      %% Medium
+      [ttest_sgeno_cgent_medium_tcp4,
+       ttest_sgeno_cgent_medium_tcp6],
+      %% Large
+      [ttest_sgeno_cgent_large_tcp4,
+       ttest_sgeno_cgent_large_tcp6]).
 
 %% Server: transport = gen_tcp, active = once
 %% Client: transport = socket(tcp)
@@ -1539,40 +1801,40 @@ ttest_sgeno_csock_cases() ->
     ].
 
 ttest_sgeno_csockf_cases() ->
-    [
-     ttest_sgeno_csockf_small_tcp4,
-     ttest_sgeno_csockf_small_tcp6,
-
-     ttest_sgeno_csockf_medium_tcp4,
-     ttest_sgeno_csockf_medium_tcp6,
-
-     ttest_sgeno_csockf_large_tcp4,
-     ttest_sgeno_csockf_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgeno_csockf_small_tcp4,
+       ttest_sgeno_csockf_small_tcp6],
+      %% Medium
+      [ttest_sgeno_csockf_medium_tcp4,
+       ttest_sgeno_csockf_medium_tcp6],
+      %% Large
+      [ttest_sgeno_csockf_large_tcp4,
+       ttest_sgeno_csockf_large_tcp6]).
 
 ttest_sgeno_csocko_cases() ->
-    [
-     ttest_sgeno_csocko_small_tcp4,
-     ttest_sgeno_csocko_small_tcp6,
-
-     ttest_sgeno_csocko_medium_tcp4,
-     ttest_sgeno_csocko_medium_tcp6,
-
-     ttest_sgeno_csocko_large_tcp4,
-     ttest_sgeno_csocko_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgeno_csocko_small_tcp4,
+       ttest_sgeno_csocko_small_tcp6],
+      %% Medium
+      [ttest_sgeno_csocko_medium_tcp4,
+       ttest_sgeno_csocko_medium_tcp6],
+      %% Large
+      [ttest_sgeno_csocko_large_tcp4,
+       ttest_sgeno_csocko_large_tcp6]).
 
 ttest_sgeno_csockt_cases() ->
-    [
-     ttest_sgeno_csockt_small_tcp4,
-     ttest_sgeno_csockt_small_tcp6,
-
-     ttest_sgeno_csockt_medium_tcp4,
-     ttest_sgeno_csockt_medium_tcp6,
-
-     ttest_sgeno_csockt_large_tcp4,
-     ttest_sgeno_csockt_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgeno_csockt_small_tcp4,
+       ttest_sgeno_csockt_small_tcp6],
+      %% Medium
+      [ttest_sgeno_csockt_medium_tcp4,
+       ttest_sgeno_csockt_medium_tcp6],
+      %% Large
+      [ttest_sgeno_csockt_large_tcp4,
+       ttest_sgeno_csockt_large_tcp6]).
 
 %% Server: transport = gen_tcp, active = true
 ttest_sgent_cases() ->
@@ -1593,44 +1855,44 @@ ttest_sgent_cgen_cases() ->
 %% Server: transport = gen_tcp, active = true
 %% Client: transport = gen_tcp, active = false
 ttest_sgent_cgenf_cases() ->
-    [
-     ttest_sgent_cgenf_small_tcp4,
-     ttest_sgent_cgenf_small_tcp6,
-
-     ttest_sgent_cgenf_medium_tcp4,
-     ttest_sgent_cgenf_medium_tcp6,
-
-     ttest_sgent_cgenf_large_tcp4,
-     ttest_sgent_cgenf_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgent_cgenf_small_tcp4,
+       ttest_sgent_cgenf_small_tcp6],
+      %% Medium
+      [ttest_sgent_cgenf_medium_tcp4,
+       ttest_sgent_cgenf_medium_tcp6],
+      %% Large
+      [ttest_sgent_cgenf_large_tcp4,
+       ttest_sgent_cgenf_large_tcp6]).
 
 %% Server: transport = gen_tcp, active = true
 %% Client: transport = gen_tcp, active = once
 ttest_sgent_cgeno_cases() ->
-    [
-     ttest_sgent_cgeno_small_tcp4,
-     ttest_sgent_cgeno_small_tcp6,
-
-     ttest_sgent_cgeno_medium_tcp4,
-     ttest_sgent_cgeno_medium_tcp6,
-
-     ttest_sgent_cgeno_large_tcp4,
-     ttest_sgent_cgeno_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgent_cgeno_small_tcp4,
+       ttest_sgent_cgeno_small_tcp6],
+      %% Medium
+      [ttest_sgent_cgeno_medium_tcp4,
+       ttest_sgent_cgeno_medium_tcp6],
+      %% Large
+      [ttest_sgent_cgeno_large_tcp4,
+       ttest_sgent_cgeno_large_tcp6]).
 
 %% Server: transport = gen_tcp, active = true
 %% Client: transport = gen_tcp, active = true
 ttest_sgent_cgent_cases() ->
-    [
-     ttest_sgent_cgent_small_tcp4,
-     ttest_sgent_cgent_small_tcp6,
-
-     ttest_sgent_cgent_medium_tcp4,
-     ttest_sgent_cgent_medium_tcp6,
-
-     ttest_sgent_cgent_large_tcp4,
-     ttest_sgent_cgent_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgent_cgent_small_tcp4,
+       ttest_sgent_cgent_small_tcp6],
+      %% Medium
+      [ttest_sgent_cgent_medium_tcp4,
+       ttest_sgent_cgent_medium_tcp6],
+      %% Large
+      [ttest_sgent_cgent_large_tcp4,
+       ttest_sgent_cgent_large_tcp6]).
 
 %% Server: transport = gen_tcp, active = true
 %% Client: transport = socket(tcp)
@@ -1642,46 +1904,47 @@ ttest_sgent_csock_cases() ->
     ].
 
 ttest_sgent_csockf_cases() ->
-    [
-     ttest_sgent_csockf_small_tcp4,
-     ttest_sgent_csockf_small_tcp6,
-
-     ttest_sgent_csockf_medium_tcp4,
-     ttest_sgent_csockf_medium_tcp6,
-
-     ttest_sgent_csockf_large_tcp4,
-     ttest_sgent_csockf_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgent_csockf_small_tcp4,
+       ttest_sgent_csockf_small_tcp6],
+      %% Medium
+      [ttest_sgent_csockf_medium_tcp4,
+       ttest_sgent_csockf_medium_tcp6],
+      %% Large
+      [ttest_sgent_csockf_large_tcp4,
+       ttest_sgent_csockf_large_tcp6]).
 
 ttest_sgent_csocko_cases() ->
-    [
-     ttest_sgent_csocko_small_tcp4,
-     ttest_sgent_csocko_small_tcp6,
-
-     ttest_sgent_csocko_medium_tcp4,
-     ttest_sgent_csocko_medium_tcp6,
-
-     ttest_sgent_csocko_large_tcp4,
-     ttest_sgent_csocko_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgent_csocko_small_tcp4,
+       ttest_sgent_csocko_small_tcp6],
+      %% Medium
+      [ttest_sgent_csocko_medium_tcp4,
+       ttest_sgent_csocko_medium_tcp6],
+      %% Large
+      [ttest_sgent_csocko_large_tcp4,
+       ttest_sgent_csocko_large_tcp6]).
 
 ttest_sgent_csockt_cases() ->
-    [
-     ttest_sgent_csockt_small_tcp4,
-     ttest_sgent_csockt_small_tcp6,
-
-     ttest_sgent_csockt_medium_tcp4,
-     ttest_sgent_csockt_medium_tcp6,
-
-     ttest_sgent_csockt_large_tcp4,
-     ttest_sgent_csockt_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_sgent_csockt_small_tcp4,
+       ttest_sgent_csockt_small_tcp6],
+      %% Medium
+      [ttest_sgent_csockt_medium_tcp4,
+       ttest_sgent_csockt_medium_tcp6],
+      %% Large
+      [ttest_sgent_csockt_large_tcp4,
+       ttest_sgent_csockt_large_tcp6]).
 
 %% Server: transport = socket(tcp), active = false
 ttest_ssockf_cases() ->
     [
      {group, ttest_ssockf_cgen},
-     {group, ttest_ssockf_csock}
+     {group, ttest_ssockf_csock},
+     {group, ttest_ssockf_cgsf}
     ].
 
 %% Server: transport = socket(tcp), active = false
@@ -1696,44 +1959,67 @@ ttest_ssockf_cgen_cases() ->
 %% Server: transport = socket(tcp), active = false
 %% Client: transport = gen_tcp, active = false
 ttest_ssockf_cgenf_cases() ->
-    [
-     ttest_ssockf_cgenf_small_tcp4,
-     ttest_ssockf_cgenf_small_tcp6,
-
-     ttest_ssockf_cgenf_medium_tcp4,
-     ttest_ssockf_cgenf_medium_tcp6,
-
-     ttest_ssockf_cgenf_large_tcp4,
-     ttest_ssockf_cgenf_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssockf_cgenf_small_tcp4,
+       ttest_ssockf_cgenf_small_tcp6],
+      %% Medium
+      [ttest_ssockf_cgenf_medium_tcp4,
+       ttest_ssockf_cgenf_medium_tcp6],
+      %% Large
+      [ttest_ssockf_cgenf_large_tcp4,
+       ttest_ssockf_cgenf_large_tcp6]).
 
 %% Server: transport = socket(tcp), active = false
 %% Client: transport = gen_tcp, active = once
 ttest_ssockf_cgeno_cases() ->
-    [
-     ttest_ssockf_cgeno_small_tcp4,
-     ttest_ssockf_cgeno_small_tcp6,
-
-     ttest_ssockf_cgeno_medium_tcp4,
-     ttest_ssockf_cgeno_medium_tcp6,
-
-     ttest_ssockf_cgeno_large_tcp4,
-     ttest_ssockf_cgeno_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssockf_cgeno_small_tcp4,
+       ttest_ssockf_cgeno_small_tcp6],
+      %% Medium
+      [ttest_ssockf_cgeno_medium_tcp4,
+       ttest_ssockf_cgeno_medium_tcp6],
+      %% Large
+      [ttest_ssockf_cgeno_large_tcp4,
+       ttest_ssockf_cgeno_large_tcp6]).
 
 %% Server: transport = socket(tcp), active = false
 %% Client: transport = gen_tcp, active = true
 ttest_ssockf_cgent_cases() ->
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssockf_cgent_small_tcp4,
+       ttest_ssockf_cgent_small_tcp6],
+      %% Medium
+      [ttest_ssockf_cgent_medium_tcp4,
+       ttest_ssockf_cgent_medium_tcp6],
+      %% Large
+      [ttest_ssockf_cgent_large_tcp4,
+       ttest_ssockf_cgent_large_tcp6]).
+
+%% Server: transport = socket(tcp), active = false
+%% Client: transport = gen_tcp(socket)
+ttest_ssockf_cgs_cases() ->
     [
-     ttest_ssockf_cgent_small_tcp4,
-     ttest_ssockf_cgent_small_tcp6,
-
-     ttest_ssockf_cgent_medium_tcp4,
-     ttest_ssockf_cgent_medium_tcp6,
-
-     ttest_ssockf_cgent_large_tcp4,
-     ttest_ssockf_cgent_large_tcp6
+     {group, ttest_ssockf_cgsf}%% ,
+     %% {group, ttest_ssockf_cgeno},
+     %% {group, ttest_ssockf_cgent}
     ].
+
+%% Server: transport = socket(tcp), active = false
+%% Client: transport = gen_tcp(socket), active = false
+ttest_ssockf_cgsf_cases() ->
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssockf_cgsf_small_tcp4,
+       ttest_ssockf_cgsf_small_tcp6],
+      %% Medium
+      [ttest_ssockf_cgsf_medium_tcp4,
+       ttest_ssockf_cgsf_medium_tcp6],
+      %% Large
+      [ttest_ssockf_cgsf_large_tcp4,
+       ttest_ssockf_cgsf_large_tcp6]).
 
 %% Server: transport = socket(tcp), active = false
 %% Client: transport = socket(tcp)
@@ -1747,53 +2033,53 @@ ttest_ssockf_csock_cases() ->
 %% Server: transport = socket(tcp), active = false
 %% Client: transport = socket(tcp), active = false
 ttest_ssockf_csockf_cases() ->
-    [
-     ttest_ssockf_csockf_small_tcp4,
-     ttest_ssockf_csockf_small_tcp6,
-     ttest_ssockf_csockf_small_tcpL,
-
-     ttest_ssockf_csockf_medium_tcp4,
-     ttest_ssockf_csockf_medium_tcp6,
-     ttest_ssockf_csockf_medium_tcpL,
-
-     ttest_ssockf_csockf_large_tcp4,
-     ttest_ssockf_csockf_large_tcp6,
-     ttest_ssockf_csockf_large_tcpL
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssockf_csockf_small_tcp4,
+       ttest_ssockf_csockf_small_tcp6,
+       ttest_ssockf_csockf_small_tcpL],
+      %% Medium
+      [ttest_ssockf_csockf_medium_tcp4,
+       ttest_ssockf_csockf_medium_tcp6,
+       ttest_ssockf_csockf_medium_tcpL],
+      %% Large
+      [ttest_ssockf_csockf_large_tcp4,
+       ttest_ssockf_csockf_large_tcp6,
+       ttest_ssockf_csockf_large_tcpL]).
 
 %% Server: transport = socket(tcp), active = false
 %% Client: transport = socket(tcp), active = once
 ttest_ssockf_csocko_cases() ->
-    [
-     ttest_ssockf_csocko_small_tcp4,
-     ttest_ssockf_csocko_small_tcp6,
-     ttest_ssockf_csocko_small_tcpL,
-
-     ttest_ssockf_csocko_medium_tcp4,
-     ttest_ssockf_csocko_medium_tcp6,
-     ttest_ssockf_csocko_medium_tcpL,
-
-     ttest_ssockf_csocko_large_tcp4,
-     ttest_ssockf_csocko_large_tcp6,
-     ttest_ssockf_csocko_large_tcpL
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssockf_csocko_small_tcp4,
+       ttest_ssockf_csocko_small_tcp6,
+       ttest_ssockf_csocko_small_tcpL],
+      %% Medium
+      [ttest_ssockf_csocko_medium_tcp4,
+       ttest_ssockf_csocko_medium_tcp6,
+       ttest_ssockf_csocko_medium_tcpL],
+      %% Large
+      [ttest_ssockf_csocko_large_tcp4,
+       ttest_ssockf_csocko_large_tcp6,
+       ttest_ssockf_csocko_large_tcpL]).
 
 %% Server: transport = socket(tcp), active = false
 %% Client: transport = socket(tcp), active = true
 ttest_ssockf_csockt_cases() ->
-    [
-     ttest_ssockf_csockt_small_tcp4,
-     ttest_ssockf_csockt_small_tcp6,
-     ttest_ssockf_csockt_small_tcpL,
-
-     ttest_ssockf_csockt_medium_tcp4,
-     ttest_ssockf_csockt_medium_tcp6,
-     ttest_ssockf_csockt_medium_tcpL,
-
-     ttest_ssockf_csockt_large_tcp4,
-     ttest_ssockf_csockt_large_tcp6,
-     ttest_ssockf_csockt_large_tcpL
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssockf_csockt_small_tcp4,
+       ttest_ssockf_csockt_small_tcp6,
+       ttest_ssockf_csockt_small_tcpL],
+      %% Medium
+      [ttest_ssockf_csockt_medium_tcp4,
+       ttest_ssockf_csockt_medium_tcp6,
+       ttest_ssockf_csockt_medium_tcpL],
+      %% Large
+      [ttest_ssockf_csockt_large_tcp4,
+       ttest_ssockf_csockt_large_tcp6,
+       ttest_ssockf_csockt_large_tcpL]).
 
 %% Server: transport = socket(tcp), active = once
 ttest_ssocko_cases() ->
@@ -1814,44 +2100,44 @@ ttest_ssocko_cgen_cases() ->
 %% Server: transport = socket(tcp), active = once
 %% Client: transport = gen_tcp, active = false
 ttest_ssocko_cgenf_cases() ->
-    [
-     ttest_ssocko_cgenf_small_tcp4,
-     ttest_ssocko_cgenf_small_tcp6,
-
-     ttest_ssocko_cgenf_medium_tcp4,
-     ttest_ssocko_cgenf_medium_tcp6,
-
-     ttest_ssocko_cgenf_large_tcp4,
-     ttest_ssocko_cgenf_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssocko_cgenf_small_tcp4,
+       ttest_ssocko_cgenf_small_tcp6],
+      %% Medium
+      [ttest_ssocko_cgenf_medium_tcp4,
+       ttest_ssocko_cgenf_medium_tcp6],
+      %% Large
+      [ttest_ssocko_cgenf_large_tcp4,
+       ttest_ssocko_cgenf_large_tcp6]).
 
 %% Server: transport = socket(tcp), active = once
 %% Client: transport = gen_tcp, active = once
 ttest_ssocko_cgeno_cases() ->
-    [
-     ttest_ssocko_cgeno_small_tcp4,
-     ttest_ssocko_cgeno_small_tcp6,
-
-     ttest_ssocko_cgeno_medium_tcp4,
-     ttest_ssocko_cgeno_medium_tcp6,
-
-     ttest_ssocko_cgeno_large_tcp4,
-     ttest_ssocko_cgeno_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssocko_cgeno_small_tcp4,
+       ttest_ssocko_cgeno_small_tcp6],
+      %% Medium
+      [ttest_ssocko_cgeno_medium_tcp4,
+       ttest_ssocko_cgeno_medium_tcp6],
+      %% Large
+      [ttest_ssocko_cgeno_large_tcp4,
+       ttest_ssocko_cgeno_large_tcp6]).
 
 %% Server: transport = socket(tcp), active = once
 %% Client: transport = gen_tcp, active = true
 ttest_ssocko_cgent_cases() ->
-    [
-     ttest_ssocko_cgent_small_tcp4,
-     ttest_ssocko_cgent_small_tcp6,
-
-     ttest_ssocko_cgent_medium_tcp4,
-     ttest_ssocko_cgent_medium_tcp6,
-
-     ttest_ssocko_cgent_large_tcp4,
-     ttest_ssocko_cgent_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssocko_cgent_small_tcp4,
+       ttest_ssocko_cgent_small_tcp6],
+      %% Medium
+      [ttest_ssocko_cgent_medium_tcp4,
+       ttest_ssocko_cgent_medium_tcp6],
+      %% Large
+      [ttest_ssocko_cgent_large_tcp4,
+       ttest_ssocko_cgent_large_tcp6]).
 
 %% Server: transport = socket(tcp), active = once
 %% Client: transport = socket(tcp)
@@ -1865,53 +2151,53 @@ ttest_ssocko_csock_cases() ->
 %% Server: transport = socket(tcp), active = once
 %% Client: transport = socket(tcp), active = false
 ttest_ssocko_csockf_cases() ->
-    [
-     ttest_ssocko_csockf_small_tcp4,
-     ttest_ssocko_csockf_small_tcp6,
-     ttest_ssocko_csockf_small_tcpL,
-
-     ttest_ssocko_csockf_medium_tcp4,
-     ttest_ssocko_csockf_medium_tcp6,
-     ttest_ssocko_csockf_medium_tcpL,
-
-     ttest_ssocko_csockf_large_tcp4,
-     ttest_ssocko_csockf_large_tcp6,
-     ttest_ssocko_csockf_large_tcpL
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssocko_csockf_small_tcp4,
+       ttest_ssocko_csockf_small_tcp6,
+       ttest_ssocko_csockf_small_tcpL],
+     %% Medium
+      [ttest_ssocko_csockf_medium_tcp4,
+       ttest_ssocko_csockf_medium_tcp6,
+       ttest_ssocko_csockf_medium_tcpL],
+      %% Large
+      [ttest_ssocko_csockf_large_tcp4,
+       ttest_ssocko_csockf_large_tcp6,
+       ttest_ssocko_csockf_large_tcpL]).
 
 %% Server: transport = socket(tcp), active = once
 %% Client: transport = socket(tcp), active = once
 ttest_ssocko_csocko_cases() ->
-    [
-     ttest_ssocko_csocko_small_tcp4,
-     ttest_ssocko_csocko_small_tcp6,
-     ttest_ssocko_csocko_small_tcpL,
-
-     ttest_ssocko_csocko_medium_tcp4,
-     ttest_ssocko_csocko_medium_tcp6,
-     ttest_ssocko_csocko_medium_tcpL,
-
-     ttest_ssocko_csocko_large_tcp4,
-     ttest_ssocko_csocko_large_tcp6,
-     ttest_ssocko_csocko_large_tcpL
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssocko_csocko_small_tcp4,
+       ttest_ssocko_csocko_small_tcp6,
+       ttest_ssocko_csocko_small_tcpL],
+      %% Medium
+      [ttest_ssocko_csocko_medium_tcp4,
+       ttest_ssocko_csocko_medium_tcp6,
+       ttest_ssocko_csocko_medium_tcpL],
+      %% Large
+      [ttest_ssocko_csocko_large_tcp4,
+       ttest_ssocko_csocko_large_tcp6,
+       ttest_ssocko_csocko_large_tcpL]).
 
 %% Server: transport = socket(tcp), active = once
 %% Client: transport = socket(tcp), active = true
 ttest_ssocko_csockt_cases() ->
-    [
-     ttest_ssocko_csockt_small_tcp4,
-     ttest_ssocko_csockt_small_tcp6,
-     ttest_ssocko_csockt_small_tcpL,
-
-     ttest_ssocko_csockt_medium_tcp4,
-     ttest_ssocko_csockt_medium_tcp6,
-     ttest_ssocko_csockt_medium_tcpL,
-
-     ttest_ssocko_csockt_large_tcp4,
-     ttest_ssocko_csockt_large_tcp6,
-     ttest_ssocko_csockt_large_tcpL
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssocko_csockt_small_tcp4,
+       ttest_ssocko_csockt_small_tcp6,
+       ttest_ssocko_csockt_small_tcpL],
+      %% Medium
+      [ttest_ssocko_csockt_medium_tcp4,
+       ttest_ssocko_csockt_medium_tcp6,
+       ttest_ssocko_csockt_medium_tcpL],
+      %% Large
+      [ttest_ssocko_csockt_large_tcp4,
+       ttest_ssocko_csockt_large_tcp6,
+       ttest_ssocko_csockt_large_tcpL]).
 
 %% Server: transport = socket(tcp), active = true
 ttest_ssockt_cases() ->
@@ -1932,44 +2218,44 @@ ttest_ssockt_cgen_cases() ->
 %% Server: transport = socket(tcp), active = true
 %% Client: transport = gen_tcp, active = false
 ttest_ssockt_cgenf_cases() ->
-    [
-     ttest_ssockt_cgenf_small_tcp4,
-     ttest_ssockt_cgenf_small_tcp6,
-
-     ttest_ssockt_cgenf_medium_tcp4,
-     ttest_ssockt_cgenf_medium_tcp6,
-
-     ttest_ssockt_cgenf_large_tcp4,
-     ttest_ssockt_cgenf_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssockt_cgenf_small_tcp4,
+       ttest_ssockt_cgenf_small_tcp6],
+      %% Medium
+      [ttest_ssockt_cgenf_medium_tcp4,
+       ttest_ssockt_cgenf_medium_tcp6],
+      %% Large
+      [ttest_ssockt_cgenf_large_tcp4,
+       ttest_ssockt_cgenf_large_tcp6]).
 
 %% Server: transport = socket(tcp), active = true
 %% Client: transport = gen_tcp, active = once
 ttest_ssockt_cgeno_cases() ->
-    [
-     ttest_ssockt_cgeno_small_tcp4,
-     ttest_ssockt_cgeno_small_tcp6,
-
-     ttest_ssockt_cgeno_medium_tcp4,
-     ttest_ssockt_cgeno_medium_tcp6,
-
-     ttest_ssockt_cgeno_large_tcp4,
-     ttest_ssockt_cgeno_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssockt_cgeno_small_tcp4,
+       ttest_ssockt_cgeno_small_tcp6],
+      %% Medium
+      [ttest_ssockt_cgeno_medium_tcp4,
+       ttest_ssockt_cgeno_medium_tcp6],
+      %% Large
+      [ttest_ssockt_cgeno_large_tcp4,
+       ttest_ssockt_cgeno_large_tcp6]).
 
 %% Server: transport = socket(tcp), active = true
 %% Client: transport = gen_tcp, active = true
 ttest_ssockt_cgent_cases() ->
-    [
-     ttest_ssockt_cgent_small_tcp4,
-     ttest_ssockt_cgent_small_tcp6,
-
-     ttest_ssockt_cgent_medium_tcp4,
-     ttest_ssockt_cgent_medium_tcp6,
-
-     ttest_ssockt_cgent_large_tcp4,
-     ttest_ssockt_cgent_large_tcp6
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssockt_cgent_small_tcp4,
+       ttest_ssockt_cgent_small_tcp6],
+      %% Medium
+      [ttest_ssockt_cgent_medium_tcp4,
+       ttest_ssockt_cgent_medium_tcp6],
+      %% Large
+      [ttest_ssockt_cgent_large_tcp4,
+       ttest_ssockt_cgent_large_tcp6]).
 
 %% Server: transport = socket(tcp), active = true
 %% Client: transport = socket(tcp)
@@ -1983,57 +2269,87 @@ ttest_ssockt_csock_cases() ->
 %% Server: transport = socket(tcp), active = true
 %% Client: transport = socket(tcp), active = false
 ttest_ssockt_csockf_cases() ->
-    [
-     ttest_ssockt_csockf_small_tcp4,
-     ttest_ssockt_csockf_small_tcp6,
-     ttest_ssockt_csockf_small_tcpL,
-
-     ttest_ssockt_csockf_medium_tcp4,
-     ttest_ssockt_csockf_medium_tcp6,
-     ttest_ssockt_csockf_medium_tcpL,
-
-     ttest_ssockt_csockf_large_tcp4,
-     ttest_ssockt_csockf_large_tcp6,
-     ttest_ssockt_csockf_large_tcpL
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssockt_csockf_small_tcp4,
+       ttest_ssockt_csockf_small_tcp6,
+       ttest_ssockt_csockf_small_tcpL],
+      %% Medium
+      [ttest_ssockt_csockf_medium_tcp4,
+       ttest_ssockt_csockf_medium_tcp6,
+       ttest_ssockt_csockf_medium_tcpL],
+      %% Large
+      [ttest_ssockt_csockf_large_tcp4,
+       ttest_ssockt_csockf_large_tcp6,
+       ttest_ssockt_csockf_large_tcpL]).
 
 %% Server: transport = socket(tcp), active = true
 %% Client: transport = socket(tcp), active = once
 ttest_ssockt_csocko_cases() ->
-    [
-     ttest_ssockt_csocko_small_tcp4,
-     ttest_ssockt_csocko_small_tcp6,
-     ttest_ssockt_csocko_small_tcpL,
-
-     ttest_ssockt_csocko_medium_tcp4,
-     ttest_ssockt_csocko_medium_tcp6,
-     ttest_ssockt_csocko_medium_tcpL,
-
-     ttest_ssockt_csocko_large_tcp4,
-     ttest_ssockt_csocko_large_tcp6,
-     ttest_ssockt_csocko_large_tcpL
-    ].
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssockt_csocko_small_tcp4,
+       ttest_ssockt_csocko_small_tcp6,
+       ttest_ssockt_csocko_small_tcpL],
+      %% Medium
+      [ttest_ssockt_csocko_medium_tcp4,
+       ttest_ssockt_csocko_medium_tcp6,
+       ttest_ssockt_csocko_medium_tcpL],
+      %% Large
+      [ttest_ssockt_csocko_large_tcp4,
+       ttest_ssockt_csocko_large_tcp6,
+       ttest_ssockt_csocko_large_tcpL]).
 
 %% Server: transport = socket(tcp), active = true
 %% Client: transport = socket(tcp), active = true
 ttest_ssockt_csockt_cases() ->
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_ssockt_csockt_small_tcp4,
+       ttest_ssockt_csockt_small_tcp6,
+       ttest_ssockt_csockt_small_tcpL],
+      %% Medium
+      [ttest_ssockt_csockt_medium_tcp4,
+       ttest_ssockt_csockt_medium_tcp6,
+       ttest_ssockt_csockt_medium_tcpL],
+      %% Large
+      [ttest_ssockt_csockt_large_tcp4,
+       ttest_ssockt_csockt_large_tcp6,
+       ttest_ssockt_csockt_large_tcpL]).
+
+%% Server: transport = socket(tcp), active = true
+ttest_simple_ssockt_cases() ->
     [
-     ttest_ssockt_csockt_small_tcp4,
-     ttest_ssockt_csockt_small_tcp6,
-     ttest_ssockt_csockt_small_tcpL,
-
-     ttest_ssockt_csockt_medium_tcp4,
-     ttest_ssockt_csockt_medium_tcp6,
-     ttest_ssockt_csockt_medium_tcpL,
-
-     ttest_ssockt_csockt_large_tcp4,
-     ttest_ssockt_csockt_large_tcp6,
-     ttest_ssockt_csockt_large_tcpL
+     {group, ttest_simple_ssockt_csock}
     ].
+
+%% Server: transport = socket(tcp), active = true
+%% Client: transport = socket(tcp)
+ttest_simple_ssockt_csock_cases() ->
+    [
+     %% {group, ttest_simple_ssockt_csockf},
+     {group, ttest_simple_ssockt_csocko}%% ,
+     %% {group, ttest_simple_ssockt_csockt}
+    ].
+
+%% Server: transport = socket(tcp), active = true
+%% Client: transport = socket(tcp), active = once
+ttest_simple_ssockt_csocko_cases() ->
+    ttest_select_conditional_cases(
+      %% Small
+      [ttest_simple_ssockt_csocko_small_tcp4,
+       ttest_simple_ssockt_csocko_small_tcp6,
+       ttest_simple_ssockt_csocko_small_tcpL],
+      %% Medium
+      [],
+      %% Large
+      []).
 
 tickets_cases() ->
     [
-     {group, otp16359}
+     {group, otp16359},
+     {group, otp18240},
+     otp18635
     ].
 
 otp16359_cases() ->
@@ -2044,38 +2360,58 @@ otp16359_cases() ->
     ].
 
 
+otp18240_cases() ->
+    [
+     otp18240_accept_mon_leak_tcp4,
+     otp18240_accept_mon_leak_tcp6
+    ].
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-init_per_suite(Config) ->
-    io:format("init_per_suite -> entry with"
-              "~n   Config: ~p"
-              "~n", [Config]),
-    ct:timetrap(?MINS(2)),
-    Factor = analyze_and_print_host_info(),
+init_per_suite(Config0) ->
+    ?P("init_per_suite -> entry with"
+       "~n      Config: ~p"
+       "~n      Nodes:  ~p", [Config0, erlang:nodes()]),
+    
     try socket:info() of
         #{} ->
-            socket:use_registry(false),
-            case quiet_mode(Config) of
-                default ->
-                    case ?LOGGER:start() of
-                        ok ->
-                            [{esock_factor, Factor} | Config];
-                        {error, Reason} ->
-                            io:format("init_per_suite -> Failed starting logger"
-                                      "~n   Reason: ~p"
-                                      "~n", [Reason]),
-                            {skip, "Failed starting logger"}
-                    end;
-                Quiet ->
-                    case ?LOGGER:start(Quiet) of
-                        ok ->
-                            [{esock_factor,     Factor},
-                             {esock_test_quiet, Quiet} | Config];
-                        {error, Reason} ->
-                            io:format("init_per_suite -> Failed starting logger"
-                                      "~n   Reason: ~p"
-                                      "~n", [Reason]),
-                            {skip, "Failed starting logger"}
+            case ?KLIB:init_per_suite(Config0) of
+                {skip, _} = SKIP ->
+                    SKIP;
+
+                Config1 when is_list(Config1) ->
+
+                    ?P("init_per_suite -> end when "
+                       "~n      Config: ~p", [Config1]),
+
+                    %% We need a monitor on this node also
+                    kernel_test_sys_monitor:start(),
+
+                    socket:use_registry(false),
+                    case quiet_mode(Config1) of
+                        default ->
+                            case ?LOGGER:start() of
+                                ok ->
+                                    Config1;
+                                {error, Reason} ->
+                                    ?P("init_per_suite -> "
+                                       "Failed starting logger"
+                                       "~n   Reason: ~p"
+                                       "~n", [Reason]),
+                                    {skip, "Failed starting logger"}
+                            end;
+                        Quiet ->
+                            case ?LOGGER:start(Quiet) of
+                                ok ->
+                                    [{esock_test_quiet, Quiet} | Config1];
+                                {error, Reason} ->
+                                    ?P("init_per_suite -> "
+                                       "Failed starting logger"
+                                       "~n   Reason: ~p"
+                                       "~n", [Reason]),
+                                    {skip, "Failed starting logger"}
+                            end
                     end
             end
     catch
@@ -2085,9 +2421,23 @@ init_per_suite(Config) ->
             {skip, "esock not configured"}
     end.
 
-end_per_suite(_) ->
+end_per_suite(Config0) ->
+
+    ?P("end_per_suite -> entry with"
+       "~n      Config: ~p"
+       "~n      Nodes:  ~p", [Config0, erlang:nodes()]),
+
+    %% Stop the local monitor
+    kernel_test_sys_monitor:stop(),
+
     (catch ?LOGGER:stop()),
-    ok.
+
+    Config1 = ?KLIB:end_per_suite(Config0),
+
+    ?P("end_per_suite -> "
+       "~n      Nodes: ~p", [erlang:nodes()]),
+
+    Config1.
 
 
 init_per_group(api_sendfile = GroupName, Config) ->
@@ -2124,7 +2474,7 @@ init_per_group(GroupName, Config)
               "~n", [GroupName, Config]),
     %% Maybe we should skip the entire suite for this platform,
     %% but for now we just skip these groups, which seem to 
-    %% have problems (slave node start).
+    %% have problems (node start).
     %% As stated elsewhere, its not really Fedora 16, but 
     %% the *really* slow VM that is the issue.
     try is_old_fedora16() of
@@ -2138,12 +2488,18 @@ init_per_group(ttest = _GroupName, Config) ->
     io:format("init_per_group(~w) -> entry with"
               "~n   Config: ~p"
               "~n", [_GroupName, Config]),
-    ttest_manager_start(),
-    case lists:keysearch(esock_test_ttest_runtime, 1, Config) of
-        {value, _} ->
-            Config;
-        false ->
-            [{esock_test_ttest_runtime, which_ttest_runtime_env()} | Config]
+    case ttest_condition(Config) of
+        ok ->
+            ttest_manager_start(),
+            case lists:keysearch(esock_test_ttest_runtime, 1, Config) of
+                {value, _} ->
+                    Config;
+                false ->
+                    [{esock_test_ttest_runtime, which_ttest_runtime_env()} |
+                     Config]
+            end;
+        {skip, _} = SKIP ->
+            SKIP
     end;
 init_per_group(api_async_ref, Config) ->
     [{select_handle, true} | Config];
@@ -2211,10 +2567,6 @@ double_data(N, Data) ->
 %% that we can call the "global" info function and that it returns
 %% a non-empty map...
 
-api_m_info(suite) ->
-    [];
-api_m_info(doc) ->
-    [];
 api_m_info(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_m_info,
@@ -2244,10 +2596,6 @@ api_m_info() ->
 %% At the same time, it will test the info function (since it uses it
 %% for verification).
 
-api_m_debug(suite) ->
-    [];
-api_m_debug(doc) ->
-    [];
 api_m_debug(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_m_debug,
@@ -2410,12 +2758,102 @@ api_m_error_bind(Config) when is_list(Config) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%% Basically open (create) and then close.
+api_b_simple_open_and_close_udp4(_Config) when is_list(_Config) ->
+    ?TT(?SECS(5)),
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   InitState = #{domain   => inet,
+                                 type     => dgram,
+                                 protocol => udp},
+                   ok = api_b_simple_open_and_close(InitState)
+           end).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Basically open (create) and then close.
+api_b_simple_open_and_close_udp6(_Config) when is_list(_Config) ->
+    ?TT(?SECS(5)),
+    tc_try(?FUNCTION_NAME,
+           fun() -> has_support_ipv6() end,
+           fun() ->
+                   InitState = #{domain   => inet6,
+                                 type     => dgram,
+                                 protocol => udp},
+                   ok = api_b_simple_open_and_close(InitState)
+           end).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Basically open (create) and then close.
+api_b_simple_open_and_close_tcp4(_Config) when is_list(_Config) ->
+    ?TT(?SECS(5)),
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   InitState = #{domain   => inet,
+                                 type     => stream,
+                                 protocol => tcp},
+                   ok = api_b_simple_open_and_close(InitState)
+           end).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Basically open (create) and then close.
+api_b_simple_open_and_close_tcp6(_Config) when is_list(_Config) ->
+    ?TT(?SECS(5)),
+    tc_try(?FUNCTION_NAME,
+           fun() -> has_support_ipv6() end,
+           fun() ->
+                   InitState = #{domain   => inet6,
+                                 type     => stream,
+                                 protocol => tcp},
+                   ok = api_b_simple_open_and_close(InitState)
+           end).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+api_b_simple_open_and_close(InitState) ->
+    Seq = 
+        [
+         #{desc => "open",
+           cmd  => fun(#{domain   := Domain,
+                         type     := Type,
+                         protocol := Protocol} = State) -> 
+                           case socket:open(Domain, Type, Protocol) of
+                               {ok, Sock} ->
+                                   {ok, State#{sock => Sock}};
+                               {error, _} = ERROR ->
+                                   ERROR
+                           end
+                   end},
+
+         ?SEV_SLEEP(?SECS(1)),
+
+         #{desc => "close socket",
+           cmd  => fun(#{sock := Sock} = _State) ->
+                           socket:close(Sock)
+                   end},
+
+         %% *** We are done ***
+         ?SEV_FINISH_NORMAL
+        ],
+    Evaluator = ?SEV_START("tester", Seq, InitState),
+    ok = ?SEV_AWAIT_FINISH([Evaluator]).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 %% Basically open (create) and info of an IPv4 UDP (dgram) socket.
 %% With some extra checks...
-api_b_open_and_info_udp4(suite) ->
-    [];
-api_b_open_and_info_udp4(doc) ->
-    [];
 api_b_open_and_info_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_b_open_and_info_udp4,
@@ -2432,10 +2870,6 @@ api_b_open_and_info_udp4(_Config) when is_list(_Config) ->
 
 %% Basically open (create) and info of an IPv6 UDP (dgram) socket.
 %% With some extra checks...
-api_b_open_and_info_udp6(suite) ->
-    [];
-api_b_open_and_info_udp6(doc) ->
-    [];
 api_b_open_and_info_udp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_b_open_and_info_udp6,
@@ -2453,10 +2887,6 @@ api_b_open_and_info_udp6(_Config) when is_list(_Config) ->
 
 %% Basically open (create) and info of an IPv4 TCP (stream) socket.
 %% With some extra checks...
-api_b_open_and_info_tcp4(suite) ->
-    [];
-api_b_open_and_info_tcp4(doc) ->
-    [];
 api_b_open_and_info_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_b_open_and_info_tcp4,
@@ -2473,10 +2903,6 @@ api_b_open_and_info_tcp4(_Config) when is_list(_Config) ->
 
 %% Basically open (create) and info of an IPv6 TCP (stream) socket.
 %% With some extra checks...
-api_b_open_and_info_tcp6(suite) ->
-    [];
-api_b_open_and_info_tcp6(doc) ->
-    [];
 api_b_open_and_info_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_b_open_and_info_tcp6,
@@ -2554,10 +2980,6 @@ api_b_open_and_info(InitState) ->
 
 %% Basically open (create) and close an IPv4 UDP (dgram) socket.
 %% With some extra checks...
-api_b_open_and_close_udp4(suite) ->
-    [];
-api_b_open_and_close_udp4(doc) ->
-    [];
 api_b_open_and_close_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_b_open_and_close_udp4,
@@ -2573,10 +2995,6 @@ api_b_open_and_close_udp4(_Config) when is_list(_Config) ->
 
 %% Basically open (create) and close an IPv6 UDP (dgram) socket.
 %% With some extra checks...
-api_b_open_and_close_udp6(suite) ->
-    [];
-api_b_open_and_close_udp6(doc) ->
-    [];
 api_b_open_and_close_udp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_b_open_and_close_udp6,
@@ -2593,10 +3011,6 @@ api_b_open_and_close_udp6(_Config) when is_list(_Config) ->
 
 %% Basically open (create) and close an IPv4 TCP (stream) socket.
 %% With some extra checks...
-api_b_open_and_close_tcp4(suite) ->
-    [];
-api_b_open_and_close_tcp4(doc) ->
-    [];
 api_b_open_and_close_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_b_open_and_close_tcp4,
@@ -2612,10 +3026,6 @@ api_b_open_and_close_tcp4(_Config) when is_list(_Config) ->
 
 %% Basically open (create) and close an IPv6 TCP (stream) socket.
 %% With some extra checks...
-api_b_open_and_close_tcp6(suite) ->
-    [];
-api_b_open_and_close_tcp6(doc) ->
-    [];
 api_b_open_and_close_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_b_open_and_close_tcp6,
@@ -2632,14 +3042,13 @@ api_b_open_and_close_tcp6(_Config) when is_list(_Config) ->
 
 %% Basically open (create) and close an Unix Domain dgram (UDP) socket.
 %% With some extra checks...
-api_b_open_and_close_udpL(suite) ->
-    [];
-api_b_open_and_close_udpL(doc) ->
-    [];
 api_b_open_and_close_udpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_b_open_and_close_udpL,
-           fun() -> has_support_unix_domain_socket() end,
+           fun() ->
+		   has_support_unix_domain_socket(),
+		   is_not_windows()
+	   end,
            fun() ->
                    InitState = #{domain   => local,
                                  type     => dgram,
@@ -2652,10 +3061,6 @@ api_b_open_and_close_udpL(_Config) when is_list(_Config) ->
 
 %% Basically open (create) and close an Unix Domain stream (TCP) socket.
 %% With some extra checks...
-api_b_open_and_close_tcpL(suite) ->
-    [];
-api_b_open_and_close_tcpL(doc) ->
-    [];
 api_b_open_and_close_tcpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_b_open_and_close_tcpL,
@@ -2672,14 +3077,13 @@ api_b_open_and_close_tcpL(_Config) when is_list(_Config) ->
 
 %% Basically open (create) and close an Unix Domain dgram (UDP) socket.
 %% With some extra checks...
-api_b_open_and_close_seqpL(suite) ->
-    [];
-api_b_open_and_close_seqpL(doc) ->
-    [];
 api_b_open_and_close_seqpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(?FUNCTION_NAME,
-           fun() -> has_support_unix_domain_socket() end,
+           fun() ->
+		   has_support_unix_domain_socket(),
+                   is_not_windows()
+	   end,
            fun() ->
                    InitState = #{domain   => local,
                                  type     => seqpacket,
@@ -2692,10 +3096,6 @@ api_b_open_and_close_seqpL(_Config) when is_list(_Config) ->
 
 %% Basically open (create) and close an IPv4 SCTP (seqpacket) socket.
 %% With some extra checks...
-api_b_open_and_close_sctp4(suite) ->
-    [];
-api_b_open_and_close_sctp4(doc) ->
-    [];
 api_b_open_and_close_sctp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_b_open_and_close_sctp4,
@@ -2783,7 +3183,7 @@ api_b_open_and_close(InitState) ->
 			  protocol := ExpProtocol}, {ok, Protocol}}) ->
 			   %% On OpenBSD (at least 6.6) something screwy happens
 			   %% when domain = local.
-			   %% It will report a completly different protocol (icmp)
+			   %% It will report a completely different protocol (icmp)
 			   %% but everything still works. So we skip if this happens
 			   %% on OpenBSD...
 			   case os:type() of
@@ -2847,10 +3247,6 @@ api_b_open_and_close(InitState) ->
 
 %% Basically open (create) and (maybe) close an RAW socket.
 
-api_b_open_and_maybe_close_raw(suite) ->
-    [];
-api_b_open_and_maybe_close_raw(doc) ->
-    [];
 api_b_open_and_maybe_close_raw(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_b_open_and_maybe_close_raw,
@@ -2913,13 +3309,10 @@ do_api_b_open_and_maybe_close_raw(InitState) ->
 
 %% Basically send and receive on an IPv4 UDP (dgram) socket using
 %% sendto and recvfrom..
-api_b_sendto_and_recvfrom_udp4(suite) ->
-    [];
-api_b_sendto_and_recvfrom_udp4(doc) ->
-    [];
 api_b_sendto_and_recvfrom_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_b_sendto_and_recvfrom_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Send = fun(Sock, Data, Dest) ->
                                   socket:sendto(Sock, Data, Dest)
@@ -2939,15 +3332,12 @@ api_b_sendto_and_recvfrom_udp4(_Config) when is_list(_Config) ->
 
 %% Basically send and receive on an IPv4 UDP (dgram) socket using
 %% sendto and recvfrom.
-api_b_sendto_and_recvfrom_udpL(suite) ->
-    [];
-api_b_sendto_and_recvfrom_udpL(doc) ->
-    [];
 api_b_sendto_and_recvfrom_udpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_b_sendto_and_recvfrom_udpL,
            fun() ->
                    has_support_unix_domain_socket(),
+		   is_not_windows(),
                    unix_domain_socket_host_cond()
            end,
            fun() ->
@@ -2969,13 +3359,10 @@ api_b_sendto_and_recvfrom_udpL(_Config) when is_list(_Config) ->
 
 %% Basically send and receive on an IPv4 UDP (dgram) socket
 %% using sendmsg and recvmsg.
-api_b_sendmsg_and_recvmsg_udp4(suite) ->
-    [];
-api_b_sendmsg_and_recvmsg_udp4(doc) ->
-    [];
 api_b_sendmsg_and_recvmsg_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_b_sendmsg_and_recvmsg_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Send = fun(Sock, Data, Dest) ->
                                   %% We need tests for this,
@@ -3013,15 +3400,12 @@ api_b_sendmsg_and_recvmsg_udp4(_Config) when is_list(_Config) ->
 
 %% Basically send and receive on an IPv4 UDP (dgram) socket
 %% using sendmsg and recvmsg.
-api_b_sendmsg_and_recvmsg_udpL(suite) ->
-    [];
-api_b_sendmsg_and_recvmsg_udpL(doc) ->
-    [];
 api_b_sendmsg_and_recvmsg_udpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_b_sendmsg_and_recvmsg_udpL,
            fun() ->
                    has_support_unix_domain_socket(),
+		   is_not_windows(),
                    unix_domain_socket_host_cond()
            end,
            fun() ->
@@ -3201,13 +3585,10 @@ api_b_send_and_recv_udp(InitState) ->
 
 %% Basically send and receive using the "common" functions (send and recv)
 %% on an IPv4 TCP (stream) socket.
-api_b_send_and_recv_tcp4(suite) ->
-    [];
-api_b_send_and_recv_tcp4(doc) ->
-    [];
 api_b_send_and_recv_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_b_send_and_recv_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Send = fun(Sock, Data) ->
                                   socket:send(Sock, Data)
@@ -3228,10 +3609,6 @@ api_b_send_and_recv_tcp4(_Config) when is_list(_Config) ->
 
 %% Basically send and receive using the "common" functions (send and recv)
 %% on an Unix Domain (stream) socket (TCP).
-api_b_send_and_recv_tcpL(suite) ->
-    [];
-api_b_send_and_recv_tcpL(doc) ->
-    [];
 api_b_send_and_recv_tcpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_b_send_and_recv_tcpL,
@@ -3256,14 +3633,13 @@ api_b_send_and_recv_tcpL(_Config) when is_list(_Config) ->
 
 %% Basically send and receive using the "common" functions (send and recv)
 %% on an Unix Domain seqpacket socket.
-api_b_send_and_recv_seqpL(suite) ->
-    [];
-api_b_send_and_recv_seqpL(doc) ->
-    [];
 api_b_send_and_recv_seqpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(?FUNCTION_NAME,
-           fun() -> has_support_unix_domain_socket() end,
+           fun() ->
+		   has_support_unix_domain_socket(),
+                   is_not_windows()
+	   end,
            fun() ->
                    Send = fun(Sock, Data) ->
                                   socket:send(Sock, Data)
@@ -3284,13 +3660,13 @@ api_b_send_and_recv_seqpL(_Config) when is_list(_Config) ->
 
 %% Basically send and receive using the msg functions (sendmsg and recvmsg)
 %% on an IPv4 TCP (stream) socket.
-api_b_sendmsg_and_recvmsg_tcp4(suite) ->
-    [];
-api_b_sendmsg_and_recvmsg_tcp4(doc) ->
-    [];
 api_b_sendmsg_and_recvmsg_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_b_sendmsg_and_recvmsg_tcp4,
+           fun() ->
+                   is_not_windows(),
+                   has_support_ipv4()
+           end,
            fun() ->
                    Send = fun(Sock, Data) ->
                                   Msg = #{iov => [Data]},
@@ -3321,14 +3697,13 @@ api_b_sendmsg_and_recvmsg_tcp4(_Config) when is_list(_Config) ->
 
 %% Basically send and receive using the msg functions (sendmsg and recvmsg)
 %% on an Unix Domain (stream) socket (TCP).
-api_b_sendmsg_and_recvmsg_tcpL(suite) ->
-    [];
-api_b_sendmsg_and_recvmsg_tcpL(doc) ->
-    [];
 api_b_sendmsg_and_recvmsg_tcpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_b_sendmsg_and_recvmsg_tcpL,
-           fun() -> has_support_unix_domain_socket() end,
+           fun() ->
+		   has_support_unix_domain_socket(),
+		   is_not_windows()
+	   end,
            fun() ->
                    Send = fun(Sock, Data) ->
                                   Msg = #{iov => [Data]},
@@ -3374,14 +3749,13 @@ api_b_sendmsg_and_recvmsg_tcpL(_Config) when is_list(_Config) ->
 
 %% Basically send and receive using the msg functions (sendmsg and recvmsg)
 %% on an Unix Domain (stream) socket (TCP).
-api_b_sendmsg_and_recvmsg_seqpL(suite) ->
-    [];
-api_b_sendmsg_and_recvmsg_seqpL(doc) ->
-    [];
 api_b_sendmsg_and_recvmsg_seqpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(?FUNCTION_NAME,
-           fun() -> has_support_unix_domain_socket() end,
+           fun() ->
+		   has_support_unix_domain_socket(),
+                   is_not_windows()
+	   end,
            fun() ->
                    Send =
                        fun(Sock, Data) ->
@@ -3428,6 +3802,7 @@ api_b_sendmsg_and_recvmsg_seqpL(_Config) when is_list(_Config) ->
 
 api_b_send_and_recv_conn(InitState) ->
     process_flag(trap_exit, true),
+
     ServerSeq = 
         [
          %% *** Wait for start order ***
@@ -3446,6 +3821,7 @@ api_b_send_and_recv_conn(InitState) ->
          #{desc => "which local address",
            cmd  => fun(#{domain := Domain} = State) ->
                            LSA = which_local_socket_addr(Domain),
+			   ?SEV_IPRINT("LSA: ~p", [LSA]),
                            {ok, State#{lsa => LSA}}
                    end},
          #{desc => "create listen socket",
@@ -3465,11 +3841,18 @@ api_b_send_and_recv_conn(InitState) ->
            cmd  => fun(#{domain := local,
                          lsock  := LSock,
                          lsa    := LSA} = _State) ->
+			   ?SEV_IPRINT("try bind to: "
+				       "~n   ~p", [LSA]),
+			   %% _ = socket:setopt(LSock, otp, debug, true),
                            case socket:bind(LSock, LSA) of
                                ok ->
                                    %% We do not care about the port for local
+				   %% _ = socket:setopt(LSock, otp, debug, false),
                                    ok;
-                               {error, _} = ERROR ->
+                               {error, Reason} = ERROR ->
+				   %% _ = socket:setopt(LSock, otp, debug, false),
+				   ?SEV_EPRINT("failed binding: "
+					       "~n   ~p", [Reason]),
                                    ERROR
                            end;
                       (#{lsock := LSock, lsa := LSA} = State) ->
@@ -3504,11 +3887,17 @@ api_b_send_and_recv_conn(InitState) ->
                    end},
          #{desc => "await connection",
            cmd  => fun(#{lsock := LSock} = State) ->
+			   %% _ = socket:setopt(LSock, otp, debug, true),
+			   ?SEV_IPRINT("try accept"),
                            case socket:accept(LSock) of
                                {ok, Sock} ->
+				   %% _ = socket:setopt(LSock, otp, debug, false),
                                    ?SEV_IPRINT("accepted: ~n   ~p", [Sock]),
                                    {ok, State#{csock => Sock}};
-                               {error, _} = ERROR ->
+                               {error, Reason} = ERROR ->
+				   %% _ = socket:setopt(LSock, otp, debug, false),
+                                   ?SEV_EPRINT("accept failed: "
+					       "~n   ~p", [Reason]),
                                    ERROR
                            end
                    end},
@@ -3842,10 +4231,6 @@ api_b_send_and_recv_conn(InitState) ->
 
 %% Basically send and receive on an IPv4 SCTP (seqpacket) socket
 %% using sendmsg and recvmsg.
-api_b_sendmsg_and_recvmsg_sctp4(suite) ->
-    [];
-api_b_sendmsg_and_recvmsg_sctp4(doc) ->
-    [];
 api_b_sendmsg_and_recvmsg_sctp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_b_sendmsg_and_recvmsg_sctp4,
@@ -4384,6 +4769,7 @@ api_b_send_and_recv_sctp(_InitState) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 api_b_sendmsg_iov_dgram_inet(Config) when is_list(Config) ->
+    has_support_ipv4(),
     api_b_sendmsg_iov_dgram(inet).
 %%
 api_b_sendmsg_iov_dgram_inet6(Config) when is_list(Config) ->
@@ -4392,54 +4778,77 @@ api_b_sendmsg_iov_dgram_inet6(Config) when is_list(Config) ->
 %%
 api_b_sendmsg_iov_dgram_local(Config) when is_list(Config) ->
     has_support_unix_domain_socket(),
+    is_not_windows(), % on Windows, local only works for stream sockets
     api_b_sendmsg_iov_dgram(local).
 
 api_b_sendmsg_iov_stream_inet(Config) when is_list(Config) ->
+    has_support_ipv4(),
+    is_not_windows(), % sendmsg does not work on Windows
     api_b_sendmsg_iov_stream(inet).
 %%
 api_b_sendmsg_iov_stream_inet6(Config) when is_list(Config) ->
     has_support_ipv6(),
+    is_not_windows(), % sendmsg does not work on Windows
     api_b_sendmsg_iov_stream(inet6).
 %%
 api_b_sendmsg_iov_stream_local(Config) when is_list(Config) ->
     has_support_unix_domain_socket(),
+    is_not_windows(), % sendmsg does not work on Windows
     api_b_sendmsg_iov_stream(local).
 
 
 api_b_sendmsg_iov_dgram(Domain) ->
+    ?P("api_b_sendmsg_iov_dgram -> entry with"
+       "~n   Domain: ~p", [Domain]),
     ?TT(?SECS(5)),
     #{iov_max := IOVMax} = socket:info(),
+    ?P("api_b_sendmsg_iov_dgram -> IOVMax: ~p", [IOVMax]),
     IOV =
         lists:map(
           fun (N) -> <<(rand:uniform(N) - 1)>> end,
           lists:duplicate(IOVMax, 256)),
     IOVTooLarge = IOV ++ IOV,
     Data = erlang:iolist_to_binary(IOV),
-    {ok, Sa} = socket:open(Domain, dgram),
+    ?P("api_b_sendmsg_iov_dgram -> a: create socket"),
+    {ok, Sa} = socket:open(Domain, dgram, #{debug => true}),
     try
+	?P("api_b_sendmsg_iov_dgram -> b: create socket"),
         {ok, Sb} = socket:open(Domain, dgram),
         try
+	    ?P("api_b_sendmsg_iov_dgram -> a: bind socket"),
             ok = socket:bind(Sa, which_local_socket_addr(Domain)),
+	    ?P("api_b_sendmsg_iov_dgram -> b: bind socket"),
             ok = socket:bind(Sb, which_local_socket_addr(Domain)),
+	    ?P("api_b_sendmsg_iov_dgram -> a: get sockname"),
             {ok, Aa} = socket:sockname(Sa),
+	    ?P("api_b_sendmsg_iov_dgram -> b: get sockname"),
             {ok, Ab} = socket:sockname(Sb),
             %%
+	    ?P("api_b_sendmsg_iov_dgram -> a: sendmsg"),
             ok = socket:sendmsg(Sa, #{addr => Ab, iov => IOV}),
+	    ?P("api_b_sendmsg_iov_dgram -> b: recvfrom"),
             {ok, {Aa, Data}} = socket:recvfrom(Sb),
             %%
+	    ?P("api_b_sendmsg_iov_dgram -> b: sendmsg (too large => fail)"),
             {error, {invalid, _}} =
                 socket:sendmsg(Sb, #{addr => Aa, iov => IOVTooLarge}),
+	    ?P("api_b_sendmsg_iov_dgram -> done"),
             ok
         after
+	    ?P("api_b_sendmsg_iov_dgram -> b: close socket"),
             socket:close(Sb)
         end
     after
+	?P("api_b_sendmsg_iov_dgram -> a: close socket"),
         socket:close(Sa)
     end.
 
 api_b_sendmsg_iov_stream(Domain) ->
+    ?P("api_b_sendmsg_iov_stream -> entry with"
+       "~n   Domain: ~p", [Domain]),
     ?TT(?SECS(5)),
     #{iov_max := IOVMax} = socket:info(),
+    ?P("api_b_sendmsg_iov_stream -> IOVMax: ~p", [IOVMax]),
     IOV =
         lists:map(
           fun (N) -> <<(rand:uniform(N) - 1)>> end,
@@ -4447,37 +4856,67 @@ api_b_sendmsg_iov_stream(Domain) ->
     IOVTooLarge = IOV ++ IOV,
     Data = erlang:iolist_to_binary(IOV),
     DataTooLarge = erlang:iolist_to_binary(IOVTooLarge),
+    ?P("api_b_sendmsg_iov_stream -> create stream socket a"),
     {ok, Sa} = socket:open(Domain, stream),
     try
+        case os:type() of
+            {win32,nt} ->
+		?P("api_b_sendmsg_iov_stream-> [win] a: bind socket"),
+                ok = socket:bind(Sa, which_local_socket_addr(Domain));
+            _ ->
+                ok
+        end,
+	?P("api_b_sendmsg_iov_stream -> create stream socket b"),
         {ok, Sb} = socket:open(Domain, stream),
         try
+	    ?P("api_b_sendmsg_iov_stream -> b: bind socket"),
             ok = socket:bind(Sb, which_local_socket_addr(Domain)),
+	    ?P("api_b_sendmsg_iov_stream -> b: get sockname"),
             {ok, Ab} = socket:sockname(Sb),
+	    ?P("api_b_sendmsg_iov_stream -> b: make socket listen"),
             ok = socket:listen(Sb),
+	    ?P("api_b_sendmsg_iov_stream -> a: connect socket to b"),
             ok = socket:connect(Sa, Ab),
+	    ?P("api_b_sendmsg_iov_stream -> a: get sockname"),
             {ok, Aa} = socket:sockname(Sa),
+	    ?P("api_b_sendmsg_iov_stream -> a: get peername"),
             {ok, Ab} = socket:peername(Sa),
+	    ?P("api_b_sendmsg_iov_stream -> accept connection (=> c)"),
             {ok, Sc} = socket:accept(Sb),
             try
+		?P("api_b_sendmsg_iov_stream -> c: get sockname"),
                 {ok, Ab} = socket:sockname(Sc),
+		?P("api_b_sendmsg_iov_stream -> c: get peername"),
                 {ok, Aa} = socket:peername(Sc),
                 %%
+		?P("api_b_sendmsg_iov_stream -> a: sendmsg"),
                 ok = socket:sendmsg(Sa, #{iov => IOV}),
+		?P("api_b_sendmsg_iov_stream -> c: recv"),
                 {ok, Data} =
                     socket:recv(Sc, byte_size(Data)),
+		?P("api_b_sendmsg_iov_stream -> c: sendmsg (too large)"),
                 ok = socket:sendmsg(Sc, #{iov => IOVTooLarge}),
+		?P("api_b_sendmsg_iov_stream -> a: recv"),
                 {ok, DataTooLarge} =
                     socket:recv(Sa, byte_size(DataTooLarge)),
+		?P("api_b_sendmsg_iov_stream -> done"),
                 ok
+            catch
+                error:notsup = Reason:_ ->
+		    ?P("api_b_sendmsg_iov_stream -> notsup"),
+                    exit({skip, Reason})
             after
                 socket:close(Sc)
             end
         after
+	    ?P("api_b_sendmsg_iov_stream -> after - b: close socket"),
             socket:close(Sb)
         end
     after
+	?P("api_b_sendmsg_iov_stream -> after - a: close socket"),
         socket:close(Sa)
     end.
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -4489,6 +4928,7 @@ api_b_sendmsg_iov_stream(Domain) ->
 
 api_sendfile_inet(Config) when is_list(Config) ->
     has_support_sendfile(),
+    has_support_ipv4(),
     api_sendfile(inet, Config, fun socket:sendfile/2).
 
 api_sendfile_inet6(Config) when is_list(Config) ->
@@ -4505,6 +4945,7 @@ api_sendfile_local(Config) when is_list(Config) ->
 
 api_sendfile_loop_inet(Config) when is_list(Config) ->
     has_support_sendfile(),
+    has_support_ipv4(),
     api_sendfile(inet, Config, fun sendfile_loop/2).
 
 api_sendfile_loop_inet6(Config) when is_list(Config) ->
@@ -4650,13 +5091,10 @@ api_sendfile_verify_block(S, Data, M, Block, N) ->
 %% With some extra checks...
 %% IPv4
 %% Without dup
-api_ffd_open_wod_and_info_udp4(suite) ->
-    [];
-api_ffd_open_wod_and_info_udp4(doc) ->
-    [];
 api_ffd_open_wod_and_info_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_ffd_open_wod_and_info_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    InitState = #{domain   => inet,
                                  type     => dgram,
@@ -4673,10 +5111,6 @@ api_ffd_open_wod_and_info_udp4(_Config) when is_list(_Config) ->
 %% With some extra checks...
 %% IPv6
 %% Without dup
-api_ffd_open_wod_and_info_udp6(suite) ->
-    [];
-api_ffd_open_wod_and_info_udp6(doc) ->
-    [];
 api_ffd_open_wod_and_info_udp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_ffd_open_wod_and_info_udp6,
@@ -4697,13 +5131,10 @@ api_ffd_open_wod_and_info_udp6(_Config) when is_list(_Config) ->
 %% With some extra checks...
 %% IPv4
 %% With dup
-api_ffd_open_wd_and_info_udp4(suite) ->
-    [];
-api_ffd_open_wd_and_info_udp4(doc) ->
-    [];
 api_ffd_open_wd_and_info_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_ffd_wd_open_and_info_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    InitState = #{domain   => inet,
                                  type     => dgram,
@@ -4720,10 +5151,6 @@ api_ffd_open_wd_and_info_udp4(_Config) when is_list(_Config) ->
 %% With some extra checks...
 %% IPv6
 %% With dup
-api_ffd_open_wd_and_info_udp6(suite) ->
-    [];
-api_ffd_open_wd_and_info_udp6(doc) ->
-    [];
 api_ffd_open_wd_and_info_udp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_ffd_wd_open_and_info_udp6,
@@ -4744,13 +5171,10 @@ api_ffd_open_wd_and_info_udp6(_Config) when is_list(_Config) ->
 %% With some extra checks...
 %% IPv6
 %% Without dup
-api_ffd_open_wod_and_info_tcp4(suite) ->
-    [];
-api_ffd_open_wod_and_info_tcp4(doc) ->
-    [];
 api_ffd_open_wod_and_info_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_ffd_open_wod_and_info_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    InitState = #{domain   => inet,
                                  type     => stream,
@@ -4767,10 +5191,6 @@ api_ffd_open_wod_and_info_tcp4(_Config) when is_list(_Config) ->
 %% With some extra checks...
 %% IPv6
 %% Without dup
-api_ffd_open_wod_and_info_tcp6(suite) ->
-    [];
-api_ffd_open_wod_and_info_tcp6(doc) ->
-    [];
 api_ffd_open_wod_and_info_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_ffd_open_wod_and_info_tcp6,
@@ -4791,13 +5211,10 @@ api_ffd_open_wod_and_info_tcp6(_Config) when is_list(_Config) ->
 %% With some extra checks...
 %% IPv6
 %% With dup
-api_ffd_open_wd_and_info_tcp4(suite) ->
-    [];
-api_ffd_open_wd_and_info_tcp4(doc) ->
-    [];
 api_ffd_open_wd_and_info_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_ffd_open_wd_and_info_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    InitState = #{domain   => inet,
                                  type     => stream,
@@ -4814,10 +5231,6 @@ api_ffd_open_wd_and_info_tcp4(_Config) when is_list(_Config) ->
 %% With some extra checks...
 %% IPv6
 %% With dup
-api_ffd_open_wd_and_info_tcp6(suite) ->
-    [];
-api_ffd_open_wd_and_info_tcp6(doc) ->
-    [];
 api_ffd_open_wd_and_info_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_ffd_open_wd_and_info_tcp6,
@@ -5025,7 +5438,7 @@ api_ffd_open_and_info(InitState) ->
 
 %% Basically open a socket (1) and then create another socket (2) from
 %% its file descriptor *without* dup.
-%% Exchange som data from via both "client" sockets.
+%% Exchange some data from via both "client" sockets.
 %% Finally close the second socket. Ensure that the original socket
 %% has not been closed (test by sending some data).
 %% IPv4 UDP (dgram) socket.
@@ -5039,13 +5452,10 @@ api_ffd_open_and_info(InitState) ->
 %%
 %% </WARNING>
 %%
-api_ffd_open_and_open_wod_and_send_udp4(suite) ->
-    [];
-api_ffd_open_and_open_wod_and_send_udp4(doc) ->
-    [];
 api_ffd_open_and_open_wod_and_send_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_ffd_open_and_open_wod_and_send_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    InitState = #{domain   => inet,
                                  type     => dgram,
@@ -5060,7 +5470,7 @@ api_ffd_open_and_open_wod_and_send_udp4(_Config) when is_list(_Config) ->
 
 %% Basically open a socket (1) and then create another socket (2) from
 %% its file descriptor *without* dup.
-%% Exchange som data from via both "client" sockets.
+%% Exchange some data from via both "client" sockets.
 %% Finally close the second socket. Ensure that the original socket
 %% has not been closed (test by sending some data).
 %% IPv6 UDP (dgram) socket.
@@ -5074,10 +5484,6 @@ api_ffd_open_and_open_wod_and_send_udp4(_Config) when is_list(_Config) ->
 %%
 %% </WARNING>
 %%
-api_ffd_open_and_open_wod_and_send_udp6(suite) ->
-    [];
-api_ffd_open_and_open_wod_and_send_udp6(doc) ->
-    [];
 api_ffd_open_and_open_wod_and_send_udp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_ffd_open_and_open_wod_and_send_udp6,
@@ -5096,18 +5502,15 @@ api_ffd_open_and_open_wod_and_send_udp6(_Config) when is_list(_Config) ->
 
 %% Basically open a socket (1) and then create another socket (2) from
 %% its file descriptor *with* dup.
-%% Exchange som data from via both "client" sockets.
+%% Exchange some data from via both "client" sockets.
 %% Finally close the second socket. Ensure that the original socket
 %% has not been closed (test by sending some data).
 %% IPv4 UDP (dgram) socket.
 %%
-api_ffd_open_and_open_wd_and_send_udp4(suite) ->
-    [];
-api_ffd_open_and_open_wd_and_send_udp4(doc) ->
-    [];
 api_ffd_open_and_open_wd_and_send_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_ffd_open_and_open_wd_and_send_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    InitState = #{domain   => inet,
                                  type     => dgram,
@@ -5122,15 +5525,11 @@ api_ffd_open_and_open_wd_and_send_udp4(_Config) when is_list(_Config) ->
 
 %% Basically open a socket (1) and then create another socket (2) from
 %% its file descriptor *with* dup.
-%% Exchange som data from via both "client" sockets.
+%% Exchange some data from via both "client" sockets.
 %% Finally close the second socket. Ensure that the original socket
 %% has not been closed (test by sending some data).
 %% IPv6 UDP (dgram) socket.
 %%
-api_ffd_open_and_open_wd_and_send_udp6(suite) ->
-    [];
-api_ffd_open_and_open_wd_and_send_udp6(doc) ->
-    [];
 api_ffd_open_and_open_wd_and_send_udp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_ffd_open_and_open_wd_and_send_udp6,
@@ -5748,7 +6147,7 @@ api_ffd_open_and_open_and_send_udp2(InitState) ->
 
 %% Basically open a socket (1), connect to a server and then create
 %% another socket (2) from its file descriptor *without* dup.
-%% Exchange som data from via both "client" sockets.
+%% Exchange some data from via both "client" sockets.
 %% Finally close the second socket. Ensure that the original socket
 %% has not been closed (test by sending some data).
 %% IPv4 TCP (stream) socket.
@@ -5762,10 +6161,6 @@ api_ffd_open_and_open_and_send_udp2(InitState) ->
 %%
 %% </WARNING>
 %%
-api_ffd_open_connect_and_open_wod_and_send_tcp4(suite) ->
-    [];
-api_ffd_open_connect_and_open_wod_and_send_tcp4(doc) ->
-    [];
 api_ffd_open_connect_and_open_wod_and_send_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_ffd_open_connect_and_open_wod_and_send_tcp4,
@@ -5783,7 +6178,7 @@ api_ffd_open_connect_and_open_wod_and_send_tcp4(_Config) when is_list(_Config) -
 
 %% Basically open a socket (1), connect to a server and then create
 %% another socket (2) from its file descriptor *without* dup.
-%% Exchange som data from via both "client" sockets.
+%% Exchange some data from via both "client" sockets.
 %% Finally close the second socket. Ensure that the original socket
 %% has not been closed (test by sending some data).
 %% IPv6 TCP (stream) socket.
@@ -5797,10 +6192,6 @@ api_ffd_open_connect_and_open_wod_and_send_tcp4(_Config) when is_list(_Config) -
 %%
 %% </WARNING>
 %%
-api_ffd_open_connect_and_open_wod_and_send_tcp6(suite) ->
-    [];
-api_ffd_open_connect_and_open_wod_and_send_tcp6(doc) ->
-    [];
 api_ffd_open_connect_and_open_wod_and_send_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_ffd_open_connect_and_open_wod_and_send_tcp6,
@@ -5819,14 +6210,10 @@ api_ffd_open_connect_and_open_wod_and_send_tcp6(_Config) when is_list(_Config) -
 
 %% Basically open a socket (1), connect to a server and then create
 %% another socket (2) from its file descriptor *with* dup.
-%% Exchange som data from via both "client" sockets.
+%% Exchange some data from via both "client" sockets.
 %% Finally close the second socket. Ensure that the original socket
 %% has not been closed (test by sending some data).
 %% IPv4 TCP (stream) socket.
-api_ffd_open_connect_and_open_wd_and_send_tcp4(suite) ->
-    [];
-api_ffd_open_connect_and_open_wd_and_send_tcp4(doc) ->
-    [];
 api_ffd_open_connect_and_open_wd_and_send_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_ffd_open_connect_and_open_wd_and_send_tcp4,
@@ -5845,14 +6232,10 @@ api_ffd_open_connect_and_open_wd_and_send_tcp4(_Config) when is_list(_Config) ->
 
 %% Basically open a socket (1), connect to a server and then create
 %% another socket (2) from its file descriptor *with* dup.
-%% Exchange som data from via both "client" sockets.
+%% Exchange some data from via both "client" sockets.
 %% Finally close the second socket. Ensure that the original socket
 %% has not been closed (test by sending some data).
 %% IPv6 TCP (stream) socket.
-api_ffd_open_connect_and_open_wd_and_send_tcp6(suite) ->
-    [];
-api_ffd_open_connect_and_open_wd_and_send_tcp6(doc) ->
-    [];
 api_ffd_open_connect_and_open_wd_and_send_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_ffd_open_connect_and_open_wd_and_send_tcp6,
@@ -6524,14 +6907,10 @@ api_ffd_open_connect_and_open_and_send_tcp2(InitState) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Basically establish a TCP connection via an async connect. IPv4.
-
-api_a_connect_tcp4(suite) ->
-    [];
-api_a_connect_tcp4(doc) ->
-    [];
 api_a_connect_tcp4(Config) when is_list(Config) ->
     ?TT(?SECS(10)),
     tc_try(api_a_connect_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    ok = api_a_connect_tcpD(inet, nowait(Config))
            end).
@@ -6540,11 +6919,6 @@ api_a_connect_tcp4(Config) when is_list(Config) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Basically establish a TCP connection via an async connect. IPv6.
-
-api_a_connect_tcp6(suite) ->
-    [];
-api_a_connect_tcp6(doc) ->
-    [];
 api_a_connect_tcp6(Config) when is_list(Config) ->
     ?TT(?SECS(10)),
     tc_try(api_a_connect_tcp6,
@@ -6570,7 +6944,7 @@ api_a_connect_tcpD(Domain, Nowait) ->
                   connect => Connect,
                   send => Send,
                   recv => Recv,
-                  connect_sref => Nowait},
+                  connect_ref => Nowait},
     api_a_connect_tcp(InitState).
 
 
@@ -6761,41 +7135,67 @@ api_a_connect_tcp(InitState) ->
                            ?SEV_AWAIT_CONTINUE(Tester, tester, async_connect)
                    end},
          #{desc => "connect (async) to server",
-           cmd  => fun(#{sock := Sock,
-                         server_sa := SSA,
-                         connect := Connect,
-                         connect_sref := SR} = State) ->
+           cmd  => fun(#{sock        := Sock,
+                         server_sa   := SSA,
+                         connect     := Connect,
+                         connect_ref := SR} = State) ->
                            case Connect(Sock, SSA) of
                                ok ->
                                    ?SEV_IPRINT("ok -> "
 					       "unexpected success => SKIP", 
                                                []),
                                    {skip, unexpected_success};
+
                                {select, {select_info, ST, SelectRef}}
                                  when SR =:= nowait ->
                                    ?SEV_IPRINT("select nowait ->"
                                                "~n   tag: ~p"
                                                "~n   ref: ~p",
                                                [ST, SelectRef]),
-                                   {ok, State#{connect_stag => ST,
-                                               connect_sref => SelectRef}};
+                                   {ok, State#{asynch_tag  => select,
+                                               connect_tag => ST,
+                                               connect_ref => SelectRef}};
                                {select, {select_info, ST, SR}}
                                  when is_reference(SR) ->
                                    ?SEV_IPRINT("select ref ->"
                                                "~n   tag: ~p"
                                                "~n   ref: ~p", [ST, SR]),
-                                   {ok, State#{connect_stag => ST}};
+                                   {ok, State#{asynch_tag  => select,
+                                               connect_tag => ST}};
+
+                               {completion,
+                                {completion_info, CT, CompletionRef}}
+                                 when SR =:= nowait ->
+                                   ?SEV_IPRINT("completion nowait ->"
+                                               "~n   tag: ~p"
+                                               "~n   ref: ~p",
+                                               [CT, CompletionRef]),
+                                   {ok, State#{asynch_tag  => completion,
+                                               connect_tag => CT,
+                                               connect_ref => CompletionRef}};
+                               {completion,
+                                {completion_info, CT, CR}}
+                                 when is_reference(CR) ->
+                                   ?SEV_IPRINT("completion ref ->"
+                                               "~n   tag: ~p"
+                                               "~n   ref: ~p", [CT, CR]),
+                                   {ok, State#{asynch_tag  => completion,
+                                               connect_tag => CT}};
+
                                {error, _} = ERROR ->
                                    ERROR
                            end
                    end},
-         #{desc => "announce ready (connect select)",
+         #{desc => "announce ready (connect select|completion)",
            cmd  => fun(#{tester := Tester}) ->
                            ?SEV_ANNOUNCE_READY(Tester, connect_select),
                            ok
                    end},
-         #{desc => "await select message",
-           cmd  => fun(#{sock := Sock, connect_sref := Ref}) ->
+         #{desc => "await select|completion message",
+           cmd  => fun(#{sock        := Sock,
+                         asynch_tag  := select,
+                         connect_tag := connect,
+                         connect_ref := Ref}) ->
                            receive
                                {'$socket', Sock, select, Ref} ->
                                    ?SEV_IPRINT("select message ->"
@@ -6806,15 +7206,35 @@ api_a_connect_tcp(InitState) ->
                                                "~n   message queue: ~p",
                                                [mq()]),
                                    {error, timeout}
+                           end;
+                      (#{sock        := Sock,
+                         asynch_tag  := completion,
+                         connect_tag := connect,
+                         connect_ref := Ref}) ->
+                           receive
+                               {'$socket', Sock, completion, {Ref, ok = Res}} ->
+                                   ?SEV_IPRINT("completion message ->"
+                                               "~n   ref: ~p"
+                                               "~n   res: ~p", [Ref, Res]),
+                                   ok
+                           after 5000 ->
+                                   ?SEV_EPRINT("timeout: "
+                                               "~n   message queue: ~p",
+                                               [mq()]),
+                                   {error, timeout}
                            end
                    end},
-         #{desc => "announce ready (select)",
+         #{desc => "announce ready (select|completion)",
            cmd  => fun(#{tester := Tester}) ->
                            ?SEV_ANNOUNCE_READY(Tester, select),
                            ok
                    end},
-         #{desc => "connect (async) to server",
-           cmd  => fun(#{sock := Sock, server_sa := SSA, connect := Connect}) ->
+         #{desc => "(maybe) connect (async) to server",
+           cmd  => fun(#{sock        := Sock,
+                         server_sa   := SSA,
+                         asynch_tag  := select,
+                         connect_tag := connect,
+                         connect     := Connect}) ->
                            case Connect(Sock, SSA) of
                                ok ->
                                    ok;
@@ -6822,7 +7242,13 @@ api_a_connect_tcp(InitState) ->
                                    {error, {unexpected_select, SelectInfo}};
                                {error, _} = ERROR ->
                                    ERROR
-                           end
+                           end;
+                      (#{sock        := _Sock,
+                         server_sa   := _SSA,
+                         asynch_tag  := completion,
+                         connect_tag := connect,
+                         connect     := _Connect}) ->
+                           ok
                    end},
          #{desc => "announce ready (connect)",
            cmd  => fun(#{tester := Tester}) ->
@@ -7061,14 +7487,11 @@ api_a_connect_tcp(InitState) ->
 %% select message). Note that we only do this for the recvfrom,
 %% since its much more difficult to "arrange" for sendto.
 %%
-api_a_sendto_and_recvfrom_udp4(suite) ->
-    [];
-api_a_sendto_and_recvfrom_udp4(doc) ->
-    [];
 api_a_sendto_and_recvfrom_udp4(Config) when is_list(Config) ->
     ?TT(?SECS(5)),
     Nowait = nowait(Config),
-    tc_try(api_a_sendto_and_recvfrom_udp4,
+    tc_try(?FUNCTION_NAME,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Send = fun(Sock, Data, Dest) ->
                                   socket:sendto(Sock, Data, Dest)
@@ -7076,10 +7499,10 @@ api_a_sendto_and_recvfrom_udp4(Config) when is_list(Config) ->
                    Recv = fun(Sock) ->
                                   socket:recvfrom(Sock, 0, Nowait)
                           end,
-                   InitState = #{domain => inet,
-                                 send => Send,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet,
+                                 send     => Send,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_send_and_recv_udp(InitState)
            end).
 
@@ -7093,14 +7516,10 @@ api_a_sendto_and_recvfrom_udp4(Config) when is_list(Config) ->
 %% select message). Note that we only do this for the recvfrom,
 %% since its much more difficult to "arrange" for sendto.
 %%
-api_a_sendto_and_recvfrom_udp6(suite) ->
-    [];
-api_a_sendto_and_recvfrom_udp6(doc) ->
-    [];
 api_a_sendto_and_recvfrom_udp6(Config) when is_list(Config) ->
     ?TT(?SECS(5)),
     Nowait = nowait(Config),
-    tc_try(api_a_sendto_and_recvfrom_udp6,
+    tc_try(?FUNCTION_NAME,
            fun() -> has_support_ipv6() end,
            fun() ->
                    Send = fun(Sock, Data, Dest) ->
@@ -7109,10 +7528,10 @@ api_a_sendto_and_recvfrom_udp6(Config) when is_list(Config) ->
                    Recv = fun(Sock) ->
                                   socket:recvfrom(Sock, 0, Nowait)
                           end,
-                   InitState = #{domain => inet6,
-                                 send => Send,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet6,
+                                 send     => Send,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_send_and_recv_udp(InitState)
            end).
 
@@ -7126,14 +7545,11 @@ api_a_sendto_and_recvfrom_udp6(Config) when is_list(Config) ->
 %% select message). Note that we only do this for the recvmsg,
 %% since its much more difficult to "arrange" for sendmsg.
 %%
-api_a_sendmsg_and_recvmsg_udp4(suite) ->
-    [];
-api_a_sendmsg_and_recvmsg_udp4(doc) ->
-    [];
 api_a_sendmsg_and_recvmsg_udp4(Config) when is_list(Config) ->
     ?TT(?SECS(5)),
     Nowait = nowait(Config),
     tc_try(api_a_sendmsg_and_recvmsg_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Send = fun(Sock, Data, Dest) ->
                                   Msg = #{addr => Dest,
@@ -7150,14 +7566,16 @@ api_a_sendmsg_and_recvmsg_udp4(Config) when is_list(Config) ->
                                           OK;
                                       {select, _} = SELECT ->
                                           SELECT;
+                                      {completion, _} = COMPLETION ->
+                                          COMPLETION;
                                       {error, _} = ERROR ->
                                           ERROR
                                   end
                           end,
-                   InitState = #{domain => inet,
-                                 send => Send,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet,
+                                 send     => Send,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_send_and_recv_udp(InitState)
            end).
 
@@ -7171,10 +7589,6 @@ api_a_sendmsg_and_recvmsg_udp4(Config) when is_list(Config) ->
 %% select message). Note that we only do this for the recvmsg,
 %% since its much more difficult to "arrange" for sendmsg.
 %%
-api_a_sendmsg_and_recvmsg_udp6(suite) ->
-    [];
-api_a_sendmsg_and_recvmsg_udp6(doc) ->
-    [];
 api_a_sendmsg_and_recvmsg_udp6(Config) when is_list(Config) ->
     ?TT(?SECS(5)),
     Nowait = nowait(Config),
@@ -7196,14 +7610,16 @@ api_a_sendmsg_and_recvmsg_udp6(Config) when is_list(Config) ->
                                           OK;
                                       {select, _} = SELECT ->
                                           SELECT;
+                                      {completion, _} = COMPLETION ->
+                                          COMPLETION;
                                       {error, _} = ERROR ->
                                           ERROR
                                   end
                           end,
-                   InitState = #{domain => inet6,
-                                 send => Send,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet6,
+                                 send     => Send,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_send_and_recv_udp(InitState)
            end).
 
@@ -7264,25 +7680,45 @@ api_a_send_and_recv_udp(InitState) ->
                            ?SEV_AWAIT_CONTINUE(Tester, tester, recv)
                    end},
          #{desc => "try recv request (with nowait, expect select)",
-           cmd  => fun(#{sock := Sock,
-                         recv := Recv,
-                         recv_sref := SR} = State) ->
+           cmd  => fun(#{sock     := Sock,
+                         recv     := Recv,
+                         recv_ref := Ref} = State) ->
                            case Recv(Sock) of
                                {select, {select_info, Tag, RecvRef}}
-                                 when SR =:= nowait ->
+                                 when Ref =:= nowait ->
                                    ?SEV_IPRINT("expected select nowait: "
                                                "~n   Tag: ~p"
                                                "~n   Ref: ~p", [Tag, RecvRef]),
-                                   {ok, State#{recv_stag => Tag,
-                                               recv_sref => RecvRef}};
-                               {select, {select_info, Tag, SR}}
-                                 when is_reference(SR) ->
+                                   {ok, State#{async_tag => select,
+                                               recv_tag  => Tag,
+                                               recv_ref  => RecvRef}};
+                               {select, {select_info, Tag, Ref}}
+                                 when is_reference(Ref) ->
                                    ?SEV_IPRINT("expected select ref: "
                                                "~n   Tag: ~p"
-                                               "~n   Ref: ~p", [Tag, SR]),
-                                   {ok, State#{recv_stag => Tag}};
+                                               "~n   Ref: ~p", [Tag, Ref]),
+                                   {ok, State#{async_tag => select,
+                                               recv_tag  => Tag}};
+
+                               {completion, {completion_info, Tag, RecvRef}}
+                                 when Ref =:= nowait ->
+                                   ?SEV_IPRINT("expected select nowait: "
+                                               "~n   Tag: ~p"
+                                               "~n   Ref: ~p", [Tag, RecvRef]),
+                                   {ok, State#{async_tag => completion,
+                                               recv_tag  => Tag,
+                                               recv_ref  => RecvRef}};
+                               {completion, {completion_info, Tag, Ref}}
+                                 when is_reference(Ref) ->
+                                   ?SEV_IPRINT("expected completion ref: "
+                                               "~n   Tag: ~p"
+                                               "~n   Ref: ~p", [Tag, Ref]),
+                                   {ok, State#{async_tag => completion,
+                                               recv_tag  => Tag}};
+
                                {ok, X} ->
-                                   {error, {unexpected_succes, X}};
+                                   {error, {unexpected_success, X}};
+
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -7292,29 +7728,74 @@ api_a_send_and_recv_udp(InitState) ->
                            ?SEV_ANNOUNCE_READY(Tester, recv_select),
                            ok
                    end},
-         #{desc => "await select message",
-           cmd  => fun(#{sock := Sock, recv_sref := RecvRef}) ->
+         #{desc => "await select|completion message",
+           cmd  => fun(#{async_tag := select,
+                         sock      := Sock,
+                         recv_ref  := RecvRef}) ->
                            receive
                                {'$socket', Sock, select, RecvRef} ->
                                    ok
                            after 5000 ->
-                                   ?SEV_EPRINT("message queue: ~p", [mq()]),
+                                   ?SEV_EPRINT("timeout when: "
+                                               "~n   Socket Info:   ~p"
+                                               "~n   Message Queue: ~p",
+                                               [socket:info(Sock), mq()]),
+                                   {error, timeout}
+                           end;
+                      (#{async_tag := completion,
+                         sock      := Sock,
+                         recv_ref  := RecvRef} = State) ->
+                           receive
+                               %% Recvfrom
+                               {'$socket', Sock, completion,
+                                {RecvRef, {ok, {Src, ?BASIC_REQ}}}} ->
+                                   {ok, State#{req_src => Src}};
+                               %% Recvmsg
+                               {'$socket', Sock, completion,
+                                {RecvRef, {ok, #{addr := Src,
+                                                 iov  := [?BASIC_REQ]}}}} ->
+                                   {ok, State#{req_src => Src}};
+                               {'$socket', Sock, completion,
+                                {RecvRef, {ok, Unexpected}}} ->
+                                   ?SEV_EPRINT("Unexpected success result: "
+                                               "~n   ~p", [Unexpected]),
+                                   {error, {unexpected_success_result,
+                                            Unexpected}};
+                               {'$socket', Sock, completion,
+                                {RecvRef, {error, Reason} = ERROR}} ->
+                                   ?SEV_EPRINT("completion with error: "
+                                               "~n   ~p", [Reason]),
+                                   ERROR
+                           after 5000 ->
+                                   ?SEV_EPRINT("timeout when: "
+                                               "~n   Socket Info:   ~p"
+                                               "~n   Message Queue: ~p",
+                                               [socket:info(Sock), mq()]),
                                    {error, timeout}
                            end
                    end},
          #{desc => "announce ready (select)",
            cmd  => fun(#{tester := Tester}) ->
+                           %% We are actually done *if* this was
+                           %% a completion event, but to make the
+                           %% test case simple...
                            ?SEV_ANNOUNCE_READY(Tester, select),
                            ok
                    end},
-         #{desc => "now read the data (request)",
-           cmd  => fun(#{sock := Sock, recv := Recv} = State) ->
+         #{desc => "now read the data (request), for select",
+           cmd  => fun(#{async_tag := select,
+                         sock      := Sock,
+                         recv      := Recv} = State) ->
                            case Recv(Sock) of
                                {ok, {Src, ?BASIC_REQ}} ->
                                    {ok, State#{req_src => Src}};
                                {error, _} = ERROR ->
                                    ERROR
-                           end
+                           end;
+                      (#{async_tag := completion} = _State) ->
+                           %% We are already done!
+                           ?SEV_IPRINT("Already done!"),
+                           ok
                    end},
          #{desc => "announce ready (recv request)",
            cmd  => fun(#{tester := Tester}) ->
@@ -7342,10 +7823,11 @@ api_a_send_and_recv_udp(InitState) ->
                            case ?SEV_AWAIT_TERMINATE(Tester, tester) of
                                ok ->
                                    State2 = maps:remove(tester,    State),
-                                   State3 = maps:remove(recv_stag, State2),
-                                   State4 = maps:remove(recv_sref, State3),
-                                   State5 = maps:remove(req_src,   State4),
-                                   {ok, State5};
+                                   State3 = maps:remove(async_tag, State2),
+                                   State4 = maps:remove(recv_tag,  State3),
+                                   State5 = maps:remove(recv_ref,  State4),
+                                   State6 = maps:remove(req_src,   State5),
+                                   {ok, State6};
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -7385,8 +7867,7 @@ api_a_send_and_recv_udp(InitState) ->
          #{desc => "open socket",
            cmd  => fun(#{domain := Domain} = State) ->
                            Sock = sock_open(Domain, dgram, udp),
-                           SA   = sock_sockname(Sock),
-                           {ok, State#{sock => Sock, sa => SA}}
+                           {ok, State#{sock => Sock}}
                    end},
          #{desc => "bind socket (to local address)",
            cmd  => fun(#{sock := Sock, lsa := LSA}) ->
@@ -7396,6 +7877,11 @@ api_a_send_and_recv_udp(InitState) ->
                                {error, _} = ERROR ->
                                    ERROR
                            end
+                   end},
+         #{desc => "sockname",
+           cmd  => fun(#{sock := Sock} = State) ->
+                           SA = sock_sockname(Sock),
+                           {ok, State#{sa => SA}}
                    end},
          #{desc => "announce ready (init)",
            cmd  => fun(#{tester := Tester}) ->
@@ -7422,17 +7908,28 @@ api_a_send_and_recv_udp(InitState) ->
                            ?SEV_AWAIT_CONTINUE(Tester, tester, recv)
                    end},
          #{desc => "try recv reply (with nowait)",
-           cmd  => fun(#{sock := Sock,
-                         recv := Recv,
-                         recv_sref := SR} = State) ->
+           cmd  => fun(#{sock     := Sock,
+                         recv     := Recv,
+                         recv_ref := Ref} = State) ->
                            case Recv(Sock) of
                                {select, {select_info, Tag, RecvRef}}
-                                 when SR =:= nowait ->
-                                   {ok, State#{recv_stag => Tag,
-                                               recv_sref => RecvRef}};
-                               {select, {select_info, Tag, SR}}
-                                 when is_reference(SR) ->
-                                   {ok, State#{recv_stag => Tag}};
+                                 when Ref =:= nowait ->
+                                   {ok, State#{async_tag => select,
+                                               recv_tag  => Tag,
+                                               recv_ref  => RecvRef}};
+                               {select, {select_info, Tag, Ref}}
+                                 when is_reference(Ref) ->
+                                   {ok, State#{async_tag => select,
+                                               recv_tag  => Tag}};
+                               {completion, {completion_info, Tag, RecvRef}}
+                                 when Ref =:= nowait ->
+                                   {ok, State#{async_tag => completion,
+                                               recv_tag  => Tag,
+                                               recv_ref  => RecvRef}};
+                               {completion, {completion_info, Tag, Ref}}
+                                 when is_reference(Ref) ->
+                                   {ok, State#{async_tag => completion,
+                                               recv_tag  => Tag}};
                                {ok, X} ->
                                    {error, {unexpected_select_info, X}};
                                {error, _} = ERROR ->
@@ -7445,9 +7942,19 @@ api_a_send_and_recv_udp(InitState) ->
                            ok
                    end},
          #{desc => "await select message",
-           cmd  => fun(#{sock := Sock, recv_sref := RecvRef}) ->
+           cmd  => fun(#{async_tag := select,
+                         sock      := Sock,
+                         recv_ref  := RecvRef}) ->
                            receive
                                {'$socket', Sock, select, RecvRef} ->
+                                   ok
+                           end;
+                      (#{async_tag := completion,
+                         sock      := Sock,
+                         recv_ref  := RecvRef}) ->
+                           receive
+                               {'$socket', Sock, completion,
+                                {RecvRef, {ok, _}}} ->
                                    ok
                            end
                    end},
@@ -7457,13 +7964,18 @@ api_a_send_and_recv_udp(InitState) ->
                            ok
                    end},
          #{desc => "now read the data (reply)",
-           cmd  => fun(#{sock := Sock, recv := Recv}) ->
+           cmd  => fun(#{async_tag := select,
+                         sock      := Sock,
+                         recv      := Recv}) ->
                            case Recv(Sock) of
                                {ok, {_Src, ?BASIC_REP}} ->
                                    ok;
                                {error, _} = ERROR ->
                                    ERROR
-                           end
+                           end;
+                      (#{async_tag := completion}) ->
+                           ?SEV_IPRINT("Already read!"),
+                           ok
                    end},
          #{desc => "announce ready (recv reply)",
            cmd  => fun(#{tester := Tester}) ->
@@ -7477,9 +7989,10 @@ api_a_send_and_recv_udp(InitState) ->
                            case ?SEV_AWAIT_TERMINATE(Tester, tester) of
                                ok ->
                                    State2 = maps:remove(tester,    State),
-                                   State3 = maps:remove(recv_stag, State2),
-                                   State4 = maps:remove(recv_sref, State3),
-                                   {ok, State4};
+                                   State3 = maps:remove(async_tag, State2),
+                                   State4 = maps:remove(recv_tag,  State3),
+                                   State5 = maps:remove(recv_ref,  State4),
+                                   {ok, State5};
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -7652,14 +8165,11 @@ api_a_send_and_recv_udp(InitState) ->
 %% select message). Note that we only do this for the recv,
 %% since its much more difficult to "arrange" for send.
 %% We *also* test async for accept.
-api_a_send_and_recv_tcp4(suite) ->
-    [];
-api_a_send_and_recv_tcp4(doc) ->
-    [];
 api_a_send_and_recv_tcp4(Config) when is_list(Config) ->
     ?TT(?SECS(10)),
     Nowait = nowait(Config),
     tc_try(api_a_send_and_recv_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Send = fun(Sock, Data) ->
                                   socket:send(Sock, Data)
@@ -7684,10 +8194,6 @@ api_a_send_and_recv_tcp4(Config) when is_list(Config) ->
 %% select message). Note that we only do this for the recv,
 %% since its much more difficult to "arrange" for send.
 %% We *also* test async for accept.
-api_a_send_and_recv_tcp6(suite) ->
-    [];
-api_a_send_and_recv_tcp6(doc) ->
-    [];
 api_a_send_and_recv_tcp6(Config) when is_list(Config) ->
     ?TT(?SECS(10)),
     Nowait = nowait(Config),
@@ -7717,14 +8223,14 @@ api_a_send_and_recv_tcp6(Config) when is_list(Config) ->
 %% select message). Note that we only do this for the recvmsg,
 %% since its much more difficult to "arrange" for sendmsg.
 %% We *also* test async for accept.
-api_a_sendmsg_and_recvmsg_tcp4(suite) ->
-    [];
-api_a_sendmsg_and_recvmsg_tcp4(doc) ->
-    [];
 api_a_sendmsg_and_recvmsg_tcp4(Config) when is_list(Config) ->
     ?TT(?SECS(10)),
     Nowait = nowait(Config),
     tc_try(api_a_sendmsg_and_recvmsg_tcp4,
+           fun() ->
+                   is_not_windows(),
+                   has_support_ipv4()
+           end,
            fun() ->
                    Send = fun(Sock, Data) ->
                                   Msg = #{iov => [Data]},
@@ -7757,10 +8263,6 @@ api_a_sendmsg_and_recvmsg_tcp4(Config) when is_list(Config) ->
 %% select message). Note that we only do this for the recvmsg,
 %% since its much more difficult to "arrange" for sendmsg.
 %% We *also* test async for accept.
-api_a_sendmsg_and_recvmsg_tcp6(suite) ->
-    [];
-api_a_sendmsg_and_recvmsg_tcp6(doc) ->
-    [];
 api_a_sendmsg_and_recvmsg_tcp6(Config) when is_list(Config) ->
     ?TT(?SECS(10)),
     Nowait = nowait(Config),
@@ -7854,20 +8356,40 @@ api_a_send_and_recv_tcp(Config, InitState) ->
                            case socket:accept(LSock, Nowait) of
                                {select, {select_info, Tag, Ref}}
                                  when Nowait =:= nowait ->
-                                   ?SEV_IPRINT("accept select nowait: "
+                                   ?SEV_IPRINT("select accept message: "
                                                "~n   Tag: ~p"
                                                "~n   Ref: ~p", [Tag, Ref]),
-                                   {ok, State#{accept_stag => Tag,
+                                   {ok, State#{sorc        => select,
+                                               accept_stag => Tag,
                                                accept_sref => Ref}};
                                {select, {select_info, Tag, Nowait}}
                                  when is_reference(Nowait) ->
-                                   ?SEV_IPRINT("accept select ref: "
+                                   ?SEV_IPRINT("select accept result: "
                                                "~n   Tag: ~p"
                                                "~n   Ref: ~p", [Tag, Nowait]),
-                                   {ok, State#{accept_stag => Tag,
+                                   {ok, State#{sorc        => select,
+                                               accept_stag => Tag,
                                                accept_sref => Nowait}};
+
+                               {completion, {completion_info, Tag, Ref}}
+                                 when Nowait =:= nowait ->
+                                   ?SEV_IPRINT("completion accept result: "
+                                               "~n   Tag: ~p"
+                                               "~n   Ref: ~p", [Tag, Ref]),
+                                   {ok, State#{sorc        => completion,
+                                               accept_stag => Tag,
+                                               accept_sref => Ref}};
+                               {completion, {completion_info, Tag, Nowait}}
+                                 when is_reference(Nowait) ->
+                                   ?SEV_IPRINT("completion accept result: "
+                                               "~n   Tag: ~p"
+                                               "~n   Ref: ~p", [Tag, Nowait]),
+                                   {ok, State#{sorc        => completion,
+                                               accept_stag => Tag,
+                                               accept_sref => Nowait}};
+
                                {ok, X} ->
-                                   {error, {unexpected_select_info, X}};
+                                   {error, {unexpected_success, X}};
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -7877,11 +8399,25 @@ api_a_send_and_recv_tcp(Config, InitState) ->
                            ?SEV_ANNOUNCE_READY(Tester, accept_select),
                            ok
                    end},
-         #{desc => "await select message",
-           cmd  => fun(#{lsock := Sock, accept_sref := Ref}) ->
+         #{desc => "await select|completion message",
+           cmd  => fun(#{lsock := Sock, accept_sref := Ref} = State) ->
                            receive
                                {'$socket', Sock, select, Ref} ->
-                                   ok
+                                   ?SEV_IPRINT("select message: "
+                                               "ready for accept"),
+                                   ok;
+                               {'$socket', Sock, completion,
+                                {Ref, {ok, CSock}}} ->
+                                   ?SEV_IPRINT("completion message: accepted: "
+                                               "~n   CSock: ~p", [Sock]),
+                                   {ok, State#{csock => CSock}}
+                           after 5000 ->
+                                   ?SEV_EPRINT("select|completion message timeout:"
+                                               "~n   Sock:          ~p"
+                                               "~n   Ref:           ~p"
+                                               "~n   Message Queue: ~p",
+                                               [Sock, Ref, mq()]),
+                                   {error, timeout}
                            end
                    end},
          #{desc => "announce ready (select)",
@@ -7889,8 +8425,9 @@ api_a_send_and_recv_tcp(Config, InitState) ->
                            ?SEV_ANNOUNCE_READY(Tester, select),
                            ok
                    end},
-         #{desc => "await connection (again)",
-           cmd  => fun(#{lsock := LSock} = State) ->
+         #{desc => "try accept (again)",
+           cmd  => fun(#{lsock := LSock, sorc := select} = State) ->
+                           ?SEV_IPRINT("try accept again"),
                            case socket:accept(LSock, nowait) of
                                {ok, Sock} ->
                                    ?SEV_IPRINT("accepted: "
@@ -7898,7 +8435,10 @@ api_a_send_and_recv_tcp(Config, InitState) ->
                                    {ok, State#{csock => Sock}};
                                {error, _} = ERROR ->
                                    ERROR
-                           end
+                           end;
+                       (#{sorc := completion})->
+                           ?SEV_IPRINT("already accepted"),
+                           ok
                    end},
          #{desc => "announce ready (accept)",
            cmd  => fun(#{tester := Tester}) ->
@@ -7911,8 +8451,8 @@ api_a_send_and_recv_tcp(Config, InitState) ->
                            ?SEV_AWAIT_CONTINUE(Tester, tester, recv_req)
                    end},
          #{desc => "try recv request (with nowait, expect select)",
-           cmd  => fun(#{csock := Sock,
-                         recv := Recv,
+           cmd  => fun(#{csock     := Sock,
+                         recv      := Recv,
                          recv_sref := SR} = State) ->
                            case Recv(Sock) of
                                {select, {select_info, Tag, Ref}}
@@ -7928,8 +8468,23 @@ api_a_send_and_recv_tcp(Config, InitState) ->
                                                "~n   Tag: ~p"
                                                "~n   Ref: ~p", [Tag, SR]),
                                    {ok, State#{recv_stag => Tag}};
+
+                               {completion, {completion_info, Tag, Ref}}
+                                 when SR =:= nowait ->
+                                   ?SEV_IPRINT("recv completion nowait: "
+                                               "~n   Tag: ~p"
+                                               "~n   Ref: ~p", [Tag, Ref]),
+                                   {ok, State#{recv_stag => Tag,
+                                               recv_sref => Ref}};
+                               {completion, {completion_info, Tag, SR}}
+                                 when is_reference(SR) ->
+                                   ?SEV_IPRINT("recv completion ref: "
+                                               "~n   Tag: ~p"
+                                               "~n   Ref: ~p", [Tag, SR]),
+                                   {ok, State#{recv_stag => Tag}};
+
                                {ok, X} ->
-                                   {error, {unexpected_select_info, X}};
+                                   {error, {unexpected_success, X}};
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -7939,11 +8494,20 @@ api_a_send_and_recv_tcp(Config, InitState) ->
                            ?SEV_ANNOUNCE_READY(Tester, recv_select),
                            ok
                    end},
-         #{desc => "await select message",
+         #{desc => "await select|completion message",
            cmd  => fun(#{csock := Sock, recv_sref := RecvRef}) ->
                            receive
                                {'$socket', Sock, select, RecvRef} ->
-                                   ok
+                                   ok;
+                               {'$socket', Sock, completion,
+                                {RecvRef, {ok, ?BASIC_REQ}}} ->
+                                   ?SEV_IPRINT("received expected data"),
+                                   ok;
+                               {'$socket', Sock, completion,
+                                {RecvRef, {error, Reason} = ERROR}} ->
+                                   ?SEV_EPRINT("received unexpected error: "
+                                               "~n   ~p", [Reason]),
+                                   ERROR
                            end
                    end},
          #{desc => "announce ready (select)",
@@ -7952,13 +8516,19 @@ api_a_send_and_recv_tcp(Config, InitState) ->
                            ok
                    end},
          #{desc => "now read the data (request)",
-           cmd  => fun(#{csock := Sock, recv := Recv} = _State) ->
+           cmd  => fun(#{sorc  := select,
+                         csock := Sock,
+                         recv  := Recv} = _State) ->
                            case Recv(Sock) of
                                {ok, ?BASIC_REQ} ->
+                                   ?SEV_IPRINT("read expected data"),
                                    ok;
                                {error, _} = ERROR ->
                                    ERROR
-                           end
+                           end;
+                      (#{sorc := completion}) ->
+                           ?SEV_IPRINT("already received"),
+                           ok
                    end},
          #{desc => "announce ready (recv request)",
            cmd  => fun(#{tester := Tester}) ->
@@ -8078,7 +8648,7 @@ api_a_send_and_recv_tcp(Config, InitState) ->
                            ok
                    end},
 
-         #{desc => "try recv reply (with nowait, expect select)",
+         #{desc => "try recv reply (with nowait, expect select|completion)",
            cmd  => fun(#{sock := Sock,
                          recv := Recv,
                          recv_sref := SR} = State) ->
@@ -8088,16 +8658,35 @@ api_a_send_and_recv_tcp(Config, InitState) ->
                                    ?SEV_IPRINT("recv select nowait: "
                                                "~n   Tag: ~p"
                                                "~n   Ref: ~p", [Tag, Ref]),
-                                   {ok, State#{recv_stag => Tag,
+                                   {ok, State#{sorc      => select,
+                                               recv_stag => Tag,
                                                recv_sref => Ref}};
                                {select, {select_info, Tag, SR}}
                                  when is_reference(SR) ->
                                    ?SEV_IPRINT("recv select ref: "
                                                "~n   Tag: ~p"
                                                "~n   Ref: ~p", [Tag, SR]),
-                                   {ok, State#{recv_stag => Tag}};
+                                   {ok, State#{sorc      => select,
+                                               recv_stag => Tag}};
+
+                               {completion, {completion_info, Tag, Ref}}
+                                 when SR =:= nowait ->
+                                   ?SEV_IPRINT("recv completion nowait: "
+                                               "~n   Tag: ~p"
+                                               "~n   Ref: ~p", [Tag, Ref]),
+                                   {ok, State#{sorc      => completion,
+                                               recv_stag => Tag,
+                                               recv_sref => Ref}};
+                               {completion, {completion_info, Tag, SR}}
+                                 when is_reference(SR) ->
+                                   ?SEV_IPRINT("recv completion ref: "
+                                               "~n   Tag: ~p"
+                                               "~n   Ref: ~p", [Tag, SR]),
+                                   {ok, State#{sorc      => completion,
+                                               recv_stag => Tag}};
+
                                {ok, X} ->
-                                   {error, {unexpected_select_info, X}};
+                                   {error, {unexpected_success, X}};
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -8111,6 +8700,10 @@ api_a_send_and_recv_tcp(Config, InitState) ->
            cmd  => fun(#{sock := Sock, recv_sref := RecvRef}) ->
                            receive
                                {'$socket', Sock, select, RecvRef} ->
+                                   ok;
+                               {'$socket', Sock, completion,
+                                {RecvRef, {ok, ?BASIC_REP}}} ->
+                                   ?SEV_IPRINT("received expected reply"),
                                    ok
                            end
                    end},
@@ -8120,8 +8713,13 @@ api_a_send_and_recv_tcp(Config, InitState) ->
                            ok
                    end},
          #{desc => "now read the data (reply)",
-           cmd  => fun(#{sock := Sock, recv := Recv}) ->
+           cmd  => fun(#{sorc := select, sock := Sock, recv := Recv}) ->
                            {ok, ?BASIC_REP} = Recv(Sock),
+                           ?SEV_IPRINT("[select] received expected reply"),
+                           ok;
+                      (#{sorc := completion}) ->
+                           ?SEV_IPRINT("[completion] "
+                                       "expected reply already received"),
                            ok
                    end},
          #{desc => "announce ready (recv reply)",
@@ -8320,14 +8918,11 @@ api_a_send_and_recv_tcp(Config, InitState) ->
 %% Basically we make an async (Timeout = nowait) call to recvfrom,
 %% wait some time and then cancel. IPv4
 %%
-api_a_recvfrom_cancel_udp4(suite) ->
-    [];
-api_a_recvfrom_cancel_udp4(doc) ->
-    [];
 api_a_recvfrom_cancel_udp4(Config) when is_list(Config) ->
     ?TT(?SECS(10)),
     Nowait = nowait(Config),
-    tc_try(api_a_recvfrom_cancel_udp4,
+    tc_try(?FUNCTION_NAME,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Recv = fun(Sock) ->
                                   case socket:recvfrom(Sock, 0, Nowait) of
@@ -8335,13 +8930,15 @@ api_a_recvfrom_cancel_udp4(Config) when is_list(Config) ->
                                           OK;
                                       {select, _} = SELECT ->
                                           SELECT;
+                                      {completion, _} = COMPLETION ->
+                                          COMPLETION;
                                       {error, _} = ERROR ->
                                           ERROR
                                   end
                           end,
-                   InitState = #{domain => inet,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_recv_cancel_udp(InitState)
            end).
 
@@ -8352,14 +8949,10 @@ api_a_recvfrom_cancel_udp4(Config) when is_list(Config) ->
 %% Basically we make an async (Timeout = nowait) call to recvfrom,
 %% wait some time and then cancel. IPv6
 %%
-api_a_recvfrom_cancel_udp6(suite) ->
-    [];
-api_a_recvfrom_cancel_udp6(doc) ->
-    [];
 api_a_recvfrom_cancel_udp6(Config) when is_list(Config) ->
     ?TT(?SECS(10)),
     Nowait = nowait(Config),
-    tc_try(api_a_recvfrom_cancel_udp6,
+    tc_try(?FUNCTION_NAME,
            fun() -> has_support_ipv6() end,
            fun() ->
                    Recv = fun(Sock) ->
@@ -8368,13 +8961,15 @@ api_a_recvfrom_cancel_udp6(Config) when is_list(Config) ->
                                           OK;
                                       {select, _} = SELECT ->
                                           SELECT;
+                                      {completion, _} = COMPLETION ->
+                                          COMPLETION;
                                       {error, _} = ERROR ->
                                           ERROR
                                   end
                           end,
-                   InitState = #{domain => inet6,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet6,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_recv_cancel_udp(InitState)
            end).
 
@@ -8385,14 +8980,11 @@ api_a_recvfrom_cancel_udp6(Config) when is_list(Config) ->
 %% Basically we make an async (Timeout = nowait) call to recvmsg,
 %% wait some time and then cancel. IPv4
 %%
-api_a_recvmsg_cancel_udp4(suite) ->
-    [];
-api_a_recvmsg_cancel_udp4(doc) ->
-    [];
 api_a_recvmsg_cancel_udp4(Config) when is_list(Config) ->
     ?TT(?SECS(10)),
     Nowait = nowait(Config),
-    tc_try(api_a_recvmsg_cancel_udp4,
+    tc_try(?FUNCTION_NAME,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Recv = fun(Sock) ->
                                   case socket:recvmsg(Sock, Nowait) of
@@ -8400,13 +8992,15 @@ api_a_recvmsg_cancel_udp4(Config) when is_list(Config) ->
                                           OK;
                                       {select, _} = SELECT ->
                                           SELECT;
+                                      {completion, _} = COMPLETION ->
+                                          COMPLETION;
                                       {error, _} = ERROR ->
                                           ERROR
                                   end
                           end,
-                   InitState = #{domain => inet,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_recv_cancel_udp(InitState)
            end).
 
@@ -8417,14 +9011,10 @@ api_a_recvmsg_cancel_udp4(Config) when is_list(Config) ->
 %% Basically we make an async (Timeout = nowait) call to recvmsg,
 %% wait some time and then cancel. IPv6
 %%
-api_a_recvmsg_cancel_udp6(suite) ->
-    [];
-api_a_recvmsg_cancel_udp6(doc) ->
-    [];
 api_a_recvmsg_cancel_udp6(Config) when is_list(Config) ->
     ?TT(?SECS(10)),
     Nowait = nowait(Config),
-    tc_try(api_a_recvmsg_cancel_udp6,
+    tc_try(?FUNCTION_NAME,
            fun() -> has_support_ipv6() end,
            fun() ->
                    Recv = fun(Sock) ->
@@ -8433,13 +9023,15 @@ api_a_recvmsg_cancel_udp6(Config) when is_list(Config) ->
                                           OK;
                                       {select, _} = SELECT ->
                                           SELECT;
+                                      {completion, _} = COMPLETION ->
+                                          COMPLETION;
                                       {error, _} = ERROR ->
                                           ERROR
                                   end
                           end,
-                   InitState = #{domain => inet6,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet6,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_recv_cancel_udp(InitState)
            end).
 
@@ -8499,19 +9091,28 @@ api_a_recv_cancel_udp(InitState) ->
            cmd  => fun(#{tester := Tester} = _State) ->
                            ?SEV_AWAIT_CONTINUE(Tester, tester, recv)
                    end},
-         #{desc => "try recv request (with nowait, expect select)",
-           cmd  => fun(#{sock := Sock,
-                         recv := Recv,
-                         recv_sref := SR} = State) ->
+         #{desc => "try recv request (with nowait, expect select|completion)",
+           cmd  => fun(#{sock     := Sock,
+                         recv     := Recv,
+                         recv_ref := Ref} = State) ->
                            case Recv(Sock) of
-                               {select, SelectInfo} when SR =:= nowait ->
-                                   {ok, State#{recv_select_info => SelectInfo}};
+                               {select, SI} when Ref =:= nowait ->
+                                   {ok, State#{recv_select_info => SI}};
                                {select,
-                                {select_info, _Tag, SR} = SelectInfo}
-                                 when is_reference(SR) ->
-                                   {ok, State#{recv_select_info => SelectInfo}};
+                                {select_info, _Tag, Ref} = SI}
+                                 when is_reference(Ref) ->
+                                   {ok, State#{recv_select_info => SI}};
+
+                               {completion, CI} when Ref =:= nowait ->
+                                   {ok, State#{recv_completion_info => CI}};
+                               {completion,
+                                {completion_info, _Tag, Ref} = CI}
+                                 when is_reference(Ref) ->
+                                   {ok, State#{recv_completion_info => CI}};
+
                                {ok, X} ->
-                                   {error, {unexpected_select_info, X}};
+                                   {error, {unexpected_success, X}};
+
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -8521,11 +9122,15 @@ api_a_recv_cancel_udp(InitState) ->
                            ?SEV_ANNOUNCE_READY(Tester, recv_select),
                            ok
                    end},
-         #{desc => "await select message (without success)",
+         #{desc => "wait for select message - without success",
            cmd  => fun(#{sock := Sock}) ->
                            receive
                                {'$socket', Sock, select, Ref} ->
-                                   {error, {unexpected_select, Ref}}
+                                   {error, {unexpected_select, Ref}};
+
+                               {'$socket', Sock, completion, C} ->
+                                   {error, {unexpected_completion, C}}
+
                            after 5000 ->
                                    ok
                            end
@@ -8540,9 +9145,12 @@ api_a_recv_cancel_udp(InitState) ->
                            ?SEV_AWAIT_CONTINUE(Tester, tester, cancel)
                    end},
          #{desc => "cancel",
-           cmd  => fun(#{sock := Sock, recv_select_info := SelectInfo}) ->
-                           ok = socket:cancel(Sock, SelectInfo)
+           cmd  => fun(#{sock := Sock, recv_select_info := SI}) ->
+                           ok = socket:cancel(Sock, SI);
+                      (#{sock := Sock, recv_completion_info := CI}) ->
+                           ok = socket:cancel(Sock, CI)
                    end},
+
          #{desc => "announce ready (cancel)",
            cmd  => fun(#{tester := Tester}) ->
                            ?SEV_ANNOUNCE_READY(Tester, cancel),
@@ -8554,11 +9162,10 @@ api_a_recv_cancel_udp(InitState) ->
            cmd  => fun(#{tester := Tester} = State) ->
                            case ?SEV_AWAIT_TERMINATE(Tester, tester) of
                                ok ->
-                                   State2 = maps:remove(tester,    State),
-                                   State3 = maps:remove(recv_stag, State2),
-                                   State4 = maps:remove(recv_sref, State3),
-                                   State5 = maps:remove(req_src,   State4),
-                                   {ok, State5};
+                                   State2 = maps:remove(tester,   State),
+                                   State3 = maps:remove(recv_ref, State2),
+                                   State4 = maps:remove(req_src,  State3),
+                                   {ok, State4};
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -8661,14 +9268,11 @@ api_a_recv_cancel_udp(InitState) ->
 %% Basically we make an async (Timeout = nowait) call to accept,
 %% wait some time and then cancel. IPv4
 %%
-api_a_accept_cancel_tcp4(suite) ->
-    [];
-api_a_accept_cancel_tcp4(doc) ->
-    [];
 api_a_accept_cancel_tcp4(Config) when is_list(Config) ->
     ?TT(?SECS(10)),
     Nowait = nowait(Config),
-    tc_try(api_a_accept_cancel_tcp4,
+    tc_try(?FUNCTION_NAME,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Accept = fun(Sock) ->
                                     case socket:accept(Sock, Nowait) of
@@ -8676,13 +9280,15 @@ api_a_accept_cancel_tcp4(Config) when is_list(Config) ->
                                             OK;
                                         {select, _} = SELECT ->
                                             SELECT;
+                                        {completion, _} = COMPLETION ->
+                                            COMPLETION;
                                         {error, _} = ERROR ->
                                             ERROR
                                     end
                             end,
-                   InitState = #{domain => inet,
-                                 accept => Accept,
-                                 accept_sref => Nowait},
+                   InitState = #{domain     => inet,
+                                 accept     => Accept,
+                                 accept_ref => Nowait},
                    ok = api_a_accept_cancel_tcp(InitState)
            end).
 
@@ -8694,14 +9300,10 @@ api_a_accept_cancel_tcp4(Config) when is_list(Config) ->
 %% Basically we make an async (Timeout = nowait) call to accept,
 %% wait some time and then cancel. IPv6
 %%
-api_a_accept_cancel_tcp6(suite) ->
-    [];
-api_a_accept_cancel_tcp6(doc) ->
-    [];
 api_a_accept_cancel_tcp6(Config) when is_list(Config) ->
     ?TT(?SECS(10)),
     Nowait = nowait(Config),
-    tc_try(api_a_accept_cancel_tcp6,
+    tc_try(?FUNCTION_NAME,
            fun() -> has_support_ipv6() end,
            fun() ->
                    Accept = fun(Sock) ->
@@ -8710,13 +9312,15 @@ api_a_accept_cancel_tcp6(Config) when is_list(Config) ->
                                             OK;
                                         {select, _} = SELECT ->
                                             SELECT;
+                                        {completion, _} = COMPLETION ->
+                                            COMPLETION;
                                         {error, _} = ERROR ->
                                             ERROR
                                     end
                             end,
-                   InitState = #{domain => inet6,
-                                 accept => Accept,
-                                 accept_sref => Nowait},
+                   InitState = #{domain     => inet6,
+                                 accept     => Accept,
+                                 accept_ref => Nowait},
                    ok = api_a_accept_cancel_tcp(InitState)
            end).
 
@@ -8782,28 +9386,39 @@ api_a_accept_cancel_tcp(InitState) ->
                            ?SEV_AWAIT_CONTINUE(Tester, tester, accept)
                    end},
          #{desc => "await connection (nowait)",
-           cmd  => fun(#{lsock := LSock,
-                         accept := Accept,
-                         accept_sref := SR} = State) ->
+           cmd  => fun(#{lsock      := LSock,
+                         accept     := Accept,
+                         accept_ref := Ref} = State) ->
                            case Accept(LSock) of
-                               {select, {select_info, T, R} = SelectInfo}
-                                 when SR =:= nowait ->
+                               {select, {select_info, T, R} = SI}
+                                 when Ref =:= nowait ->
                                    ?SEV_IPRINT("accept select nowait: "
                                                "~n   T: ~p"
                                                "~n   R: ~p", [T, R]),
-                                   {ok,
-                                    State#{accept_select_info =>
-                                               SelectInfo}};
-                               {select, {select_info, T, SR} = SelectInfo}
-                                 when is_reference(SR) ->
+                                   {ok, State#{accept_select_info => SI}};
+                               {select, {select_info, T, Ref} = SI}
+                                 when is_reference(Ref) ->
                                    ?SEV_IPRINT("accept select ref: "
                                                "~n   T: ~p"
-                                               "~n   R: ~p", [T, SR]),
-                                   {ok,
-                                    State#{accept_select_info =>
-                                               SelectInfo}};
+                                               "~n   R: ~p", [T, Ref]),
+                                   {ok, State#{accept_select_info => SI}};
+
+                               {completion, {completion_info, T, R} = CI}
+                                 when Ref =:= nowait ->
+                                   ?SEV_IPRINT("accept completion nowait: "
+                                               "~n   T: ~p"
+                                               "~n   R: ~p", [T, R]),
+                                   {ok, State#{accept_completion_info => CI}};
+                               {completion, {completion_info, T, Ref} = CI}
+                                 when is_reference(Ref) ->
+                                   ?SEV_IPRINT("accept completion ref: "
+                                               "~n   T: ~p"
+                                               "~n   R: ~p", [T, Ref]),
+                                   {ok, State#{accept_completion_info => CI}};
+
                                {ok, X} ->
-                                   {error, {unexpected_select_info, X}};
+                                   {error, {unexpected_success, X}};
+
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -8817,7 +9432,11 @@ api_a_accept_cancel_tcp(InitState) ->
            cmd  => fun(#{lsock := Sock}) ->
                            receive
                                {'$socket', Sock, select, Ref} ->
-                                   {error, {unexpected_select, Ref}}
+                                   {error, {unexpected_select, Ref}};
+
+                               {'$socket', Sock, completion, C} ->
+                                   {error, {unexpected_completion, C}}
+
                            after 5000 ->
                                    ok
                            end
@@ -8832,8 +9451,12 @@ api_a_accept_cancel_tcp(InitState) ->
                            ?SEV_AWAIT_CONTINUE(Tester, tester, cancel)
                    end},
          #{desc => "cancel",
-           cmd  => fun(#{lsock := Sock, accept_select_info := SelectInfo}) ->
-                           ok = socket:cancel(Sock, SelectInfo)
+           cmd  => fun(#{lsock              := Sock,
+                         accept_select_info := SelectInfo}) ->
+                           ok = socket:cancel(Sock, SelectInfo);
+                      (#{lsock                  := Sock,
+                         accept_completion_info := CompletionInfo}) ->
+                           ok = socket:cancel(Sock, CompletionInfo)
                    end},
          #{desc => "announce ready (cancel)",
            cmd  => fun(#{tester := Tester}) ->
@@ -8941,21 +9564,18 @@ api_a_accept_cancel_tcp(InitState) ->
 %% Basically we make an async (Timeout = nowait) call to recv,
 %% wait some time and then cancel. IPv4
 %%
-api_a_recv_cancel_tcp4(suite) ->
-    [];
-api_a_recv_cancel_tcp4(doc) ->
-    [];
 api_a_recv_cancel_tcp4(Config) when is_list(Config) ->
     ?TT(?SECS(10)),
     Nowait = nowait(Config),
-    tc_try(api_a_recv_cancel_tcp4,
+    tc_try(?FUNCTION_NAME,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Recv = fun(Sock) ->
                                   socket:recv(Sock, 0, Nowait)
                           end,
-                   InitState = #{domain => inet,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_recv_cancel_tcp(InitState)
            end).
 
@@ -8966,22 +9586,18 @@ api_a_recv_cancel_tcp4(Config) when is_list(Config) ->
 %% Basically we make an async (Timeout = nowait) call to recv,
 %% wait some time and then cancel. IPv6
 %%
-api_a_recv_cancel_tcp6(suite) ->
-    [];
-api_a_recv_cancel_tcp6(doc) ->
-    [];
 api_a_recv_cancel_tcp6(Config) when is_list(Config) ->
     ?TT(?SECS(10)),
     Nowait = nowait(Config),
-    tc_try(api_a_recv_cancel_tcp6,
+    tc_try(?FUNCTION_NAME,
            fun() -> has_support_ipv6() end,
            fun() ->
                    Recv = fun(Sock) ->
                                   socket:recv(Sock, 0, Nowait)
                           end,
-                   InitState = #{domain => inet6,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet6,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_recv_cancel_tcp(InitState)
            end).
 
@@ -8992,21 +9608,21 @@ api_a_recv_cancel_tcp6(Config) when is_list(Config) ->
 %% Basically we make an async (Timeout = nowait) call to recvmsg,
 %% wait some time and then cancel. IPv4
 %%
-api_a_recvmsg_cancel_tcp4(suite) ->
-    [];
-api_a_recvmsg_cancel_tcp4(doc) ->
-    [];
 api_a_recvmsg_cancel_tcp4(Config) when is_list(Config) ->
     ?TT(?SECS(10)),
     Nowait = nowait(Config),
-    tc_try(api_a_recvmsg_cancel_tcp4,
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   is_not_windows(),
+                   has_support_ipv4()
+           end,
            fun() ->
                    Recv = fun(Sock) ->
                                   socket:recvmsg(Sock, Nowait)
                           end,
-                   InitState = #{domain => inet,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_recv_cancel_tcp(InitState)
            end).
 
@@ -9017,22 +9633,21 @@ api_a_recvmsg_cancel_tcp4(Config) when is_list(Config) ->
 %% Basically we make an async (Timeout = nowait) call to recvmsg,
 %% wait some time and then cancel. IPv6
 %%
-api_a_recvmsg_cancel_tcp6(suite) ->
-    [];
-api_a_recvmsg_cancel_tcp6(doc) ->
-    [];
 api_a_recvmsg_cancel_tcp6(Config) when is_list(Config) ->
     ?TT(?SECS(10)),
     Nowait = nowait(Config),
-    tc_try(api_a_recvmsg_cancel_tcp6,
-           fun() -> has_support_ipv6() end,
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   is_not_windows(),
+                   has_support_ipv6()
+           end,
            fun() ->
                    Recv = fun(Sock) ->
                                   socket:recvmsg(Sock, Nowait)
                           end,
-                   InitState = #{domain => inet6,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet6,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_recv_cancel_tcp(InitState)
            end).
 
@@ -9115,27 +9730,43 @@ api_a_recv_cancel_tcp(InitState) ->
            cmd  => fun(#{tester := Tester} = _State) ->
                            ?SEV_AWAIT_CONTINUE(Tester, tester, recv)
                    end},
-         #{desc => "try recv request (with nowait, expect select)",
-           cmd  => fun(#{csock := Sock,
-                         recv := Recv,
-                         recv_sref := SR} = State) ->
+
+         #{desc => "try recv request (with nowait, expect select|completion)",
+           cmd  => fun(#{csock    := Sock,
+                         recv     := Recv,
+                         recv_ref := Ref} = State) ->
                            case Recv(Sock) of
-                               {select, {select_info, T, R} = SelectInfo}
-                                 when SR =:= nowait ->
+                               {select, {select_info, T, R} = SI}
+                                 when Ref =:= nowait ->
                                    ?SEV_IPRINT("recv select nowait: "
                                                "~n   Tag: ~p"
                                                "~n   Ref: ~p", [T, R]),
-                                   {ok,
-                                    State#{recv_select_info => SelectInfo}};
-                               {select, {select_info, T, SR} = SelectInfo}
-                                 when is_reference(SR) ->
+                                   {ok, State#{recv_select_info => SI}};
+                               {select, {select_info, T, Ref} = SI}
+                                 when is_reference(Ref) ->
                                    ?SEV_IPRINT("recv select ref: "
                                                "~n   Tag: ~p"
-                                               "~n   Ref: ~p", [T, SR]),
-                                   {ok,
-                                    State#{recv_select_info => SelectInfo}};
+                                               "~n   Ref: ~p", [T, Ref]),
+                                   {ok, State#{recv_select_info => SI}};
+
+                               {completion,
+                                {completion_info, T, R} = CI}
+                                 when Ref =:= nowait ->
+                                   ?SEV_IPRINT("recv completion nowait: "
+                                               "~n   Tag: ~p"
+                                               "~n   Ref: ~p", [T, R]),
+                                   {ok, State#{recv_completion_info => CI}};
+                               {completion,
+                                {completion_info, T, Ref} = CI}
+                                 when is_reference(Ref) ->
+                                   ?SEV_IPRINT("recv completion ref: "
+                                               "~n   Tag: ~p"
+                                               "~n   Ref: ~p", [T, Ref]),
+                                   {ok, State#{recv_completion_info => CI}};
+
                                {ok, X} ->
-                                   {error, {unexpected_select_info, X}};
+                                   {error, {unexpected_success, X}};
+
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -9149,7 +9780,11 @@ api_a_recv_cancel_tcp(InitState) ->
            cmd  => fun(#{csock := Sock}) ->
                            receive
                                {'$socket', Sock, select, Ref} ->
-                                   {error, {unexpected_select, Ref}}
+                                   {error, {unexpected_select, Ref}};
+
+                               {'$socket', Sock, completion, C} ->
+                                   {error, {unexpected_completion, C}}
+
                            after 5000 ->
                                    ok
                            end
@@ -9164,8 +9799,11 @@ api_a_recv_cancel_tcp(InitState) ->
                            ?SEV_AWAIT_CONTINUE(Tester, tester, cancel)
                    end},
          #{desc => "cancel",
-           cmd  => fun(#{csock := Sock, recv_select_info := SelectInfo}) ->
-                           ok = socket:cancel(Sock, SelectInfo)
+           cmd  => fun(#{csock := Sock, recv_select_info := SI}) ->
+                           ok = socket:cancel(Sock, SI);
+
+                      (#{csock := Sock, recv_completion_info := CI}) ->
+                           ok = socket:cancel(Sock, CI)
                    end},
          #{desc => "announce ready (cancel)",
            cmd  => fun(#{tester := Tester}) ->
@@ -9407,14 +10045,11 @@ api_a_recv_cancel_tcp(InitState) ->
 %% (from *several* processes), wait some time and then cancel.
 %% This should result in abort messages to the 'other' processes. IPv4
 %%
-api_a_mrecvfrom_cancel_udp4(suite) ->
-    [];
-api_a_mrecvfrom_cancel_udp4(doc) ->
-    [];
 api_a_mrecvfrom_cancel_udp4(Config) when is_list(Config) ->
     ?TT(?SECS(20)),
     Nowait = nowait(Config),
     tc_try(api_a_mrecvfrom_cancel_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Recv = fun(Sock) ->
                                   case socket:recvfrom(Sock, 0, Nowait) of
@@ -9422,13 +10057,15 @@ api_a_mrecvfrom_cancel_udp4(Config) when is_list(Config) ->
                                           OK;
                                       {select, _} = SELECT ->
                                           SELECT;
+                                      {completion, _} = COMPLETION ->
+                                          COMPLETION;
                                       {error, _} = ERROR ->
                                           ERROR
                                   end
                           end,
-                   InitState = #{domain => inet,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_mrecv_cancel_udp(InitState)
            end).
 
@@ -9440,10 +10077,6 @@ api_a_mrecvfrom_cancel_udp4(Config) when is_list(Config) ->
 %% (from *several* processes), wait some time and then cancel.
 %% This should result in abort messages to the 'other' processes. IPv6
 %%
-api_a_mrecvfrom_cancel_udp6(suite) ->
-    [];
-api_a_mrecvfrom_cancel_udp6(doc) ->
-    [];
 api_a_mrecvfrom_cancel_udp6(Config) when is_list(Config) ->
     ?TT(?SECS(20)),
     Nowait = nowait(Config),
@@ -9456,13 +10089,15 @@ api_a_mrecvfrom_cancel_udp6(Config) when is_list(Config) ->
                                           OK;
                                       {select, _} = SELECT ->
                                           SELECT;
+                                      {completion, _} = COMPLETION ->
+                                          COMPLETION;
                                       {error, _} = ERROR ->
                                           ERROR
                                   end
                           end,
-                   InitState = #{domain => inet6,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet6,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_mrecv_cancel_udp(InitState)
            end).
 
@@ -9474,14 +10109,11 @@ api_a_mrecvfrom_cancel_udp6(Config) when is_list(Config) ->
 %% (from *several* processes), wait some time and then cancel.
 %% This should result in abort messages to the 'other' processes. IPv4
 %%
-api_a_mrecvmsg_cancel_udp4(suite) ->
-    [];
-api_a_mrecvmsg_cancel_udp4(doc) ->
-    [];
 api_a_mrecvmsg_cancel_udp4(Config) when is_list(Config) ->
     ?TT(?SECS(20)),
     Nowait = nowait(Config),
     tc_try(api_a_mrecvmsg_cancel_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Recv = fun(Sock) ->
                                   case socket:recvmsg(Sock, Nowait) of
@@ -9489,13 +10121,15 @@ api_a_mrecvmsg_cancel_udp4(Config) when is_list(Config) ->
                                           OK;
                                       {select, _} = SELECT ->
                                           SELECT;
+                                      {completion, _} = COMPLETION ->
+                                          COMPLETION;
                                       {error, _} = ERROR ->
                                           ERROR
                                   end
                           end,
-                   InitState = #{domain => inet,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_mrecv_cancel_udp(InitState)
            end).
 
@@ -9507,10 +10141,6 @@ api_a_mrecvmsg_cancel_udp4(Config) when is_list(Config) ->
 %% (from *several* processes), wait some time and then cancel.
 %% This should result in abort messages to the 'other' processes. IPv6
 %%
-api_a_mrecvmsg_cancel_udp6(suite) ->
-    [];
-api_a_mrecvmsg_cancel_udp6(doc) ->
-    [];
 api_a_mrecvmsg_cancel_udp6(Config) when is_list(Config) ->
     ?TT(?SECS(20)),
     Nowait = nowait(Config),
@@ -9523,13 +10153,15 @@ api_a_mrecvmsg_cancel_udp6(Config) when is_list(Config) ->
                                           OK;
                                       {select, _} = SELECT ->
                                           SELECT;
+                                      {completion, _} = COMPLETION ->
+                                          COMPLETION;
                                       {error, _} = ERROR ->
                                           ERROR
                                   end
                           end,
-                   InitState = #{domain => inet6,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet6,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_mrecv_cancel_udp(InitState)
            end).
 
@@ -9589,21 +10221,27 @@ api_a_mrecv_cancel_udp(InitState) ->
                            ?SEV_AWAIT_CONTINUE(Tester, tester, recv)
                    end},
          #{desc => "try recv request (with nowait, expect select)",
-           cmd  => fun(#{sock := Sock,
-                         recv := Recv,
-                         recv_sref := SR} = State) ->
+           cmd  => fun(#{sock     := Sock,
+                         recv     := Recv,
+                         recv_ref := Ref} = State) ->
                            case Recv(Sock) of
-                               {select, SelectInfo}
-                                 when SR =:= nowait ->
-                                   {ok,
-                                    State#{recv_select_info => SelectInfo}};
-                               {select,
-                                {select_info, _Tag, SR} = SelectInfo}
-                                 when is_reference(SR) ->
-                                   {ok,
-                                    State#{recv_select_info => SelectInfo}};
+                               {select, SI}
+                                 when Ref =:= nowait ->
+                                   {ok, State#{recv_select_info => SI}};
+                               {select, {select_info, _Tag, Ref} = SI}
+                                 when is_reference(Ref) ->
+                                   {ok, State#{recv_select_info => SI}};
+
+                               {completion, CI}
+                                 when Ref =:= nowait ->
+                                   {ok, State#{recv_completion_info => CI}};
+                               {completion, {completion_info, _Tag, Ref} = CI}
+                                 when is_reference(Ref) ->
+                                   {ok, State#{recv_completion_info => CI}};
+
                                {ok, X} ->
-                                   {error, {unexpected_select_info, X}};
+                                   {error, {unexpected_success, X}};
+
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -9615,10 +10253,23 @@ api_a_mrecv_cancel_udp(InitState) ->
                    end},
          #{desc => "await abort message",
            cmd  => fun(#{sock             := Sock,
-                         recv_select_info := {select_info, _, Ref}} = State) ->
+                         recv_select_info := {select_info, _, Ref}} =
+                           State) ->
                            receive
                                {'$socket', Sock, select, Ref} ->
                                    {error, {unexpected_select, Ref}};
+                               {'$socket', Sock, abort, {Ref, closed}} ->
+                                   {ok, maps:remove(sock, State)}
+                           after 5000 ->
+                                   ?SEV_EPRINT("message queue: ~p", [mq()]),
+                                   {error, timeout}
+                           end;
+                      (#{sock                 := Sock,
+                         recv_completion_info := {completion_info, _, Ref}} = 
+                           State) ->
+                           receive
+                               {'$socket', Sock, completion, {Ref, CS}} ->
+                                   {error, {unexpected_completion, CS}};
                                {'$socket', Sock, abort, {Ref, closed}} ->
                                    {ok, maps:remove(sock, State)}
                            after 5000 ->
@@ -9637,11 +10288,9 @@ api_a_mrecv_cancel_udp(InitState) ->
            cmd  => fun(#{tester := Tester} = State) ->
                            case ?SEV_AWAIT_TERMINATE(Tester, tester) of
                                ok ->
-                                   State2 = maps:remove(tester,    State),
-                                   State3 = maps:remove(recv_stag, State2),
-                                   State4 = maps:remove(recv_sref, State3),
-                                   State5 = maps:remove(req_src,   State4),
-                                   {ok, State5};
+                                   State2 = maps:remove(tester,   State),
+                                   State3 = maps:remove(recv_ref, State2),
+                                   {ok, State3};
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -9677,20 +10326,27 @@ api_a_mrecv_cancel_udp(InitState) ->
                            ?SEV_AWAIT_CONTINUE(Tester, tester, recv)
                    end},
          #{desc => "try recv request (with nowait, expect select)",
-           cmd  => fun(#{sock := Sock,
-                         recv := Recv,
-                         recv_sref := SR} = State) ->
+           cmd  => fun(#{sock     := Sock,
+                         recv     := Recv,
+                         recv_ref := Ref} = State) ->
                            case Recv(Sock) of
-                               {select, SelectInfo} when SR =:= nowait ->
-                                   {ok,
-                                    State#{recv_select_info => SelectInfo}};
+                               {select, SI} when Ref =:= nowait ->
+                                   {ok, State#{recv_select_info => SI}};
                                {select,
-                                {select_info, _Tag, SR} = SelectInfo}
-                                 when is_reference(SR) ->
-                                   {ok,
-                                    State#{recv_select_info => SelectInfo}};
+                                {select_info, _Tag, Ref} = SI}
+                                 when is_reference(Ref) ->
+                                   {ok, State#{recv_select_info => SI}};
+
+                               {completion, CI} when Ref =:= nowait ->
+                                   {ok, State#{recv_completion_info => CI}};
+                               {completion,
+                                {completion_info, _Tag, Ref} = CI}
+                                 when is_reference(Ref) ->
+                                   {ok, State#{recv_completion_info => CI}};
+
                                {ok, X} ->
-                                   {error, {unexpected_select_info, X}};
+                                   {error, {unexpected_success, X}};
+
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -9711,6 +10367,19 @@ api_a_mrecv_cancel_udp(InitState) ->
                            after 5000 ->
                                    ?SEV_EPRINT("message queue: ~p", [mq()]),
                                    {error, timeout}
+                           end;
+
+                      (#{sock                 := Sock,
+                         recv_completion_info := {completion_info, _, Ref}} =
+                           State) ->
+                           receive
+                               {'$socket', Sock, completion, {Ref, CS}} ->
+                                   {error, {unexpected_completion, CS}};
+                               {'$socket', Sock, abort, {Ref, closed}} ->
+                                   {ok, maps:remove(sock, State)}
+                           after 5000 ->
+                                   ?SEV_EPRINT("message queue: ~p", [mq()]),
+                                   {error, timeout}
                            end
                    end},
          #{desc => "announce ready (abort)",
@@ -9726,9 +10395,10 @@ api_a_mrecv_cancel_udp(InitState) ->
                                ok ->
                                    ?SEV_IPRINT("terminating"),
                                    State1 = maps:remove(recv_select_info, State),
-                                   State2 = maps:remove(tester,           State1),
-                                   State3 = maps:remove(sock,             State2),
-                                   {ok, State3};
+                                   State2 = maps:remove(recv_completion_info, State1),
+                                   State3 = maps:remove(tester,           State2),
+                                   State4 = maps:remove(sock,             State3),
+                                   {ok, State4};
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -9928,14 +10598,11 @@ api_a_mrecv_cancel_udp(InitState) ->
 %% (from *several* processes), wait some time and then cancel,
 %% This should result in abort messages to the 'other' processes. IPv4
 %%
-api_a_maccept_cancel_tcp4(suite) ->
-    [];
-api_a_maccept_cancel_tcp4(doc) ->
-    [];
 api_a_maccept_cancel_tcp4(Config) when is_list(Config) ->
     ?TT(?SECS(20)),
     Nowait = nowait(Config),
     tc_try(api_a_maccept_cancel_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Accept = fun(Sock) ->
                                     case socket:accept(Sock, Nowait) of
@@ -9943,13 +10610,15 @@ api_a_maccept_cancel_tcp4(Config) when is_list(Config) ->
                                             OK;
                                         {select, _} = SELECT ->
                                             SELECT;
+                                        {completion, _} = COMPLETION ->
+                                            COMPLETION;
                                         {error, _} = ERROR ->
                                             ERROR
                                     end
                             end,
-                   InitState = #{domain => inet,
-                                 accept => Accept,
-                                 accept_sref => Nowait},
+                   InitState = #{domain     => inet,
+                                 accept     => Accept,
+                                 accept_ref => Nowait},
                    ok = api_a_maccept_cancel_tcp(InitState)
            end).
 
@@ -9962,10 +10631,6 @@ api_a_maccept_cancel_tcp4(Config) when is_list(Config) ->
 %% (from *several* processes), wait some time and then cancel,
 %% This should result in abort messages to the 'other' processes. IPv6
 %%
-api_a_maccept_cancel_tcp6(suite) ->
-    [];
-api_a_maccept_cancel_tcp6(doc) ->
-    [];
 api_a_maccept_cancel_tcp6(Config) when is_list(Config) ->
     ?TT(?SECS(20)),
     Nowait = nowait(Config),
@@ -9978,13 +10643,15 @@ api_a_maccept_cancel_tcp6(Config) when is_list(Config) ->
                                             OK;
                                         {select, _} = SELECT ->
                                             SELECT;
+                                        {completion, _} = COMPLETION ->
+                                            COMPLETION;
                                         {error, _} = ERROR ->
                                             ERROR
                                     end
                             end,
-                   InitState = #{domain => inet6,
-                                 accept => Accept,
-                                 accept_sref => Nowait},
+                   InitState = #{domain     => inet6,
+                                 accept     => Accept,
+                                 accept_ref => Nowait},
                    ok = api_a_maccept_cancel_tcp(InitState)
            end).
 
@@ -10050,28 +10717,39 @@ api_a_maccept_cancel_tcp(InitState) ->
                            ?SEV_AWAIT_CONTINUE(Tester, tester, accept)
                    end},
          #{desc => "await connection (nowait)",
-           cmd  => fun(#{lsock := LSock,
-                         accept := Accept,
-                         accept_sref := SR} = State) ->
+           cmd  => fun(#{lsock      := LSock,
+                         accept     := Accept,
+                         accept_ref := Ref} = State) ->
                            case Accept(LSock) of
-                               {select, {select_info, T, R} = SelectInfo}
-                                 when SR =:= nowait ->
+                               {select, {select_info, T, R} = SI}
+                                 when Ref =:= nowait ->
                                    ?SEV_IPRINT("accept select nowait: "
                                                "~n   T: ~p"
                                                "~n   R: ~p", [T, R]),
-                                   {ok,
-                                    State#{accept_select_info =>
-                                               SelectInfo}};
-                               {select, {select_info, T, SR} = SelectInfo}
-                                 when is_reference(SR) ->
+                                   {ok, State#{accept_select_info => SI}};
+                               {select, {select_info, T, Ref} = SI}
+                                 when is_reference(Ref) ->
                                    ?SEV_IPRINT("accept select ref: "
                                                "~n   T: ~p"
-                                               "~n   R: ~p", [T, SR]),
-                                   {ok,
-                                    State#{accept_select_info =>
-                                               SelectInfo}};
+                                               "~n   R: ~p", [T, Ref]),
+                                   {ok, State#{accept_select_info => SI}};
+
+                               {completion, {completion_info, T, R} = CI}
+                                 when Ref =:= nowait ->
+                                   ?SEV_IPRINT("accept completion nowait: "
+                                               "~n   T: ~p"
+                                               "~n   R: ~p", [T, R]),
+                                   {ok, State#{accept_completion_info => CI}};
+                               {completion, {completion_info, T, Ref} = CI}
+                                 when is_reference(Ref) ->
+                                   ?SEV_IPRINT("accept completion ref: "
+                                               "~n   T: ~p"
+                                               "~n   R: ~p", [T, Ref]),
+                                   {ok, State#{accept_completion_info => CI}};
+
                                {ok, X} ->
-                                   {error, {unexpected_select_info, X}};
+                                   {error, {unexpected_success, X}};
+
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -10090,7 +10768,26 @@ api_a_maccept_cancel_tcp(InitState) ->
                                {'$socket', Sock, abort, {Ref, closed}} ->
                                    {ok, maps:remove(lsock, State)}
                            after 5000 ->
-                                   ?SEV_EPRINT("message queue: ~p", [mq()]),
+                                   ?SEV_EPRINT("timeout when: "
+                                               "~n   Sock:          ~p"
+                                               "~n   Ref:           ~p"
+                                               "~n   message queue: ~p",
+                                               [Sock, Ref, mq()]),
+                                   {error, timeout}
+                           end;
+                      (#{lsock                  := Sock,
+                         accept_completion_info := {completion_info, _, Ref}} = State) ->
+                           receive
+                               {'$socket', Sock, completion, {Ref, _} = C} ->
+                                   {error, {unexpected_completion, C}};
+                               {'$socket', Sock, abort, {Ref, closed}} ->
+                                   {ok, maps:remove(lsock, State)}
+                           after 5000 ->
+                                   ?SEV_EPRINT("timeout when: "
+                                               "~n   Sock:          ~p"
+                                               "~n   Ref:           ~p"
+                                               "~n   message queue: ~p",
+                                               [Sock, Ref, mq()]),
                                    {error, timeout}
                            end
                    end},
@@ -10141,22 +10838,25 @@ api_a_maccept_cancel_tcp(InitState) ->
                            ?SEV_AWAIT_CONTINUE(Tester, tester, accept)
                    end},
          #{desc => "try accept request (with nowait, expect select)",
-           cmd  => fun(#{lsock := Sock,
-                         accept := Accept,
-                         accept_sref := SR} = State) ->
+           cmd  => fun(#{lsock      := Sock,
+                         accept     := Accept,
+                         accept_ref := Ref} = State) ->
                            case Accept(Sock) of
-                               {select, SelectInfo} when SR =:= nowait ->
-                                   {ok,
-                                    State#{accept_select_info =>
-                                               SelectInfo}};
-                               {select,
-                                {select_info, _Tag, SR} = SelectInfo}
-                                 when is_reference(SR) ->
-                                   {ok,
-                                    State#{accept_select_info =>
-                                               SelectInfo}};
+                               {select, SI} when Ref =:= nowait ->
+                                   {ok, State#{accept_select_info => SI}};
+                               {select, {select_info, _Tag, Ref} = SI}
+                                 when is_reference(Ref) ->
+                                   {ok, State#{accept_select_info => SI}};
+
+                               {completion, CI} when Ref =:= nowait ->
+                                   {ok, State#{accept_completion_info => CI}};
+                               {completion, {completion_info, _Tag, Ref} = CI}
+                                 when is_reference(Ref) ->
+                                   {ok, State#{accept_completion_info => CI}};
+
                                {ok, X} ->
-                                   {error, {unexpected_select_info, X}};
+                                   {error, {unexpected_success, X}};
+
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -10175,7 +10875,26 @@ api_a_maccept_cancel_tcp(InitState) ->
                                {'$socket', Sock, abort, {Ref, closed}} ->
                                    {ok, maps:remove(sock, State)}
                            after 5000 ->
-                                   ?SEV_EPRINT("message queue: ~p", [mq()]),
+                                   ?SEV_EPRINT("timeout when: "
+                                               "~n   Sock:          ~p"
+                                               "~n   Ref:           ~p"
+                                               "~n   message queue: ~p",
+                                               [Sock, Ref, mq()]),
+                                   {error, timeout}
+                           end;
+                      (#{lsock              := Sock,
+                         accept_completion_info := {completion_info, _, Ref}} = State) ->
+                           receive
+                               {'$socket', Sock, completion, {Ref, _} = C} ->
+                                   {error, {unexpected_completion, C}};
+                               {'$socket', Sock, abort, {Ref, closed}} ->
+                                   {ok, maps:remove(sock, State)}
+                           after 5000 ->
+                                   ?SEV_EPRINT("timeout when: "
+                                               "~n   Sock:          ~p"
+                                               "~n   Ref:           ~p"
+                                               "~n   message queue: ~p",
+                                               [Sock, Ref, mq()]),
                                    {error, timeout}
                            end
                    end},
@@ -10193,8 +10912,9 @@ api_a_maccept_cancel_tcp(InitState) ->
                                    ?SEV_IPRINT("terminating"),
                                    State1 = maps:remove(tester,             State),
                                    State2 = maps:remove(accept_select_info, State1),
-                                   State3 = maps:remove(lsock,              State2),
-                                   {ok, State3};
+                                   State3 = maps:remove(accept_completion_info, State2),
+                                   State4 = maps:remove(lsock,              State3),
+                                   {ok, State4};
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -10387,21 +11107,18 @@ api_a_maccept_cancel_tcp(InitState) ->
 %% (from *several* processes), wait some time and then cancel,
 %% This should result in abort messages to the 'other' processes. IPv4
 %%
-api_a_mrecv_cancel_tcp4(suite) ->
-    [];
-api_a_mrecv_cancel_tcp4(doc) ->
-    [];
 api_a_mrecv_cancel_tcp4(Config) when is_list(Config) ->
     ?TT(?SECS(20)),
     Nowait = nowait(Config),
-    tc_try(api_a_mrecv_cancel_tcp4,
+    tc_try(?FUNCTION_NAME,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Recv = fun(Sock) ->
                                   socket:recv(Sock, 0, Nowait)
                           end,
-                   InitState = #{domain => inet,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_mrecv_cancel_tcp(InitState)
            end).
 
@@ -10413,22 +11130,18 @@ api_a_mrecv_cancel_tcp4(Config) when is_list(Config) ->
 %% (from *several* processes), wait some time and then cancel,
 %% This should result in abort messages to the 'other' processes. IPv6
 %%
-api_a_mrecv_cancel_tcp6(suite) ->
-    [];
-api_a_mrecv_cancel_tcp6(doc) ->
-    [];
 api_a_mrecv_cancel_tcp6(Config) when is_list(Config) ->
     ?TT(?SECS(20)),
     Nowait = nowait(Config),
-    tc_try(api_a_mrecv_cancel_tcp6,
+    tc_try(?FUNCTION_NAME,
            fun() -> has_support_ipv6() end,
            fun() ->
                    Recv = fun(Sock) ->
                                   socket:recv(Sock, 0, Nowait)
                           end,
-                   InitState = #{domain => inet6,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet6,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_mrecv_cancel_tcp(InitState)
            end).
 
@@ -10440,21 +11153,21 @@ api_a_mrecv_cancel_tcp6(Config) when is_list(Config) ->
 %% (from *several* processes), wait some time and then cancel,
 %% This should result in abort messages to the 'other' processes. IPv4
 %%
-api_a_mrecvmsg_cancel_tcp4(suite) ->
-    [];
-api_a_mrecvmsg_cancel_tcp4(doc) ->
-    [];
 api_a_mrecvmsg_cancel_tcp4(Config) when is_list(Config) ->
     ?TT(?SECS(20)),
     Nowait = nowait(Config),
-    tc_try(api_a_mrecvmsg_cancel_tcp4,
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   is_not_windows(),
+                   has_support_ipv4()
+           end,
            fun() ->
                    Recv = fun(Sock) ->
                                   socket:recvmsg(Sock, Nowait)
                           end,
-                   InitState = #{domain => inet,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_mrecv_cancel_tcp(InitState)
            end).
 
@@ -10466,22 +11179,21 @@ api_a_mrecvmsg_cancel_tcp4(Config) when is_list(Config) ->
 %% (from *several* processes), wait some time and then cancel,
 %% This should result in abort messages to the 'other' processes. IPv6
 %%
-api_a_mrecvmsg_cancel_tcp6(suite) ->
-    [];
-api_a_mrecvmsg_cancel_tcp6(doc) ->
-    [];
 api_a_mrecvmsg_cancel_tcp6(Config) when is_list(Config) ->
     ?TT(?SECS(20)),
     Nowait = nowait(Config),
-    tc_try(api_a_mrecvmsg_cancel_tcp6,
-           fun() -> has_support_ipv6() end,
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   is_not_windows(),
+                   has_support_ipv6()
+           end,
            fun() ->
                    Recv = fun(Sock) ->
                                   socket:recvmsg(Sock, Nowait)
                           end,
-                   InitState = #{domain => inet6,
-                                 recv => Recv,
-                                 recv_sref => Nowait},
+                   InitState = #{domain   => inet6,
+                                 recv     => Recv,
+                                 recv_ref => Nowait},
                    ok = api_a_mrecv_cancel_tcp(InitState)
            end).
 
@@ -10564,25 +11276,40 @@ api_a_mrecv_cancel_tcp(InitState) ->
            cmd  => fun(#{tester := Tester} = _State) ->
                            ?SEV_AWAIT_CONTINUE(Tester, tester, recv)
                    end},
-         #{desc => "try recv request (with nowait, expect select)",
-           cmd  => fun(#{csock := Sock,
-                         recv := Recv,
-                         recv_sref := SR} = State) ->
+         #{desc => "try recv request (with nowait, expect select|completion)",
+           cmd  => fun(#{csock    := Sock,
+                         recv     := Recv,
+                         recv_ref := Ref} = State) ->
                            case Recv(Sock) of
-                               {select, {select_info, T, R} = SelectInfo}
-                                 when SR =:= nowait ->
+                               {select, {select_info, T, R} = SI}
+                                 when Ref =:= nowait ->
                                    ?SEV_IPRINT("recv select nowait: "
                                                "~n   Tag: ~p"
                                                "~n   Ref: ~p", [T, R]),
-                                   {ok, State#{recv_select_info => SelectInfo}};
-                               {select, {select_info, T, SR} = SelectInfo}
-                                 when is_reference(SR) ->
+                                   {ok, State#{recv_select_info => SI}};
+                               {select, {select_info, T, Ref} = SI}
+                                 when is_reference(Ref) ->
                                    ?SEV_IPRINT("recv select nowait: "
                                                "~n   Tag: ~p"
-                                               "~n   Ref: ~p", [T, SR]),
-                                   {ok, State#{recv_select_info => SelectInfo}};
+                                               "~n   Ref: ~p", [T, Ref]),
+                                   {ok, State#{recv_select_info => SI}};
+
+                               {completion, {completion_info, T, R} = CI}
+                                 when Ref =:= nowait ->
+                                   ?SEV_IPRINT("recv completion nowait: "
+                                               "~n   Tag: ~p"
+                                               "~n   Ref: ~p", [T, R]),
+                                   {ok, State#{recv_completion_info => CI}};
+                               {completion, {completion_info, T, Ref} = CI}
+                                 when is_reference(Ref) ->
+                                   ?SEV_IPRINT("recv completion nowait: "
+                                               "~n   Tag: ~p"
+                                               "~n   Ref: ~p", [T, Ref]),
+                                   {ok, State#{recv_completion_info => CI}};
+
                                {ok, X} ->
-                                   {error, {unexpected_select_info, X}};
+                                   {error, {unexpected_success, X}};
+
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -10592,12 +11319,22 @@ api_a_mrecv_cancel_tcp(InitState) ->
                            ?SEV_ANNOUNCE_READY(Tester, recv_select),
                            ok
                    end},
-         #{desc => "await select message",
+         #{desc => "await select|completion message",
            cmd  => fun(#{csock            := Sock,
                          recv_select_info := {select_info, _, Ref}} = State) ->
                            receive
                                {'$socket', Sock, select, Ref} ->
                                    {error, {unexpected_select, Ref}};
+                               {'$socket', Sock, abort, {Ref, closed}} ->
+                                   {ok, maps:remove(sock, State)}
+                           after 5000 ->
+                                   ok
+                           end;
+                      (#{csock                := Sock,
+                         recv_completion_info := {completion_info, _, Ref}} = State) ->
+                           receive
+                               {'$socket', Sock, completion, {Ref, _} = C} ->
+                                   {error, {unexpected_completion, C}};
                                {'$socket', Sock, abort, {Ref, closed}} ->
                                    {ok, maps:remove(sock, State)}
                            after 5000 ->
@@ -10654,20 +11391,25 @@ api_a_mrecv_cancel_tcp(InitState) ->
                            ?SEV_AWAIT_CONTINUE(Tester, tester, recv)
                    end},
          #{desc => "try recv request (with nowait, expect select)",
-           cmd  => fun(#{sock := Sock,
-                         recv := Recv,
-                         recv_sref := SR} = State) ->
+           cmd  => fun(#{sock     := Sock,
+                         recv     := Recv,
+                         recv_ref := Ref} = State) ->
                            case Recv(Sock) of
-                               {select, SelectInfo} when SR =:= nowait ->
-                                   {ok,
-                                    State#{recv_select_info => SelectInfo}};
-                               {select,
-                                {select_info, _Tag, SR} = SelectInfo}
-                                 when is_reference(SR) ->
-                                   {ok,
-                                    State#{recv_select_info => SelectInfo}};
+                               {select, SI} when Ref =:= nowait ->
+                                   {ok, State#{recv_select_info => SI}};
+                               {select, {select_info, _Tag, Ref} = SI}
+                                 when is_reference(Ref) ->
+                                   {ok, State#{recv_select_info => SI}};
+
+                               {completion, CI} when Ref =:= nowait ->
+                                   {ok, State#{recv_completion_info => CI}};
+                               {completion, {completion_info, _Tag, Ref} = CI}
+                                 when is_reference(Ref) ->
+                                   {ok, State#{recv_completion_info => CI}};
+
                                {ok, X} ->
-                                   {error, {unexpected_select_info, X}};
+                                   {error, {unexpected_success, X}};
+
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -10688,6 +11430,17 @@ api_a_mrecv_cancel_tcp(InitState) ->
                            after 5000 ->
                                    ?SEV_EPRINT("message queue: ~p", [mq()]),
                                    {error, timeout}
+                           end;
+                      (#{sock             := Sock,
+                         recv_completion_info := {completion_info, _, Ref}} = State) ->
+                           receive
+                               {'$socket', Sock, completion, {Ref, _} = C} ->
+                                   {error, {unexpected_completion, C}};
+                               {'$socket', Sock, abort, {Ref, closed}} ->
+                                   {ok, maps:remove(sock, State)}
+                           after 5000 ->
+                                   ?SEV_EPRINT("message queue: ~p", [mq()]),
+                                   {error, timeout}
                            end
                    end},
          #{desc => "announce ready (abort)",
@@ -10703,9 +11456,10 @@ api_a_mrecv_cancel_tcp(InitState) ->
                                ok ->
                                    ?SEV_IPRINT("terminating"),
                                    State1 = maps:remove(recv_select_info, State),
-                                   State2 = maps:remove(tester,           State1),
-                                   State3 = maps:remove(sock,             State2),
-                                   {ok, State3};
+                                   State2 = maps:remove(recv_completion_info, State1),
+                                   State3 = maps:remove(tester,           State2),
+                                   State4 = maps:remove(sock,             State3),
+                                   {ok, State4};
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -11037,10 +11791,6 @@ api_a_mrecv_cancel_tcp(InitState) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Perform some simple getopt and setopt with the level = otp options
-api_opt_simple_otp_options(suite) ->
-    [];
-api_opt_simple_otp_options(doc) ->
-    [];
 api_opt_simple_otp_options(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_simple_otp_options,
@@ -11304,7 +12054,8 @@ api_opt_simple_otp_options() ->
 
          %% *** We are done ***
          #{desc => "finish",
-           cmd  => fun(_) ->
+           cmd  => fun(#{ dummy := Dummy }) ->
+                           Dummy ! die,
                            {ok, normal}
                    end}
         ],
@@ -11324,10 +12075,6 @@ api_opt_simple_otp_options() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Perform some simple getopt and setopt otp meta option
-api_opt_simple_otp_meta_option(suite) ->
-    [];
-api_opt_simple_otp_meta_option(doc) ->
-    [];
 api_opt_simple_otp_meta_option(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_simple_otp_meta_option,
@@ -11504,14 +12251,12 @@ api_opt_simple_otp_meta_option() ->
 %% Perform some simple operations with the rcvbuf otp option
 %% The operations we test here are only for type = stream and
 %% protocol = tcp.
-api_opt_simple_otp_rcvbuf_option(suite) ->
-    [];
-api_opt_simple_otp_rcvbuf_option(doc) ->
-    [];
 api_opt_simple_otp_rcvbuf_option(_Config) when is_list(_Config) ->
     ?TT(?SECS(15)),
-    tc_try(api_opt_simple_otp_rcvbuf_option,
-           fun() -> api_opt_simple_otp_rcvbuf_option() end).
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   api_opt_simple_otp_rcvbuf_option()
+           end).
 
 api_opt_simple_otp_rcvbuf_option() ->
     Get = fun(S) ->
@@ -11650,6 +12395,12 @@ api_opt_simple_otp_rcvbuf_option() ->
                    end},
          #{desc => "attempt to recv",
            cmd  => fun(#{sock := Sock, msg_sz := MsgSz} = _State) ->
+                           ?SEV_IPRINT("try recv ~w bytes when rcvbuf is ~s", 
+                                       [MsgSz,
+                                        case Get(Sock) of
+                                            {ok, RcvBuf} -> f("~w", [RcvBuf]);
+                                            {error, _}   -> "-"
+                                        end]),
                            case socket:recv(Sock) of
                                {ok, Data} when (size(Data) =:= MsgSz) ->
                                    ok;
@@ -11707,6 +12458,10 @@ api_opt_simple_otp_rcvbuf_option() ->
            cmd  => fun(#{tester := Tester} = State) ->
                            case ?SEV_AWAIT_CONTINUE(Tester, tester, recv) of
                                {ok, {ExpSz, NewRcvBuf}} ->
+                                   ?SEV_IPRINT("set new rcvbuf:"
+                                               "~n   New RcvBuf:  ~p"
+                                               "~n   Expect Size: ~p",
+                                               [ExpSz, NewRcvBuf]),
                                    {ok, State#{msg_sz => ExpSz,
                                                rcvbuf => NewRcvBuf}};
                                {error, _} = ERROR ->
@@ -11717,7 +12472,8 @@ api_opt_simple_otp_rcvbuf_option() ->
            cmd  => fun(#{sock := Sock, rcvbuf := NewRcvBuf} = _State) ->
                            case Set(Sock, NewRcvBuf) of
                                ok ->
-                                   ?SEV_IPRINT("set new rcvbuf: ~p", [NewRcvBuf]),
+                                   ?SEV_IPRINT("set new rcvbuf: ~p",
+                                               [NewRcvBuf]),
                                    ok;
                                {error, _} = ERROR ->
                                    ERROR
@@ -12012,7 +12768,13 @@ api_opt_simple_otp_rcvbuf_option() ->
          #{desc => "order server continue (recv 1)",
            cmd  => fun(#{server := Server, data := Data} = _State) ->
                            MsgSz     = size(Data),
-                           NewRcvBuf = {2 + (MsgSz div 1024), 1024},
+                           NewRcvBuf =
+                               case os:type() of
+                                   {win32, nt} ->
+                                       (((2 * MsgSz) div 1024) + 1) * 1024;
+                                   _ ->
+                                       {2 + (MsgSz div 1024), 1024}
+                               end,
                            ?SEV_ANNOUNCE_CONTINUE(Server, recv, NewRcvBuf),
                            ok
                    end},
@@ -12049,7 +12811,13 @@ api_opt_simple_otp_rcvbuf_option() ->
          #{desc => "order server continue (recv 2)",
            cmd  => fun(#{server := Server, data := Data} = _State) ->
                            MsgSz     = size(Data),
-                           NewRcvBuf = {2 + (MsgSz div 2048), 2048},
+                           NewRcvBuf = 
+                               case os:type() of
+                                   {win32, nt} ->
+                                       (((3 * MsgSz) div 1024) + 1) * 1024;
+                                   _ ->
+                                       {2 + (MsgSz div 2048), 2048}
+                               end,
                            ?SEV_ANNOUNCE_CONTINUE(Server, recv, NewRcvBuf),
                            ok
                    end},
@@ -12086,12 +12854,18 @@ api_opt_simple_otp_rcvbuf_option() ->
          ?SEV_SLEEP(?SECS(1)),
          #{desc => "order server continue (recv 3)",
            cmd  => fun(#{server := Server, data := Data} = _State) ->
-                           MsgSz     = size(Data),
-                           BufSz     = 2048,
-                           N         = MsgSz div BufSz - 1,
-                           NewRcvBuf = {N, BufSz},
+                           MsgSz = size(Data),
+                           BufSz = 2048,
+                           N     = MsgSz div BufSz - 1,
+                           {ExpSz, NewRcvBuf} =
+                               case os:type() of
+                                   {win32, nt} ->
+                                       {N*BufSz, N*BufSz};
+                                   _ ->
+                                       {N*BufSz, {N, BufSz}}
+                               end,
                            ?SEV_ANNOUNCE_CONTINUE(Server, recv,
-                                                  {N*BufSz, NewRcvBuf})
+                                                  {ExpSz, NewRcvBuf})
                    end},
          #{desc => "await client ready (send 3)",
            cmd  => fun(#{server := Server,
@@ -12150,7 +12924,7 @@ api_opt_simple_otp_rcvbuf_option() ->
 
     %% Create a data binary of 6*1024 bytes
     Data      = list_to_binary(lists:duplicate(6*4, lists:seq(0, 255))),
-    InitState = #{domain => inet,
+    InitState = #{domain => inet_or_inet6(),
                   data   => Data},
 
     i("create server evaluator"),
@@ -12175,10 +12949,6 @@ api_opt_simple_otp_rcvbuf_option() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Perform some simple getopt and setopt with the level = otp options
-api_opt_simple_otp_controlling_process(suite) ->
-    [];
-api_opt_simple_otp_controlling_process(doc) ->
-    [];
 api_opt_simple_otp_controlling_process(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(api_opt_simple_otp_controlling_process,
@@ -12399,7 +13169,7 @@ api_opt_simple_otp_controlling_process() ->
     Client1 = ?SEV_START("tcp-client", ClientSeq, ClientInitState1),
 
     i("start tcp (stream) tester evaluator"),
-    TesterInitState1 = #{domain   => inet, 
+    TesterInitState1 = #{domain   => inet,
                          type     => stream, 
                          protocol => tcp,
                          client   => Client1#ev.pid},
@@ -12413,7 +13183,7 @@ api_opt_simple_otp_controlling_process() ->
     Client2 = ?SEV_START("udp-client", ClientSeq, ClientInitState2),
 
     i("start udp (dgram) tester evaluator"),
-    TesterInitState2 = #{domain   => inet, 
+    TesterInitState2 = #{domain   => inet,
                          type     => dgram, 
                          protocol => udp,
                          client   => Client2#ev.pid},
@@ -12429,10 +13199,6 @@ api_opt_simple_otp_controlling_process() ->
 %% Tests the socket option acceptconn for UDP.
 %% This should be possible to get but not set.
 
-api_opt_sock_acceptconn_udp(suite) ->
-    [];
-api_opt_sock_acceptconn_udp(doc) ->
-    [];
 api_opt_sock_acceptconn_udp(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(api_opt_sock_acceptconn_udp,
@@ -12561,7 +13327,7 @@ api_opt_sock_acceptconn_udp() ->
          ?SEV_FINISH_NORMAL
         ],
 
-    Domain = inet,
+    Domain = inet_or_inet6(),
 
     i("start tester evaluator"),
     InitState = #{domain  => Domain},
@@ -12577,10 +13343,6 @@ api_opt_sock_acceptconn_udp() ->
 %% Tests the socket option acceptconn for TCP.
 %% This should be possible to get but not set.
 
-api_opt_sock_acceptconn_tcp(suite) ->
-    [];
-api_opt_sock_acceptconn_tcp(doc) ->
-    [];
 api_opt_sock_acceptconn_tcp(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(api_opt_sock_acceptconn_tcp,
@@ -12917,7 +13679,7 @@ api_opt_sock_acceptconn_tcp() ->
         ],
 
 
-    Domain = inet,
+    Domain = inet_or_inet6(),
 
     i("start tester evaluator"),
     InitState = #{domain  => Domain},
@@ -12932,10 +13694,6 @@ api_opt_sock_acceptconn_tcp() ->
 
 %% Tests the socket option acceptfilter. PLACEHOLDER!
 
-api_opt_sock_acceptfilter(suite) ->
-    [];
-api_opt_sock_acceptfilter(doc) ->
-    [];
 api_opt_sock_acceptfilter(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(api_opt_sock_acceptfilter,
@@ -12948,12 +13706,8 @@ api_opt_sock_acceptfilter(_Config) when is_list(_Config) ->
 
 %% Tests the socket option bindtodevice.
 %% It has not always been possible to 'get' this option
-%% (atleast on linux).
+%% (at least on linux).
 
-api_opt_sock_bindtodevice(suite) ->
-    [];
-api_opt_sock_bindtodevice(doc) ->
-    [];
 api_opt_sock_bindtodevice(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(api_opt_sock_bindtodevice,
@@ -12974,7 +13728,7 @@ api_opt_sock_bindtodevice() ->
         [
          #{desc => "which local address",
            cmd  => fun(#{domain := Domain} = State) ->
-                           case ?LIB:which_local_host_info(Domain) of
+                           case which_local_host_info(Domain) of
                                {ok, #{name := Name, addr := Addr}} ->
                                    ?SEV_IPRINT("local host info (~p): "
                                                "~n   Name: ~p"
@@ -13221,7 +13975,7 @@ api_opt_sock_bindtodevice() ->
          ?SEV_FINISH_NORMAL
         ],
 
-    Domain = inet,
+    Domain = inet_or_inet6(),
 
     i("start tester evaluator"),
     InitState = #{domain  => Domain},
@@ -13238,10 +13992,6 @@ api_opt_sock_bindtodevice() ->
 %% Make it possible for datagram sockets to send packets to a broadcast
 %% address (IPv4 only).
 
-api_opt_sock_broadcast(suite) ->
-    [];
-api_opt_sock_broadcast(doc) ->
-    [];
 api_opt_sock_broadcast(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(api_opt_sock_broadcast,
@@ -13262,10 +14012,11 @@ api_opt_sock_broadcast() ->
         [
          #{desc => "which local address",
            cmd  => fun(#{domain := Domain} = State) ->
-                           case ?LIB:which_local_host_info(Domain) of
+                           case which_local_host_info(Domain) of
                                {ok, #{name      := Name,
                                       addr      := Addr,
-                                      broadaddr := BAddr}} ->
+                                      broadaddr := BAddr}}
+				 when (BAddr =/= undefined) ->
                                    ?SEV_IPRINT("local host info: "
                                                "~n   Name:           ~p"
                                                "~n   Addr:           ~p"
@@ -13277,6 +14028,8 @@ api_opt_sock_broadcast() ->
                                            addr   => BAddr},
                                    {ok, State#{lsa => LSA,
                                                bsa => BSA}};
+			       {ok, _} ->
+				   {skip, no_broadcast_address};
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -13350,6 +14103,11 @@ api_opt_sock_broadcast() ->
                                    ?SEV_IPRINT("Expected Success (bound): ~p",
                                                [Port]),
                                    {ok, State#{sa2 => BSA#{port => Port}}};
+                               {error, eaddrnotavail = Reason} ->
+                                   ?SEV_IPRINT("~p => "
+					       "SKIP subnet-directed broadcast test",
+					       [Reason]),
+                                   {ok, State#{sa2 => skip}};
                                {error, Reason} = ERROR ->
                                    ?SEV_EPRINT("Unexpected Failure: ~p",
 					       [Reason]),
@@ -13357,7 +14115,10 @@ api_opt_sock_broadcast() ->
                            end
                    end},
          #{desc => "[socket 2] UDP socket sockname",
-           cmd  => fun(#{sock2 := Sock} = _State) ->
+           cmd  => fun(#{sa2 := skip} = _State) ->
+                           ?SEV_IPRINT("SKIP subnet-directed broadcast test"),
+                           ok;
+		      (#{sock2 := Sock} = _State) ->
                            case socket:sockname(Sock) of
                                {ok, SA} ->
 				   ?SEV_IPRINT("SA: ~p", [SA]),
@@ -13463,12 +14224,12 @@ api_opt_sock_broadcast() ->
 
          #{desc => "[socket 3] try send to limited broadcast address",
            cmd  => fun(#{sa1 := skip} = _State) ->
-                           ?SEV_IPRINT("SKIP limited broadcast test"),
+                           ?SEV_IPRINT("SKIP limited broadcast test (send)"),
 			   ok;
 		      (#{sock3 := Sock,
 			 sa1   := Dest} = _State) ->
 			   Data = list_to_binary("hejsan"),
-			   ?SEV_IPRINT("try send to bradcast address: "
+			   ?SEV_IPRINT("try send to broadcast address: "
 				       "~n   ~p", [Dest]),
 			   case socket:sendto(Sock, Data, Dest) of
 			       ok ->
@@ -13483,7 +14244,7 @@ api_opt_sock_broadcast() ->
 		   end},
          #{desc => "[socket 1] try recv",
            cmd  => fun(#{sa1 := skip} = _State) ->
-			   ?SEV_IPRINT("SKIP limited broadcast test"),
+			   ?SEV_IPRINT("SKIP limited broadcast test (recv)"),
 			   ok;
 		      (#{sock1 := Sock} = State) ->
                            case socket:recvfrom(Sock, 0, 5000) of
@@ -13510,17 +14271,29 @@ api_opt_sock_broadcast() ->
 
 	 ?SEV_SLEEP(?SECS(1)),
 
-         #{desc => "[socket 3] try send to subnet-directed broadcast address",
-           cmd  => fun(#{sock3 := Sock,
+         #{desc => "[socket 2] try send to subnet-directed broadcast address",
+           cmd  => fun(#{sa2 := skip} = _State) ->
+			   ?SEV_IPRINT("SKIP subnet-directed broadcast test "
+                                       "(send)"),
+			   ok;
+		      (#{sock2 := Sock,
                          sa2   := Dest} = _State) ->
                            Data = list_to_binary("hejsan"),
-                           ?SEV_IPRINT("try send to bradcast address: "
+                           ?SEV_IPRINT("try send to broadcast address: "
                                        "~n   ~p", [Dest]),
                            case socket:sendto(Sock, Data, Dest) of
                                ok ->
                                    ?SEV_IPRINT("Expected Success: "
                                                "broadcast message sent"),
                                    ok;
+                               {error, eaddrnotavail = Reason} ->
+                                   ?SEV_EPRINT("Unexpected Failure: ~p => SKIP",
+                                               [Reason]),
+                                   {skip, Reason};
+                               {error, eacces = Reason} ->
+                                   ?SEV_EPRINT("Unexpected Failure: ~p => SKIP",
+					       [Reason]),
+                                   {skip, Reason};
                                {error, Reason} = ERROR ->
                                    ?SEV_EPRINT("Unexpected Failure: ~p",
 					       [Reason]),
@@ -13528,13 +14301,17 @@ api_opt_sock_broadcast() ->
                            end
                    end},
          #{desc => "[socket 2] try recv",
-           cmd  => fun(#{sock2 := Sock, sa1 := SA1} = _State) ->
+           cmd  => fun(#{sa2 := skip} = _State) ->
+			   ?SEV_IPRINT("SKIP subnet-directed broadcast test "
+                                         "(recv)"),
+			   ok;
+		      (#{sock2 := Sock, sa2 := SA2} = _State) ->
                            case socket:recvfrom(Sock, 0, 5000) of
                                {ok, _} ->
                                    ?SEV_IPRINT("Expected Success: "
                                                "received message"),
                                    ok;
-                               {error, timeout = Reason} when (SA1 =:= skip) ->
+                               {error, timeout = Reason} when (SA2 =:= skip) ->
                                    ?SEV_IPRINT("Unexpected Failure: ~p",
 					       [Reason]),
                                    {skip, "receive timeout"};
@@ -13572,7 +14349,7 @@ api_opt_sock_broadcast() ->
          ?SEV_FINISH_NORMAL
         ],
 
-    Domain = inet,
+    Domain = inet_or_inet6(),
 
     i("start tester evaluator"),
     InitState = #{domain => Domain},
@@ -13588,13 +14365,9 @@ api_opt_sock_broadcast() ->
 %% Tests the socket option debug.
 %% On linux, this test requires that the user running the test to have
 %% CAP_NET_ADMIN capabilities or be root (effective user ID of 0), 
-%% therefor we explicitly test for the result eacces when attempting to
+%% therefore we explicitly test for the result eacces when attempting to
 %% set, and skip if we get it.
 
-api_opt_sock_debug(suite) ->
-    [];
-api_opt_sock_debug(doc) ->
-    [];
 api_opt_sock_debug(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_opt_sock_debug,
@@ -13615,21 +14388,16 @@ api_opt_sock_debug() ->
         [
          #{desc => "which local address",
            cmd  => fun(#{domain := Domain} = State) ->
-                           case ?LIB:which_local_host_info(Domain) of
+                           case which_local_host_info(Domain) of
                                {ok, #{name      := Name,
-                                      addr      := Addr,
-                                      broadaddr := BAddr}} ->
+                                      addr      := Addr}} ->
                                    ?SEV_IPRINT("local host info: "
                                                "~n   Name:           ~p"
-                                               "~n   Addr:           ~p"
-                                               "~n   Broadcast Addr: ~p",
-                                               [Name, Addr, BAddr]),
+                                               "~n   Addr:           ~p",
+                                               [Name, Addr]),
                                    LSA = #{family => Domain,
                                            addr   => Addr},
-                                   BSA = #{family => Domain,
-                                           addr   => BAddr},
-                                   {ok, State#{lsa => LSA,
-                                               bsa => BSA}};
+                                   {ok, State#{lsa => LSA}};
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -13697,7 +14465,7 @@ api_opt_sock_debug() ->
          ?SEV_FINISH_NORMAL
         ],
 
-    Domain = inet,
+    Domain = inet_or_inet6(),
 
     i("start tester evaluator"),
     InitState = #{domain => Domain},
@@ -13713,10 +14481,6 @@ api_opt_sock_debug() ->
 %% Tests the socket option domain.
 %% This is a read only option. Also not available on all platforms.
 
-api_opt_sock_domain(suite) ->
-    [];
-api_opt_sock_domain(doc) ->
-    [];
 api_opt_sock_domain(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_opt_sock_domain,
@@ -13734,21 +14498,16 @@ api_opt_sock_domain() ->
         [
          #{desc => "which local address",
            cmd  => fun(#{domain := Domain} = State) ->
-                           case ?LIB:which_local_host_info(Domain) of
-                               {ok, #{name      := Name,
-                                      addr      := Addr,
-                                      broadaddr := BAddr}} ->
+                           case which_local_host_info(Domain) of
+                               {ok, #{name := Name,
+                                      addr := Addr}} ->
                                    ?SEV_IPRINT("local host info: "
-                                               "~n   Name:           ~p"
-                                               "~n   Addr:           ~p"
-                                               "~n   Broadcast Addr: ~p",
-                                               [Name, Addr, BAddr]),
+                                               "~n   Name: ~p"
+                                               "~n   Addr: ~p",
+                                               [Name, Addr]),
                                    LSA = #{family => Domain,
                                            addr   => Addr},
-                                   BSA = #{family => Domain,
-                                           addr   => BAddr},
-                                   {ok, State#{lsa => LSA,
-                                               bsa => BSA}};
+                                   {ok, State#{lsa => LSA}};
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -13815,7 +14574,7 @@ api_opt_sock_domain() ->
          ?SEV_FINISH_NORMAL
         ],
 
-    Domain = inet,
+    Domain = inet_or_inet6(),
 
     i("start tester evaluator"),
     InitState = #{domain => Domain},
@@ -13838,10 +14597,6 @@ api_opt_sock_domain() ->
 %% other side"), we only test if we can set and get the value.
 %% Better then nothing.
 
-api_opt_sock_dontroute(suite) ->
-    [];
-api_opt_sock_dontroute(doc) ->
-    [];
 api_opt_sock_dontroute(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_opt_sock_dontroute,
@@ -13862,21 +14617,16 @@ api_opt_sock_dontroute() ->
         [
          #{desc => "which local address",
            cmd  => fun(#{domain := Domain} = State) ->
-                           case ?LIB:which_local_host_info(Domain) of
-                               {ok, #{name      := Name,
-                                      addr      := Addr,
-                                      broadaddr := BAddr}} ->
+                           case which_local_host_info(Domain) of
+                               {ok, #{name := Name,
+                                      addr := Addr}} ->
                                    ?SEV_IPRINT("local host info: "
-                                               "~n   Name:           ~p"
-                                               "~n   Addr:           ~p"
-                                               "~n   Broadcast Addr: ~p",
-                                               [Name, Addr, BAddr]),
+                                               "~n   Name: ~p"
+                                               "~n   Addr: ~p",
+                                               [Name, Addr]),
                                    LSA = #{family => Domain,
                                            addr   => Addr},
-                                   BSA = #{family => Domain,
-                                           addr   => BAddr},
-                                   {ok, State#{lsa => LSA,
-                                               bsa => BSA}};
+                                   {ok, State#{lsa => LSA}};
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -13946,7 +14696,7 @@ api_opt_sock_dontroute() ->
          ?SEV_FINISH_NORMAL
         ],
 
-    Domain = inet,
+    Domain = inet_or_inet6(),
 
     i("start tester evaluator"),
     InitState = #{domain => Domain},
@@ -13961,10 +14711,6 @@ api_opt_sock_dontroute() ->
 
 %% Tests the socket option error. PLACEHOLDER!
 
-api_opt_sock_error(suite) ->
-    [];
-api_opt_sock_error(doc) ->
-    [];
 api_opt_sock_error(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_opt_sock_error,
@@ -13980,10 +14726,6 @@ api_opt_sock_error(_Config) when is_list(_Config) ->
 %% the underlying TCP timeouts. So, for now, we just test that we can
 %% change the value.
 
-api_opt_sock_keepalive(suite) ->
-    [];
-api_opt_sock_keepalive(doc) ->
-    [];
 api_opt_sock_keepalive(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_opt_sock_keepalive,
@@ -14004,21 +14746,16 @@ api_opt_sock_keepalive() ->
         [
          #{desc => "which local address",
            cmd  => fun(#{domain := Domain} = State) ->
-                           case ?LIB:which_local_host_info(Domain) of
+                           case which_local_host_info(Domain) of
                                {ok, #{name      := Name,
-                                      addr      := Addr,
-                                      broadaddr := BAddr}} ->
+                                      addr      := Addr}} ->
                                    ?SEV_IPRINT("local host info: "
-                                               "~n   Name:           ~p"
-                                               "~n   Addr:           ~p"
-                                               "~n   Broadcast Addr: ~p",
-                                               [Name, Addr, BAddr]),
+                                               "~n   Name: ~p"
+                                               "~n   Addr: ~p",
+                                               [Name, Addr]),
                                    LSA = #{family => Domain,
                                            addr   => Addr},
-                                   BSA = #{family => Domain,
-                                           addr   => BAddr},
-                                   {ok, State#{lsa => LSA,
-                                               bsa => BSA}};
+                                   {ok, State#{lsa => LSA}};
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -14090,7 +14827,7 @@ api_opt_sock_keepalive() ->
          ?SEV_FINISH_NORMAL
         ],
 
-    Domain = inet,
+    Domain = inet_or_inet6(),
 
     i("start tester evaluator"),
     InitState = #{domain => Domain},
@@ -14103,12 +14840,393 @@ api_opt_sock_keepalive() ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%% Tests the socket option reuseaddr.
+%% This is the most basic of tests. We only test that we can set the
+%% option and then read back.
+
+api_opt_sock_reuseaddr(_Config) when is_list(_Config) ->
+    ?TT(?SECS(10)),
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   %% [IPv4] Nothing to do with the option,
+                   %% [IPv4] but we use it the test so make
+                   %% [IPv4] use we have it.
+                   has_support_ipv4(),
+                   has_support_sock_reuseaddr()
+           end,
+           fun() -> api_opt_sock_reuseaddr() end).
+
+
+api_opt_sock_reuseaddr() ->
+    api_opt_simple_bool(inet, socket, stream, reuseaddr,
+                       #{bind => false}).
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Tests the socket option exclusiveaddruse.
+%% This is the most basic of tests. We only test that we can set the
+%% option and then read back.
+
+api_opt_sock_exclusiveaddruse(_Config) when is_list(_Config) ->
+    ?TT(?SECS(10)),
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   %% [IPv4] Nothing to do with the option,
+                   %% [IPv4] but we use it the test so make
+                   %% [IPv4] use we have it.
+                   has_support_ipv4(),
+                   has_support_sock_exclusiveaddruse()
+           end,
+           fun() -> api_opt_sock_exclusiveaddruse() end).
+
+
+api_opt_sock_exclusiveaddruse() ->
+    api_opt_simple_bool(inet, socket, stream, exclusiveaddruse,
+			#{bind => false}).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% *Simple* test for a bool option.
+%% This basically just tests that we can set and get the option.
+%% This assumes that the option is supported.
+%% What if its required that the socket is bound before set/get?
+%% What if its required that set/get is done before bind?
+
+api_opt_simple_bool(Domain, Level, Type, Option, InitState) ->
+
+    Set    = fun(S, Val) when is_boolean(Val) ->
+                     socket:setopt(S, Level, Option, Val)
+             end,
+    Get    = fun(S) ->
+                     socket:getopt(S, Level, Option)
+             end,
+
+    TesterSeq =
+        [
+         #{desc => "(maybe) which local address",
+           cmd  => fun(#{bind := true} = State) ->
+                           case ?LIB:which_local_host_info(Domain) of
+                               {ok, #{name      := Name,
+                                      addr      := Addr}} ->
+                                   ?SEV_IPRINT("local host info: "
+                                               "~n   Name: ~p"
+                                               "~n   Addr: ~p",
+                                               [Name, Addr]),
+                                   LSA = #{family => Domain,
+                                           addr   => Addr},
+                                   {ok, State#{lsa => LSA}};
+                               {error, _} = ERROR ->
+                                   ERROR
+                           end;
+                      (_State) ->
+                           ?SEV_IPRINT("ignore get local address"),
+                           ok
+                   end},
+
+         #{desc => "create socket",
+           cmd  => fun(State) ->
+                           case socket:open(Domain, Type) of
+                               {ok, Sock} ->
+                                   {ok, State#{sock => Sock}};
+                               {error, _} = ERROR ->
+                                   ERROR
+                           end
+                   end},
+
+         #{desc => "(maybe) bind",
+           cmd  => fun(#{bind := true, lsa := LSA, sock := Sock} = _State) ->
+                           ?SEV_IPRINT("try binding"),
+                           socket:bind(Sock, LSA);
+                      (_State) ->
+                           ?SEV_IPRINT("ignore binding"),
+                           ok
+                   end},
+
+         #{desc => "Get current value",
+           cmd  => fun(#{sock := Sock} = State) ->
+                           case Get(Sock) of
+                               {ok, Val} when is_boolean(Val) ->
+                                   ?SEV_IPRINT("Success: ~p", [Val]),
+                                   {ok, State#{Option => Val}};
+                               {error, Reason} = ERROR ->
+                                   ?SEV_EPRINT("Unexpected failure: ~p",
+                                               [Reason]),
+                                   ERROR
+                           end
+                   end},
+         #{desc => "Try change the value",
+           cmd  => fun(#{sock := Sock} = State) ->
+                           Current = maps:get(Option, State),
+			   New     = not Current,
+                           ?SEV_IPRINT("Try change value from ~p to ~p", 
+                                       [Current, New]),
+                           case Set(Sock, New) of
+                               ok ->
+                                   ?SEV_IPRINT("Expected Success"),
+                                   {ok, State#{Option => New}};
+                               {error, Reason} = ERROR ->
+                                   ?SEV_EPRINT("Unexpected Failure: ~p",
+					       [Reason]),
+                                   ERROR
+                           end
+                   end},
+         #{desc => "Verify (new) current value",
+           cmd  => fun(#{sock := Sock} = State) ->
+                           Val = maps:get(Option, State),
+                           case Get(Sock) of
+                               {ok, Val} ->
+                                   ?SEV_IPRINT("Expected Success (~p)", [Val]),
+                                   ok;
+                               {ok, OtherVal} ->
+                                   ?SEV_IPRINT("Unexpected Success: ~p",
+                                               [OtherVal]),
+                                   {error, {unexpected_success_value,
+                                            Val, OtherVal}};
+                               {error, Reason} = ERROR ->
+                                   ?SEV_EPRINT("Unexpected failure: ~p",
+                                               [Reason]),
+                                   ERROR
+                           end
+                   end},
+
+         %% *** Termination ***
+         #{desc => "close socket",
+           cmd  => fun(#{sock := Sock} = State0) ->
+                           socket:close(Sock),
+			   State1 = maps:remove(sock, State0),
+                           {ok, State1}
+                   end},
+
+         %% *** We are done ***
+         ?SEV_FINISH_NORMAL
+        ],
+
+    i("start tester evaluator"),
+    Tester = ?SEV_START("tester", TesterSeq, InitState),
+
+    i("await evaluator(s)"),
+    ok = ?SEV_AWAIT_FINISH([Tester]).
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Tests the socket option bsp_state.
+%% This is the most basic of tests. We test that we can,
+%% create sockets, bind and connect and extract bsp-state
+%% in the various state(s) of the socket.
+%% For both dgram and stream sockets.
+
+api_opt_sock_bsp_state(_Config) when is_list(_Config) ->
+    ?TT(?SECS(10)),
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+		   %% This is not a 'IPv4' option,
+		   %% but since we used it in the test...
+                   has_support_ipv4(),
+                   has_support_sock_bsp_state()
+           end,
+           fun() -> api_opt_sock_bsp_state() end).
+
+
+api_opt_sock_bsp_state() ->
+    LSA        = which_local_socket_addr(inet),
+    BspState   = fun(S) ->
+			 case socket:getopt(S, socket, bsp_state) of
+			     {ok, BS} ->
+				 BS;
+			     {error, Reason} ->
+				 ?FAIL({getopt_bsp_state, Reason})
+			 end
+		 end,
+    CreateSock = fun(T, P) ->
+			 case socket:open(inet, T, P) of
+			     {ok, Sock}      ->
+				 Sock;
+			     {error, Reason} ->
+				 skip({socket_create_fail, Reason})
+			 end
+		 end,
+    CloseSock = fun(S) ->
+			socket:close(S)
+		end,
+    BindSock   = fun(S, SA) ->
+			 case socket:bind(S, SA) of
+			     ok ->
+				 ok;
+			     {error, Reason} ->
+				 ?FAIL({bind, Reason})
+			 end
+		 end,
+    Sockname   = fun(S) ->
+			 case socket:sockname(S) of
+			     {ok, SA} ->
+				 SA;
+			     {error, Reason} ->
+				 ?FAIL({sockname, Reason})
+			 end
+		 end,
+    %% Setopt      = fun(S, L, O, V) ->
+    %% 			  socket:setopt(S, L, O, V)
+    %% 		  end,
+    %% SetOtpOpt = fun(S, O, V) -> Setopt(S, otp, O, V) end,
+    %% SetDebug  = fun(S, D) when is_boolean(D) -> SetOptOpt(S, debug, D) end,
+    %% EnableDebug = fun(S) -> SetDebug(S, true) end,
+    ConnectSock = fun(S, SA) ->
+			  case socket:connect(S, SA) of
+			      ok ->
+				  ok;
+			      {error, Reason} ->
+				  ?FAIL({connect, Reason})
+			  end
+		  end,
+    ListenSock = fun(S) ->
+			 case socket:listen(S) of
+			     ok ->
+				 ok;
+			     {error, Reason} ->
+				 ?FAIL({listen, Reason})
+			 end
+		 end,
+    AcceptSock = fun(S) ->
+			 case socket:accept(S) of
+			     {ok, A} ->
+				 A;
+			     {error, Reason} ->
+				 ?FAIL({accept, Reason})
+			 end
+		 end,
+
+    VerifyBspState = fun(S, Type, Proto,
+			 Bound, Connected) ->
+			     verify_bsp_state(S, Type, Proto,
+					      Bound, Connected)
+		     end,
+
+    ?P("Create UDP socket 1:"),
+    US1 = CreateSock(dgram, udp),
+    ?P("UDP[1] [Unbound | Unconnected] => ~p", [BspState(US1)]),
+    VerifyBspState(BspState(US1), dgram, udp, false, false),
+
+    ?P("Create UDP socket 2:"),
+    US2 = CreateSock(dgram, udp),
+    ?P("UDP[2] [Unbound | Unconnected] => ~p", [BspState(US2)]),
+    VerifyBspState(BspState(US2), dgram, udp, false, false),
+
+    ?P("Bind UDP socket 1"),
+    BindSock(US1, LSA),
+    ?P("UDP[1] [Bound | Unconnected]   => ~p", [BspState(US1)]),
+    VerifyBspState(BspState(US1), dgram, udp, true, false),
+
+    ?P("Bind UDP socket 2"),
+    BindSock(US2, LSA),
+    ?P("UDP[2] [Bound | Unconnected]   => ~p", [BspState(US2)]),
+    VerifyBspState(BspState(US2), dgram, udp, true, false),
+
+    %% We have not yet implemented 'connect' for UDP on Windows,
+    %% so we leave this commented for now:
+
+    %% ?P("socknames"),
+    %% USN1 = Sockname(US1),
+    %% USN2 = Sockname(US2),
+
+    %% ?P("enable debug for US1"),
+    %% EnableDebug(US1),
+
+    %% ?P("Connect UDP socket 1 to"
+    %%    "~n   ~p", [USN2]),
+    %% ConnectSock(US1, USN2),
+    %% ?P("UDP[1] [Bound | Connected]     => ~p", [BspState(US1)]),
+
+    %% ?P("Connect UDP socket 2 to"
+    %%    "~n   ~p", [USN1]),
+    %% ConnectSock(US2, USN1),
+    %% ?P("UDP[2] [Bound | Connected]     => ~p", [BspState(US2)]),
+
+
+    ?P("Create TCP socket 1:"),
+    TS1 = CreateSock(stream, tcp),
+    ?P("TCP[1] [Unbound | Unconnected] => ~p", [BspState(TS1)]),
+    VerifyBspState(BspState(TS1), stream, tcp, false, false),
+
+    ?P("Create TCP socket 2 (listen):"),
+    TS2 = CreateSock(stream, tcp),
+    ?P("TCP[2] [Unbound | Unconnected] => ~p", [BspState(TS2)]),
+    VerifyBspState(BspState(TS2), stream, tcp, false, false),
+
+    ?P("Bind TCP socket 1"),
+    BindSock(TS1, LSA),
+    ?P("TCP[1] [Bound | Unconnected]   => ~p", [BspState(TS1)]),
+    VerifyBspState(BspState(TS1), stream, tcp, true, false),
+
+    ?P("Bind TCP socket 2"),
+    BindSock(TS2, LSA),
+    ?P("TCP[2] [Bound | Unconnected]   => ~p", [BspState(TS2)]),
+    VerifyBspState(BspState(TS2), stream, tcp, true, false),
+
+    ?P("Make TCP socket 2 listen"),
+    ListenSock(TS2),
+
+    ?P("socknames"),
+    TSN2 = Sockname(TS2),
+
+    ?P("Connect TCP socket 1 to"
+       "~n   ~p", [TSN2]),
+    ConnectSock(TS1, TSN2),
+    ?P("TCP[1] [Bound | Connected]   => ~p", [BspState(TS1)]),
+    VerifyBspState(BspState(TS1), stream, tcp, true, true),
+
+    ?P("Accept TCP socket 3"),
+    TS3 = AcceptSock(TS2),
+    ?P("TCP[3] [Bound | Connected]   => ~p", [BspState(TS3)]),
+    VerifyBspState(BspState(TS3), stream, tcp, true, true),
+
+    ?P("Close socket(s)"),
+    CloseSock(TS3),
+    CloseSock(TS2),
+    CloseSock(TS1),
+
+    ?P("done"),
+    ok.
+
+
+verify_bsp_state(#{type        := T,
+		   protocol    := P,
+		   local_addr  := LA,
+		   remote_addr := RA},
+		 Type, Proto,
+		 Bound, Connected) when (T =:= Type) andalso (P =:= Proto) ->
+    case {Bound, LA} of
+	{false, undefined} ->
+	    ok;
+	{true, _} when (LA =/= undefined) ->
+	    ok;
+	_ ->
+	    ?FAIL({invalid_bound_la, Bound, LA})
+    end,
+    case {Connected, RA} of
+	{false, undefined} ->
+	    ok;
+	{true, _} when (RA =/= undefined) ->
+	    ok;
+	_ ->
+	    ?FAIL({invalid_connected_ra, Connected, RA})
+    end,
+    ok;
+verify_bsp_state(#{type     := T,
+		   protocol := P},
+		 Type, Proto,
+		 _Bound, _Connected) ->
+    ?FAIL({invalid_type_or_proto, {T, Type}, {P, Proto}}).
+
+
+    
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 %% Tests the socket option linger. PLACEHOLDER!
 
-api_opt_sock_linger(suite) ->
-    [];
-api_opt_sock_linger(doc) ->
-    [];
 api_opt_sock_linger(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_opt_sock_linger,
@@ -14121,10 +15239,6 @@ api_opt_sock_linger(_Config) when is_list(_Config) ->
 
 %% Tests the socket option mark. PLACEHOLDER!
 
-api_opt_sock_mark(suite) ->
-    [];
-api_opt_sock_mark(doc) ->
-    [];
 api_opt_sock_mark(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_opt_sock_mark,
@@ -14135,13 +15249,67 @@ api_opt_sock_mark(_Config) when is_list(_Config) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%% Tests the socket option maxdg.
+
+api_opt_sock_maxdg(_Config) when is_list(_Config) ->
+    ?TT(?SECS(10)),
+    tc_try(?FUNCTION_NAME,
+	   fun() ->
+		   %% This is not a 'IPv4' option,
+		   %% but since we used it in the test...
+                   has_support_ipv4(),
+                   has_support_sock_maxdg()
+           end,
+           fun() -> do_api_opt_sock_maxdg() end).
+
+do_api_opt_sock_maxdg() ->
+    ?P("create DGRAM socket"),
+    {ok, S} = socket:open(inet, dgram),
+    ?P("get maxdg"),
+    case socket:getopt(S, socket, maxdg) of
+	{ok, Sz} ->
+	    ?P("success: Sz = ~p", [Sz]),
+	    ok;
+	{error, Reason} ->
+	    ?FAIL({failed_get_maxdg, Reason})
+    end.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Tests the socket option max_msg_size.
+
+api_opt_sock_max_msg_size(_Config) when is_list(_Config) ->
+    ?TT(?SECS(10)),
+    tc_try(?FUNCTION_NAME,
+	   fun() ->
+		   %% This is not a 'IPv4' option,
+		   %% but since we used it in the test...
+                   has_support_ipv4(),
+                   has_support_sock_max_msg_size()
+           end,
+           fun() -> do_api_opt_sock_max_msg_size() end).
+
+do_api_opt_sock_max_msg_size() ->
+    {ok, S} = socket:open(inet, dgram),
+    case socket:getopt(S, socket, max_msg_size) of
+	{ok, Sz} ->
+	    ?P("success: Sz = ~p", [Sz]),
+	    ok;
+	{error, Reason} ->
+	    ?FAIL({failed_get_max_msg_size, Reason})
+    end.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 %% This test case tries to test that the oobinline socket 'socket' option
 %% works.
 %% So, this is done on the receiving side: 
 %%
 %%               socket:setopt(Sock, socket, oobinline, boolean()).
 %%
-%% This works on linux of some version (atleast linux kernel 4.15.0),
+%% This works on linux of some version (at least linux kernel 4.15.0),
 %% but not on FreeBSD (12) for some reason. Until we have figured out
 %% exctly why, we skip a bunch of OSs...
 %%
@@ -14150,10 +15318,6 @@ api_opt_sock_mark(_Config) when is_list(_Config) ->
 %% linux but maybe not in, say, FreeBSD).
 %%
 
-api_opt_sock_oobinline(suite) ->
-    [];
-api_opt_sock_oobinline(doc) ->
-    [];
 api_opt_sock_oobinline(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_sock_ooinline,
@@ -14179,7 +15343,7 @@ api_opt_sock_oobinline(_Config) when is_list(_Config) ->
                              (Sock, false) ->
                                   socket:recv(Sock)
                           end,
-                   InitState = #{domain => inet,
+                   InitState = #{domain => inet_or_inet6(),
                                  proto  => tcp,
                                  send   => Send,
                                  recv   => Recv,
@@ -14783,10 +15947,6 @@ do_api_opt_sock_oobinline(InitState) ->
 %% As it is now, the client does *not* get any credentials!
 %% Until this has been done, this case is skipped!.
 
-api_opt_sock_passcred_tcp4(suite) ->
-    [];
-api_opt_sock_passcred_tcp4(doc) ->
-    [];
 api_opt_sock_passcred_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_sock_passcred_tcp4,
@@ -15574,10 +16734,6 @@ api_opt_sock_passcred_tcp(InitState) ->
 %%
 %%
 
-api_opt_sock_peek_off_tcpL(suite) ->
-    [];
-api_opt_sock_peek_off_tcpL(doc) ->
-    [];
 api_opt_sock_peek_off_tcpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_sock_peek_off_tcpL,
@@ -16125,7 +17281,7 @@ api_opt_sock_peek_off(InitState) ->
 
          %% There is no way to be sure that the data has actually arrived,
          %% and with no data on the server side, the peek will fail.
-         %% Hopfully a sleep will take care of this...
+         %% Hopefully a sleep will take care of this...
          ?SEV_SLEEP(?SECS(1)),
 
          %% 1) peek
@@ -16288,7 +17444,7 @@ api_opt_sock_peek_off(InitState) ->
 
 %% Tests that we get the peer credentials for a connected unix domain
 %% TCP (stream) socket.
-%% That is, all we need to do is to create a slave node, and have 
+%% That is, all we need to do is to create a node, and have 
 %% process connect from that to a local (unix domain socket) socket.
 %%
 %% THIS IS A PLACEHOLDER!!
@@ -16297,10 +17453,6 @@ api_opt_sock_peek_off(InitState) ->
 %% and decode it...
 %%
 
-api_opt_sock_peercred_tcpL(suite) ->
-    [];
-api_opt_sock_peercred_tcpL(doc) ->
-    [];
 api_opt_sock_peercred_tcpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_sock_peercred_tcpL,
@@ -16477,11 +17629,11 @@ api_opt_sock_peercred_tcp(_InitState) ->
     %%      #{desc => "create node",
     %%        cmd  => fun(#{host := Host} = State) ->
     %%     		   ?SEV_IPRINT("try create node on ~p", [Host]),
-    %%                        case start_node(Host, client) of
-    %%                            {ok, Node} ->
+    %%                        case ?CT_PEER() of
+    %%                            {ok, Peer, Node} ->
     %%                                ?SEV_IPRINT("client node ~p started",
     %%                                            [Node]),
-    %%                                {ok, State#{node => Node}};
+    %%                                {ok, State#{node => Node, peer => Peer}};
     %%                            {error, Reason} ->
     %%                                {skip, Reason}
     %%                        end
@@ -16590,8 +17742,8 @@ api_opt_sock_peercred_tcp(_InitState) ->
     %%                        {ok, State1}
     %%                end},
     %%      #{desc => "stop client node",
-    %%        cmd  => fun(#{node := Node} = _State) ->
-    %%                        stop_node(Node)
+    %%        cmd  => fun(#{peer := Peer} = _State) ->
+    %%                        peer:stop(Peer)
     %%                end},
     %%      #{desc => "await client node termination",
     %%        cmd  => fun(#{node := Node} = State) ->
@@ -16836,14 +17988,10 @@ api_opt_sock_peercred_tcp(_InitState) ->
 %%
 %%
 
-api_opt_sock_priority_udp4(suite) ->
-    [];
-api_opt_sock_priority_udp4(doc) ->
-    [];
 api_opt_sock_priority_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_sock_priority_udp4,
-           fun() -> has_support_sock_priority() end,
+           fun() -> has_support_ipv4(), has_support_sock_priority() end,
            fun() ->
                    Set  = fun(Sock, Value) ->
                                   socket:setopt(Sock, socket, priority, Value)
@@ -16869,14 +18017,10 @@ api_opt_sock_priority_udp4(_Config) when is_list(_Config) ->
 %%
 %%
 
-api_opt_sock_priority_tcp4(suite) ->
-    [];
-api_opt_sock_priority_tcp4(doc) ->
-    [];
 api_opt_sock_priority_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_sock_priority_tcp4,
-           fun() -> has_support_sock_priority() end,
+           fun() -> has_support_ipv4(), has_support_sock_priority() end,
            fun() ->
                    Set  = fun(Sock, Value) ->
                                   socket:setopt(Sock, socket, priority, Value)
@@ -17010,14 +18154,10 @@ api_opt_sock_priority(InitState) ->
 %%
 %%
 
-api_opt_sock_rcvbuf_udp4(suite) ->
-    [];
-api_opt_sock_rcvbuf_udp4(doc) ->
-    [];
 api_opt_sock_rcvbuf_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_sock_rcvbuf_udp4,
-           fun() -> has_support_sock_rcvbuf() end,
+           fun() -> has_support_ipv4(), has_support_sock_rcvbuf() end,
            fun() ->
                    ok = api_opt_sock_buf_udp4(rcvbuf)
            end).
@@ -17031,14 +18171,10 @@ api_opt_sock_rcvbuf_udp4(_Config) when is_list(_Config) ->
 %%
 %%
 
-api_opt_sock_sndbuf_udp4(suite) ->
-    [];
-api_opt_sock_sndbuf_udp4(doc) ->
-    [];
 api_opt_sock_sndbuf_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_sock_sndbuf_udp4,
-           fun() -> has_support_sock_sndbuf() end,
+           fun() -> has_support_ipv4(), has_support_sock_sndbuf() end,
            fun() ->
                    ok = api_opt_sock_buf_udp4(sndbuf)
            end).
@@ -17167,14 +18303,10 @@ api_opt_sock_buf(InitState) ->
 %% but we don't (we just set the value and read it back...)
 %%
 
-api_opt_sock_rcvtimeo_udp4(suite) ->
-    [];
-api_opt_sock_rcvtimeo_udp4(doc) ->
-    [];
 api_opt_sock_rcvtimeo_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_sock_rcvtimeo_udp4,
-           fun() -> has_support_sock_rcvtimeo() end,
+           fun() -> has_support_ipv4(), has_support_sock_rcvtimeo() end,
            fun() ->
                    ok = api_opt_sock_timeo_udp4(rcvtimeo)
            end).
@@ -17188,14 +18320,10 @@ api_opt_sock_rcvtimeo_udp4(_Config) when is_list(_Config) ->
 %%
 %%
 
-api_opt_sock_sndtimeo_udp4(suite) ->
-    [];
-api_opt_sock_sndtimeo_udp4(doc) ->
-    [];
 api_opt_sock_sndtimeo_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_sock_sndtimeo_udp4,
-           fun() -> has_support_sock_sndtimeo() end,
+           fun() -> has_support_ipv4(), has_support_sock_sndtimeo() end,
            fun() ->
                    ok = api_opt_sock_timeo_udp4(sndtimeo)
            end).
@@ -17291,7 +18419,7 @@ api_opt_sock_timeo(InitState) ->
                                    ok;
                                {ok, #{sec := Sec}} when (ExpSec =:= Sec) ->
 				   %% For some reason OpenBSD "adjusts" the timeout,
-				   %% so that usec does not (allways match)
+				   %% so that usec does not (always match)
                                    ?SEV_IPRINT("timeout (approx) validated"),
                                    ok;
                                {ok, TO} ->
@@ -17338,14 +18466,14 @@ api_opt_sock_timeo(InitState) ->
 %%
 %%
 
-api_opt_sock_rcvlowat_udp4(suite) ->
-    [];
-api_opt_sock_rcvlowat_udp4(doc) ->
-    [];
 api_opt_sock_rcvlowat_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_sock_rcvlowat_udp4,
-           fun() -> has_support_sock_rcvlowat() end,
+           fun() ->
+                   is_not_windows(), % einval on Windows
+                   has_support_ipv4(),
+                   has_support_sock_rcvlowat()
+           end,
            fun() ->
                    ok = api_opt_sock_lowat_udp4(rcvlowat)
            end).
@@ -17361,14 +18489,14 @@ api_opt_sock_rcvlowat_udp4(_Config) when is_list(_Config) ->
 %% so we skip if we get ENOPROTOOPT when attempting a change.
 %%
 
-api_opt_sock_sndlowat_udp4(suite) ->
-    [];
-api_opt_sock_sndlowat_udp4(doc) ->
-    [];
 api_opt_sock_sndlowat_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_sock_sndlowat_udp4,
-           fun() -> has_support_sock_sndlowat() end,
+           fun() ->
+                   is_not_windows(), % einval on Windows
+                   has_support_ipv4(),
+                   has_support_sock_sndlowat()
+           end,
            fun() ->
                    ok = api_opt_sock_lowat_udp4(sndlowat)
            end).
@@ -17505,14 +18633,10 @@ api_opt_sock_lowat(InitState) ->
 %% All subsequent *received* messages will be timestamped.
 %%
 
-api_opt_sock_timestamp_udp4(suite) ->
-    [];
-api_opt_sock_timestamp_udp4(doc) ->
-    [];
 api_opt_sock_timestamp_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_sock_timestamp_udp4,
-           fun() -> has_support_sock_timestamp() end,
+           fun() -> has_support_ipv4(), has_support_sock_timestamp() end,
            fun() ->
                    Set  = fun(Sock, Value) ->
                                   socket:setopt(Sock, socket, timestamp, Value)
@@ -17891,14 +19015,11 @@ api_opt_sock_timestamp_udp(InitState) ->
 %% Don't actually know if its the distro or the (kernel) version...
 %%
 
-api_opt_sock_timestamp_tcp4(suite) ->
-    [];
-api_opt_sock_timestamp_tcp4(doc) ->
-    [];
 api_opt_sock_timestamp_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_sock_timestamp_tcp4,
            fun() ->
+                   has_support_ipv4(),
                    has_support_sock_timestamp(),
                    is_good_enough_linux({4,4,120}),
                    is_not_freebsd(),
@@ -18311,7 +19432,7 @@ api_opt_sock_timestamp_tcp(InitState) ->
                                    ERROR
                            end                                   
                    end},
-         %% Linux pecularity observed here...
+         %% Linux peculiarity observed here...
          %% Detected on Kernel 4.15.0-72 x96_64.
          %% The option set to enable receiving timestamps just above
          %% has failed to be effective down in "await recv reply 2
@@ -18696,10 +19817,9 @@ api_opt_sock_timestamp_tcp(InitState) ->
 %%                   When sending, the dest will be the multicast address
 %%                   and port of the receiving socket.
 %% Receiving socket: Bound to the multicast address and port.
-api_opt_ip_add_drop_membership(suite) ->
-    [];
-api_opt_ip_add_drop_membership(doc) ->
-    ["OTP-15908 (ERL-980)"];
+api_opt_ip_add_drop_membership() ->
+    [{doc, "OTP-15908 (ERL-980)"}].
+
 api_opt_ip_add_drop_membership(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(api_opt_ip_add_drop_membership,
@@ -18708,10 +19828,10 @@ api_opt_ip_add_drop_membership(_Config) when is_list(_Config) ->
                    has_support_ip_drop_membership(),
                    has_support_ip_multicast()
            end,
-           fun() -> api_opt_ip_add_drop_membership() end).
+           fun() -> api_opt_ip_add_drop_membership_do() end).
 
 
-api_opt_ip_add_drop_membership() ->
+api_opt_ip_add_drop_membership_do() ->
     Set = fun(S, Key, Val) ->
                   socket:setopt(S, ip, Key, Val)
           end,
@@ -19038,14 +20158,10 @@ which_local_host_ifname(Domain) ->
 %% we do not test!!
 %%
 
-api_opt_ip_pktinfo_udp4(suite) ->
-    [];
-api_opt_ip_pktinfo_udp4(doc) ->
-    [];
 api_opt_ip_pktinfo_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
-    tc_try(api_opt_ip_pktinfo_udp4,
-           fun() -> has_support_ip_pktinfo() end,
+    tc_try(?FUNCTION_NAME,
+           fun() -> has_support_ipv4(), has_support_ip_pktinfo() end,
            fun() ->
                    Set  = fun(Sock, Value) ->
                                   socket:setopt(Sock, ip, pktinfo, Value)
@@ -19055,16 +20171,16 @@ api_opt_ip_pktinfo_udp4(_Config) when is_list(_Config) ->
                           end,
                    Send = fun(Sock, Data, Dest, default) ->
                                   Msg = #{addr => Dest,
-                                             iov  => [Data]},
+                                          iov  => [Data]},
                                   socket:sendmsg(Sock, Msg);
                              (Sock, Data, Dest, Info) ->
                                   %% We do not support this at the moment!!!
                                   CMsg = #{level => ip,
-                                              type  => pktinfo,
-                                              data  => Info},
+                                           type  => pktinfo,
+                                           data  => Info},
                                   Msg  = #{addr => Dest,
-                                              ctrl => [CMsg],
-                                              iov  => [Data]},
+                                           ctrl => [CMsg],
+                                           iov  => [Data]},
                                   socket:sendmsg(Sock, Msg)
                           end,
                    Recv = fun(Sock) ->
@@ -19153,18 +20269,18 @@ api_opt_ip_pktinfo_udp(InitState) ->
                                        "~n   ~p", [SADst]),
                            {ok, State#{sa_dst => SADst}}
                    end},
-         #{desc => "default pktinfo for dst socket",
+         #{desc => "get default pktinfo for dst socket",
            cmd  => fun(#{sock_dst := Sock, get := Get} = _State) ->
                            case Get(Sock) of
                                {ok, false = Value} ->
                                    ?SEV_IPRINT("dst recvttl: ~p", [Value]),
                                    ok;
                                {ok, Unexpected} ->
-                                   ?SEV_EPRINT("Unexpected src recvtos: ~p",
+                                   ?SEV_EPRINT("Unexpected src pktinfo: ~p",
                                                [Unexpected]),
                                    {error, {unexpected, Unexpected}};
                                {error, Reason} = ERROR ->
-                                   ?SEV_EPRINT("Failed getting (default) timestamp:"
+                                   ?SEV_EPRINT("Failed getting (default) pktinfo:"
                                                "   ~p", [Reason]),
                                    ERROR
                            end
@@ -19394,14 +20510,11 @@ api_opt_ip_pktinfo_udp(InitState) ->
 %% </NOTE>
 %%
 
-api_opt_ip_recvopts_udp4(suite) ->
-    [];
-api_opt_ip_recvopts_udp4(doc) ->
-    [];
 api_opt_ip_recvopts_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_ip_recvopts_udp4,
            fun() ->
+                   has_support_ipv4(),
                    has_support_ip_recvopts(),
                    %% We also use the recvtos and timestamp options
                    %% in this test, so at least one of them must
@@ -19853,14 +20966,10 @@ api_opt_ip_recvopts_udp(InitState) ->
 %%
 %%
 
-api_opt_ip_recvorigdstaddr_udp4(suite) ->
-    [];
-api_opt_ip_recvorigdstaddr_udp4(doc) ->
-    [];
 api_opt_ip_recvorigdstaddr_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_ip_recvorigdstaddr_udp4,
-           fun() -> has_support_ip_recvorigdstaddr() end,
+           fun() -> has_support_ipv4(), has_support_ip_recvorigdstaddr() end,
            fun() ->
                    Set  = fun(Sock, Value) ->
                                   socket:setopt(Sock, ip, recvorigdstaddr, Value)
@@ -20109,14 +21218,12 @@ api_opt_ip_recvorigdstaddr_udp(InitState) ->
 %% that method. Instead, set tos (true) on the sending socket.
 %%
 
-api_opt_ip_recvtos_udp4(suite) ->
-    [];
-api_opt_ip_recvtos_udp4(doc) ->
-    [];
 api_opt_ip_recvtos_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_ip_recvtos_udp4,
            fun() ->
+                   is_not_windows(), % IP_TOS on windows
+                   has_support_ipv4(),
                    has_support_ip_recvtos(),
                    has_support_ip_tos() % Used in the test
            end,
@@ -20485,15 +21592,17 @@ api_opt_ip_recvtos_udp(InitState) ->
 %% Maybe we should send and receive from different VMs, until then
 %% skip darwin and OpenBSD.
 %%
+%% Windows:
+%% It seems like its possible to set and get the recvttl option,
+%% but not to use the ttl control message header when sending.
+%% The following is the list of types (for level ip) which are listed
+%% as supported: IP_ORIGINAL_ARRIVAL_IF, IP_PKTINFO and IP_ECN
 
-api_opt_ip_recvttl_udp4(suite) ->
-    [];
-api_opt_ip_recvttl_udp4(doc) ->
-    [];
 api_opt_ip_recvttl_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
-    tc_try(api_opt_ip_recvttl_udp4,
+    tc_try(?FUNCTION_NAME,
            fun() ->
+                   has_support_ipv4(),
 		   has_support_ip_recvttl(),
 		   is_not_openbsd(),
 		   is_not_darwin()
@@ -20507,15 +21616,15 @@ api_opt_ip_recvttl_udp4(_Config) when is_list(_Config) ->
                           end,
                    Send = fun(Sock, Data, Dest, default) ->
                                   Msg = #{addr => Dest,
-                                             iov  => [Data]},
+                                          iov  => [Data]},
                                   socket:sendmsg(Sock, Msg);
                              (Sock, Data, Dest, TTL) ->
                                   CMsg = #{level => ip,
-                                              type  => ttl,
-                                              value => TTL},
+                                           type  => ttl,
+                                           value => TTL},
                                   Msg  = #{addr => Dest,
-                                              ctrl => [CMsg],
-                                              iov  => [Data]},
+                                           ctrl => [CMsg],
+                                           iov  => [Data]},
                                   socket:sendmsg(Sock, Msg)
                           end,
                    Recv = fun(Sock) ->
@@ -20680,6 +21789,69 @@ api_opt_ip_recvttl_udp(InitState) ->
                                    (catch socket:close(SSock)),
                                    (catch socket:close(DSock)),
                                    {skip, Reason};
+
+                               {error,
+                                {get_overlapped_result,
+                                 #{file     := File,
+                                   function := Function,
+                                   line     := Line,
+                                   raw_info := RawInfo,
+                                   info     := invalid_parameter = Info}}} ->
+                                   %% IF we can't send it the test will not work
+                                   ?SEV_EPRINT("Cannot send TTL: "
+                                               "~p => SKIP: "
+                                               "~n   File:     ~s"
+                                               "~n   Function: ~s"
+                                               "~n   Line:     ~p"
+                                               "~n   Raw Info: ~p",
+                                               [Info,
+                                                File, Function, Line,
+                                                RawInfo]),
+                                   (catch socket:close(SSock)),
+                                   (catch socket:close(DSock)),
+                                   {skip,
+                                    ?F("Cannot send with TTL: ~p", [Info])};
+                               {error, {get_overlapped_result,
+                                        invalid_parameter = Info}} ->
+                                   %% IF we can't send it the test will not work
+                                   ?SEV_EPRINT("Cannot send TTL: "
+                                               "~p => SKIP", [Info]),
+                                   (catch socket:close(SSock)),
+                                   (catch socket:close(DSock)),
+                                   {skip,
+                                    ?F("Cannot send with TTL: ~p", [Info])};
+
+                               {error,
+                                {completion_status,
+                                 #{file     := File,
+                                   function := Function,
+                                   line     := Line,
+                                   raw_info := RawInfo,
+                                   info     := invalid_parameter = Info}}} ->
+                                   %% IF we can't send it the test will not work
+                                   ?SEV_EPRINT("Cannot send TTL: "
+                                               "~p => SKIP: "
+                                               "~n   File:     ~s"
+                                               "~n   Function: ~s"
+                                               "~n   Line:     ~p"
+                                               "~n   Raw Info: ~p",
+                                               [Info,
+                                                File, Function, Line,
+                                                RawInfo]),
+                                   (catch socket:close(SSock)),
+                                   (catch socket:close(DSock)),
+                                   {skip,
+                                    ?F("Cannot send with TTL: ~p", [Info])};
+                               {error, {completion_status,
+                                        invalid_parameter = Info}} ->
+                                   %% IF we can't send it the test will not work
+                                   ?SEV_EPRINT("Cannot send TTL: "
+                                               "~p => SKIP", [Info]),
+                                   (catch socket:close(SSock)),
+                                   (catch socket:close(DSock)),
+                                   {skip,
+                                    ?F("Cannot send with TTL: ~p", [Info])};
+
                                {error, _Reason} = ERROR ->
                                    ERROR
                            end
@@ -20872,14 +22044,14 @@ api_opt_ip_recvttl_udp(InitState) ->
 %% Default value is supposed to be '0'.
 %% 
 
-api_opt_ip_tos_udp4(suite) ->
-    [];
-api_opt_ip_tos_udp4(doc) ->
-    [];
 api_opt_ip_tos_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
-    tc_try(api_opt_ip_tos_udp4,
-           fun() -> has_support_ip_tos() end,
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   is_not_windows(), % IP_TOS on windows
+                   has_support_ipv4(),
+                   has_support_ip_tos()
+           end,
            fun() ->
                    Set  = fun(Sock, Value) ->
                                   socket:setopt(Sock, ip, tos, Value)
@@ -20900,7 +22072,7 @@ api_opt_ip_tos_udp(InitState) ->
     process_flag(trap_exit, true),
     %% mincost is not supported on all platforms.
     %% For instance, Solaris 10, does not have that constant.
-    %% Instead it has two others with, what appers to be,
+    %% Instead it has two others with, what appears to be,
     %% completely different meanings...
     %% So, avoid the complication by not using this value...
     %% TOS1 = mincost,     TOS1Str = atom_to_list(TOS1),
@@ -21118,14 +22290,11 @@ api_opt_ip_tos_udp(InitState) ->
 %% queue can be read.
 %% 
 
-api_opt_ip_recverr_udp4(suite) ->
-    [];
-api_opt_ip_recverr_udp4(doc) ->
-    [];
 api_opt_ip_recverr_udp4(Config) when is_list(Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_ip_recverr_udp4,
            fun() ->
+                   has_support_ipv4(),
                    has_support_ip_recverr()
            end,
            fun() ->
@@ -21157,10 +22326,6 @@ api_opt_ip_recverr_udp4(Config) when is_list(Config) ->
 %% queue can be read.
 %% 
 
-api_opt_ipv6_recverr_udp6(suite) ->
-    [];
-api_opt_ipv6_recverr_udp6(doc) ->
-    [];
 api_opt_ipv6_recverr_udp6(Config) when is_list(Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_ipv6_recverr_udp6,
@@ -21241,16 +22406,33 @@ api_opt_recverr_udp(Config, InitState) ->
                                {select, SelectInfo} when RecvRef =:= nowait ->
                                    ?SEV_IPRINT("expected select nowait: "
 					       "~n   ~p", [SelectInfo]),
-                                   {ok, State#{rselect => SelectInfo}};
+                                   {ok, State#{async_tag => select,
+                                               rselect   => SelectInfo}};
                                {select,
                                 {select_info, _Tag, RecvRef} = SelectInfo}
                                  when is_reference(RecvRef) ->
                                    ?SEV_IPRINT("expected select ref: "
 					       "~n   ~p", [SelectInfo]),
-                                   {ok, State#{rselect => SelectInfo}};
+                                   {ok, State#{async_tag => select,
+                                               rselect   => SelectInfo}};
+
+                               {completion, CI} when RecvRef =:= nowait ->
+                                   ?SEV_IPRINT("expected completion nowait: "
+					       "~n   ~p", [CI]),
+                                   {ok, State#{asynch_tag  => completion,
+                                               rcompletion => CI}};
+                               {completion,
+                                {completion_info, _Tag, RecvRef} = CI}
+                                 when is_reference(RecvRef) ->
+                                   ?SEV_IPRINT("expected completion ref: "
+					       "~n   ~p", [CI]),
+                                   {ok, State#{asynch_tag  => completion,
+                                               rcompletion => CI}};
+
                                {ok, _} ->
-                                   ?SEV_EPRINT("unexpected successs"),
+                                   ?SEV_EPRINT("unexpected success"),
                                    {error, unexpected_success};
+
                                {error, Reason} = ERROR ->
                                    ?SEV_EPRINT("unexpected error: ~p", [Reason]),
                                    ERROR
@@ -21259,8 +22441,8 @@ api_opt_recverr_udp(Config, InitState) ->
 
          #{desc => "try send to nowhere",
            cmd  => fun(#{domain := Domain,
-                         sock := Sock,
-                         send := Send} = State) ->
+                         sock   := Sock,
+                         send   := Send} = State) ->
                            SendRef = nowait(Config),
                            Dest = #{family => Domain,
                                     addr   => if
@@ -21273,18 +22455,40 @@ api_opt_recverr_udp(Config, InitState) ->
                            case Send(Sock, <<"ping">>, Dest, SendRef) of
                                ok ->
                                    ?SEV_IPRINT("sent"),
-                                   ok;
+                                   {ok, State#{sent => true}};
+
                                {select, SelectInfo}
                                  when SendRef =:= nowait ->
                                    ?SEV_IPRINT("expected select nowait: ~p",
 					       [SelectInfo]),
-                                   {ok, State#{sselect => SelectInfo}};
+                                   {ok, State#{sent       => false,
+                                               asynch_tag => select,
+                                               sselect    => SelectInfo}};
                                {select,
                                 {select_info, _Tag, SendRef} = SelectInfo}
                                  when is_reference(SendRef) ->
                                    ?SEV_IPRINT("expected select ref: ~p",
 					       [SelectInfo]),
-                                   {ok, State#{sselect => SelectInfo}};
+                                   {ok, State#{sent       => false,
+                                               asynch_tag => select,
+                                               sselect    => SelectInfo}};
+
+                               {completion, CI}
+                                 when SendRef =:= nowait ->
+                                   ?SEV_IPRINT("expected completion nowait: ~p",
+					       [CI]),
+                                   {ok, State#{sent       => false,
+                                               asynch_tag  => completion,
+                                               scompletion => CI}};
+                               {completion,
+                                {completion_info, _Tag, SendRef} = CI}
+                                 when is_reference(SendRef) ->
+                                   ?SEV_IPRINT("expected completion ref: ~p",
+					       [CI]),
+                                   {ok, State#{sent       => false,
+                                               asynch_tag  => completion,
+                                               scompletion => CI}};
+
                                {error, Reason} = ERROR ->
                                    ?SEV_EPRINT("unexpected error: ~p",
 					       [Reason]),
@@ -21292,25 +22496,58 @@ api_opt_recverr_udp(Config, InitState) ->
                            end
                    end},
 
-         #{desc => "await receive select message",
-           cmd  => fun(#{sock    := Sock,
-                         rselect := {select_info, _, Ref}} = _State) ->
+         #{desc => "await receive select|completion message",
+           cmd  => fun(#{sent       := false,
+                         asynch_tag := select,
+                         sock       := Sock,
+                         rselect    := {select_info, _, Ref}} = _State) ->
                            receive
                                {'$socket', Sock, select, Ref} ->
-                                   ?SEV_IPRINT("received expected (read) select message: "
+                                   ?SEV_IPRINT("received expected (read) "
+                                               "select message: "
                                                "~n   ~p", [Ref]),
                                    ok
-                           end
+                           end;
+                      (#{sent        := false,
+                         asynch_tag  := completion,
+                         sock        := Sock,
+                         rcompletion := {completion_info, _, Ref}} = _State) ->
+                           receive
+                               {'$socket', Sock, completion,
+                                {Ref, {error, econnrefused = Reason}}} ->
+                                   ?SEV_IPRINT("expected failure: ~p",
+                                               [Reason]),
+                                   ok;
+
+                               {'$socket', Sock, completion,
+                                {Ref, {ok, _}}} ->
+                                   ?SEV_EPRINT("unexpected success"),
+                                   {error, unexpected_success};
+                               {'$socket', Sock, completion,
+                                {Ref, {error, Reason} = ERROR}} ->
+                                   ?SEV_IPRINT("unexpected failure: ~p",
+                                               [Reason]),
+                                   ERROR
+
+                           end;
+                      (#{sent := true} = _State) ->
+                           ?SEV_IPRINT("no action needed"),
+                           ok
                    end},
 
          #{desc => "try recv - expect econnrefused",
-           cmd  => fun(#{sock := Sock, recv := Recv} = _State) ->
+           cmd  => fun(#{asynch_tag := completion} = _State) ->
+                           ?SEV_IPRINT("already processed"),
+                           ok;
+                      (#{sock := Sock,
+                         recv := Recv} = _State) ->
                            case Recv(Sock, infinity) of
                                {error, econnrefused = Reason} ->
-                                   ?SEV_IPRINT("expected failure: ~p", [Reason]),
+                                   ?SEV_IPRINT("expected failure: ~p",
+                                               [Reason]),
                                    ok;
                                {ok, _} ->
-                                   ?SEV_EPRINT("unexpected successs"),
+                                   ?SEV_EPRINT("unexpected success"),
                                    {error, unexpected_success};
                                {select, SelectInfo} ->
                                    ?SEV_EPRINT("unexpected select: ~p",
@@ -21345,10 +22582,17 @@ api_opt_recverr_udp(Config, InitState) ->
                                {ok, {Addr, <<"ring">>}} ->
                                    ?SEV_IPRINT("receive expected"),
                                    ok;
+
                                {select, SelectInfo} ->
                                    ?SEV_EPRINT("unexpected select: ~p",
                                                [SelectInfo]),
                                    {error, unexpected_success};
+
+                               {completion, CompletionInfo} ->
+                                   ?SEV_EPRINT("unexpected completion: ~p",
+                                               [CompletionInfo]),
+                                   {error, unexpected_success};
+
                                {error, Reason} = ERROR ->
                                    ?SEV_EPRINT("unexpected error: ~p",
                                                [Reason]),
@@ -21357,7 +22601,7 @@ api_opt_recverr_udp(Config, InitState) ->
                    end},
 
          #{desc => "try recv error queue",
-           cmd  => fun(#{domain := Domain, sock := Sock}) ->
+           cmd  => fun(#{domain := Domain, sock := Sock} = State) ->
                            %% Note that not all platforms that support
                            %% recverr, actually supports "encoding" the data
                            %% part, so we need to adjust for that.
@@ -21388,7 +22632,7 @@ api_opt_recverr_udp(Config, InitState) ->
                                                  }]} = Msg} ->
                                    ?SEV_IPRINT("expected error queue (decoded): "
                                                "~n   ~p", [Msg]),
-                                   ok;
+                                   {ok, State#{asynch_tag => none}};
                                {ok, #{addr  := #{family := Domain,
 						 addr   := _Addr},
                                       flags := [errqueue],
@@ -21396,12 +22640,58 @@ api_opt_recverr_udp(Config, InitState) ->
                                       value := [#{level := Level,
                                                   type  := recverr}]} = _Msg} ->
                                    ?SEV_IPRINT("expected error queue"),
-                                   ok;
+                                   {ok, State#{asynch_tag => none}};
+
+                               {completion, CI} ->
+                                   ?SEV_IPRINT("completion: "
+                                               "~n   ~p", [CI]),
+                                   {ok, State#{asynch_tag => completion,
+                                               completion => CI}};
+
+                               {error, timeout = Reason} = ERROR ->
+                                   case os:type() of
+                                       {win32, nt} ->
+                                           ?SEV_IPRINT("failed reading "
+                                                       "error queue: "
+                                                       "~n   ~p", [Reason]),
+                                           {skip,
+                                            "Test case does not "
+                                            "work on Windows"};
+                                       _ ->
+                                           ?SEV_EPRINT("failed reading "
+                                                       "error queue: "
+                                                       "~n   ~p", [Reason]),
+                                           ERROR
+                                   end;
+
                                {error, Reason} = ERROR ->
                                    ?SEV_EPRINT("failed reading error queue: "
                                                "~n   ~p", [Reason]),
                                    ERROR
                            end
+                   end},
+
+         #{desc => "await receive select message",
+           cmd  => fun(#{asynch_tag := completion,
+                         sock       := Sock,
+                         completion := {completion_info, _, Ref}} = _State) ->
+                           receive
+                               {'$socket', Sock, completion,
+                                {Ref, {ok, Info}}} ->
+                                   ?SEV_EPRINT("expected success: "
+                                               "~n   ~p", [Info]),
+                                   ok;
+
+                               {'$socket', Sock, completion,
+                                {Ref, {error, Reason} = ERROR}} ->
+                                   ?SEV_IPRINT("unexpected failure: ~p",
+                                               [Reason]),
+                                   ERROR
+
+                           end;
+                      (#{asynch_tag := none} = _State) ->
+                           ?SEV_IPRINT("no action needed"),
+                           ok
                    end},
 
          #{desc => "close socket",
@@ -21448,19 +22738,22 @@ api_opt_recverr_udp(Config, InitState) ->
 %% the test (since its a IPv4 test case).
 %%
 
-api_opt_ip_mopts_udp4(suite) ->
-    [];
-api_opt_ip_mopts_udp4(doc) ->
-    [];
 api_opt_ip_mopts_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
-    tc_try(api_opt_ip_mopts_udp4,
+    tc_try(?FUNCTION_NAME,
            fun() ->
-		   case is_any_options_supported(
-			  [{ip, pktinfo},
-			   {ip, recvorigdstaddr},
-			   {ip, recvtos},
-			   {ip, recvttl}]) of
+                   has_support_ipv4(),
+                   Opts =
+                       [{ip, pktinfo},
+                        {ip, recvorigdstaddr}] ++
+                       case os:type() of
+                           {win32, nt} ->
+                               [];
+                           _ ->
+                               [{ip, recvtos},
+                                {ip, recvttl}]
+                       end,
+		   case is_any_options_supported(Opts) of
 		       true ->
 			   ok;
 		       false ->
@@ -21496,41 +22789,48 @@ api_opt_ip_mopts_udp4(_Config) when is_list(_Config) ->
 			   false ->
 			       []
 		       end ++
-		       case socket:is_supported(options, ip, recvtos) of
-			   true ->
-                               %% It seems that sending any of the
-                               %% TOS or TTL values will fail on: 
-			       %%    FreeBSD
-			       %%    Linux when
-			       %%      version =< 3.12.60 (at least)
-			       %%      Don't know when this starts working,
-			       %%      but it works on: 
-			       %%           Ubunto 16.04.6 => 4.15.0-65
-			       %%           SLES 12 SP2    => 4.4.120-92.70
-			       %% so don't!
-                               %%
-                               %% The latest we know it not to work was a
-                               %% SLES 12 (plain) at 3.12.50-52.54
-                               %%
-			       [{ip, recvtos, tos, 
-                                 case os:type() of
-                                     {unix, freebsd} ->
-                                         default;
-				     {unix, linux} ->
-					 case os:version() of
-					     Vsn when Vsn > {3,12,60} ->
-						 42;
-					     _ ->
-						 default
-					 end;
-                                     _ -> 
-                                         42
-                                 end}];
-			   false ->
-			       []
+                       case os:type() of
+                           {win32, nt} ->
+                               [];
+                           _ ->
+                               case socket:is_supported(options, ip, recvtos) of
+                                   true ->
+                                       %% It seems that sending any of the
+                                       %% TOS or TTL values will fail on: 
+                                       %%    FreeBSD
+                                       %%    Linux when
+                                       %%      version =< 3.12.60 (at least)
+                                       %%      Don't know when this starts
+                                       %%      working, but it works on: 
+                                       %%         Ubunto 16.04.6 => 4.15.0-65
+                                       %%         SLES 12 SP2 => 4.4.120-92.70
+                                       %% so don't!
+                                       %%
+                                       %% The latest we know it not to work
+                                       %% was a SLES 12 (plain) at 3.12.50-52.54
+                                       %%
+                                       [{ip, recvtos, tos, 
+                                         case os:type() of
+                                             {unix, freebsd} ->
+                                                 default;
+                                             {unix, linux} ->
+                                                 case os:version() of
+                                                     Vsn when Vsn > {3,12,60} ->
+                                                         42;
+                                                     _ ->
+                                                         default
+                                                 end;
+                                             _ -> 
+                                                 42
+                                         end}];
+                                   false ->
+                                       []
+                               end
 		       end ++
                        case os:type() of
                            {unix, darwin} ->
+                               [];
+                           {win32, nt} ->
                                [];
                            _ ->
                                case socket:is_supported(options, ip, recvttl) of
@@ -21566,21 +22866,22 @@ api_opt_ip_mopts_udp4(_Config) when is_list(_Config) ->
 		       end,
 
                    Enable = fun(Sock, Level, Opt) ->
-				    ?SEV_IPRINT("try enable [~w] ~p", [Level, Opt]),
+				    ?SEV_IPRINT("try enable [~w] ~p",
+                                                [Level, Opt]),
 				    socket:setopt(Sock, Level, Opt, true)
                             end,
                    Send = fun(Sock, Data, Dest, []) ->
                                   Msg = #{addr => Dest,
-                                             iov  => [Data]},
+                                          iov  => [Data]},
                                   socket:sendmsg(Sock, Msg);
 			     (Sock, Data, Dest, Hdrs) when is_list(Hdrs) ->
 				  CMsgs = [#{level => Level,
-						type  => Type,
-						value => Val} ||
-						 {Level, Type, Val} <- Hdrs],
+                                             type  => Type,
+                                             value => Val} ||
+                                              {Level, Type, Val} <- Hdrs],
                                   Msg   = #{addr => Dest,
-					       ctrl => CMsgs,
-					       iov  => [Data]},
+                                            ctrl => CMsgs,
+                                            iov  => [Data]},
                                   socket:sendmsg(Sock, Msg)
                           end,
                    Recv = fun(Sock) ->
@@ -21789,10 +23090,6 @@ api_opt_ip_mopts_udp(InitState) ->
 %% although we only test this with dgram.
 %%
 
-api_opt_ipv6_recvpktinfo_udp6(suite) ->
-    [];
-api_opt_ipv6_recvpktinfo_udp6(doc) ->
-    [];
 api_opt_ipv6_recvpktinfo_udp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_ipv6_recvpktinfo_udp6,
@@ -22052,14 +23349,10 @@ api_opt_ipv6_recvpktinfo_udp(InitState) ->
 %% There seem to be some weirdness with the definition of this
 %% option, so its defined in an include file we don't include
 %% (directly or indirectly). And since some of the defines
-%% are occure in a file we *do* include (via netinet/in.h), we
+%% occur in a file we *do* include (via netinet/in.h), we
 %% leave it as is for now...
 %%
 
-api_opt_ipv6_flowinfo_udp6(suite) ->
-    [];
-api_opt_ipv6_flowinfo_udp6(doc) ->
-    [];
 api_opt_ipv6_flowinfo_udp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_ipv6_flowinfo_udp6,
@@ -22315,10 +23608,6 @@ api_opt_ipv6_flowinfo_udp(InitState) ->
 %% </Note>
 %%
 
-api_opt_ipv6_hoplimit_udp6(suite) ->
-    [];
-api_opt_ipv6_hoplimit_udp6(doc) ->
-    [];
 api_opt_ipv6_hoplimit_udp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_ipv6_hoplimit_udp6,
@@ -22606,10 +23895,6 @@ api_opt_ipv6_hoplimit_udp(InitState) ->
 %% </Note>
 %%
 
-api_opt_ipv6_tclass_udp6(suite) ->
-    [];
-api_opt_ipv6_tclass_udp6(doc) ->
-    [];
 api_opt_ipv6_tclass_udp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_ipv6_tclass_udp6,
@@ -22860,7 +24145,68 @@ api_opt_ipv6_tclass_udp(InitState) ->
 
          #{desc => "send req (to dst) (w explicit tc = 1)",
            cmd  => fun(#{sock_src := Sock, sa_dst := Dst, send := Send}) ->
-                           Send(Sock, ?BASIC_REQ, Dst, 1)
+                           case Send(Sock, ?BASIC_REQ, Dst, 1) of
+                               {error,
+                                {get_overlapped_result,
+                                 #{file     := File,
+                                   function := Function,
+                                   line     := Line,
+                                   raw_info := RawInfo,
+                                   info     := invalid_parameter = Info}}} ->
+                                   %% IF we can't send it the test will not work
+                                   ?SEV_EPRINT("Cannot send TClass: "
+                                               "~p => SKIP: "
+                                               "~n   File:     ~s"
+                                               "~n   Function: ~s"
+                                               "~n   Line:     ~p"
+                                               "~n   Raw Info: ~p",
+                                               [Info,
+                                                File, Function, Line,
+                                                RawInfo]),
+                                   (catch socket:close(Sock)),
+                                   {skip,
+                                    ?F("Cannot send with TClass: ~p", [Info])};
+                               {error, {get_overlapped_result,
+                                        invalid_parameter = Info}} ->
+                                   %% IF we can't send it the test will not work
+                                   ?SEV_EPRINT("Cannot send TClass: "
+                                               "~p => SKIP", [Info]),
+                                   (catch socket:close(Sock)),
+                                   {skip,
+                                    ?F("Cannot send with TClass: ~p", [Info])};
+
+                               {error,
+                                {completion_status,
+                                 #{file     := File,
+                                   function := Function,
+                                   line     := Line,
+                                   raw_info := RawInfo,
+                                   info     := invalid_parameter = Info}}} ->
+                                   %% IF we can't send it the test will not work
+                                   ?SEV_EPRINT("Cannot send TClass: "
+                                               "~p => SKIP: "
+                                               "~n   File:     ~s"
+                                               "~n   Function: ~s"
+                                               "~n   Line:     ~p"
+                                               "~n   Raw Info: ~p",
+                                               [Info,
+                                                File, Function, Line,
+                                                RawInfo]),
+                                   (catch socket:close(Sock)),
+                                   {skip,
+                                    ?F("Cannot send with TClass: ~p", [Info])};
+                               {error, {completion_status,
+                                        invalid_parameter = Info}} ->
+                                   %% IF we can't send it the test will not work
+                                   ?SEV_EPRINT("Cannot send TClass: "
+                                               "~p => SKIP", [Info]),
+                                   (catch socket:close(Sock)),
+                                   {skip,
+                                    ?F("Cannot send with TClass: ~p", [Info])};
+
+                               Other ->
+                                   Other
+                           end
                    end},
          #{desc => "recv req (from src)",
            cmd  => fun(#{sock_dst := Sock, sa_src := Src, recv := Recv}) ->
@@ -22907,7 +24253,8 @@ api_opt_ipv6_tclass_udp(InitState) ->
 						       value => "something"},
 						?BASIC_REQ, UnexpData]),
                                    {error, {unexpected_data, UnexpData}};
-                               {error, _} = ERROR ->
+
+                                {error, _} = ERROR ->
                                    %% At the moment there is no way to get
                                    %% status or state for the socket...
                                    ERROR
@@ -22963,22 +24310,24 @@ api_opt_ipv6_tclass_udp(InitState) ->
 %% the test (since its a IPv6 test case).
 %%
 
-api_opt_ipv6_mopts_udp6(suite) ->
-    [];
-api_opt_ipv6_mopts_udp6(doc) ->
-    [];
 api_opt_ipv6_mopts_udp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_ipv6_mopts_udp6,
            fun() ->
                    has_support_ipv6(),
-		   case is_any_options_supported(
-			  [{ipv6, recvpktinfo},
-			   {ipv6, flowinfo},
-			   {ipv6, recvhoplimit},
-			   {ipv6, hoplimit},
-			   {ipv6, recvtclass},
-			   {ipv6, tclass}]) of
+                   Opts =
+                       [{ipv6, recvpktinfo},
+                        {ipv6, flowinfo},
+                        {ipv6, recvhoplimit},
+                        {ipv6, hoplimit}] ++
+                       case os:type() of
+                           {win32, nt} ->
+                               [];
+                           _ ->
+                               [{ipv6, recvtclass},
+                                {ipv6, tclass}]
+                       end,
+		   case is_any_options_supported(Opts) of
 		       true ->
 			   ok;
 		       false ->
@@ -23027,20 +24376,28 @@ api_opt_ipv6_mopts_udp6(_Config) when is_list(_Config) ->
 				       []
 			       end
 		       end ++
-		       case socket:is_supported(options, ipv6, recvtclass) of
-			   true ->
-			       [{ipv6, recvtclass, tclass, 42}];
-			   false ->
-			       case socket:is_supported(options, ipv6, tclass) of
-				   true ->
-				       [{ipv6, tclass, tclass, 42}];
-				   false ->
-				       []
-			       end
+                       case os:type() of
+                           {win32, nt} ->
+                               [];
+                           _ ->
+                               case socket:is_supported(options,
+                                                        ipv6, recvtclass) of
+                                   true ->
+                                       [{ipv6, recvtclass, tclass, 42}];
+                                   false ->
+                                       case socket:is_supported(options,
+                                                                ipv6, tclass) of
+                                           true ->
+                                               [{ipv6, tclass, tclass, 42}];
+                                           false ->
+                                               []
+                                       end
+                               end
 		       end,
 
                    Enable = fun(Sock, Level, Opt) ->
-				    ?SEV_IPRINT("try enable [~w] ~p", [Level, Opt]),
+				    ?SEV_IPRINT("try enable [~w] ~p",
+                                                [Level, Opt]),
 				    socket:setopt(Sock, Level, Opt, true)
                             end,
                    Send = fun(Sock, Data, Dest, []) ->
@@ -23049,12 +24406,12 @@ api_opt_ipv6_mopts_udp6(_Config) when is_list(_Config) ->
                                   socket:sendmsg(Sock, Msg);
 			     (Sock, Data, Dest, Hdrs) when is_list(Hdrs) ->
 				  CMsgs = [#{level => Level,
-						type  => Type,
-						data  => Val} ||
-						 {Level, Type, Val} <- Hdrs],
+                                             type  => Type,
+                                             data  => Val} ||
+                                              {Level, Type, Val} <- Hdrs],
                                   Msg   = #{addr => Dest,
-					       ctrl => CMsgs,
-					       iov  => [Data]},
+                                            ctrl => CMsgs,
+                                            iov  => [Data]},
                                   socket:sendmsg(Sock, Msg)
                           end,
                    Recv = fun(Sock) ->
@@ -23254,18 +24611,14 @@ api_opt_ipv6_mopts_udp(InitState) ->
 %% According to the man page (on linux) for this option it *should* be
 %% possible to both get and set *allowed* algorithms. But when we attempt
 %% to set, we get 'enoent'.
-%% Accoring to /proc/sys/net/ipv4/tcp_allowed_congestion_control that
+%% According to /proc/sys/net/ipv4/tcp_allowed_congestion_control that
 %% allgorithm was allowed, so...
 %% For now, we only test that we can get (it could be a bug in our code)
 
-api_opt_tcp_congestion_tcp4(suite) ->
-    [];
-api_opt_tcp_congestion_tcp4(doc) ->
-    [];
 api_opt_tcp_congestion_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_tcp_congestion_tcp4,
-           fun() -> has_support_tcp_congestion() end,
+           fun() -> has_support_ipv4(), has_support_tcp_congestion() end,
            fun() ->
                    Set  = fun(Sock, Value) when is_list(Value) ->
                                   socket:setopt(Sock, tcp, congestion, Value)
@@ -23449,14 +24802,10 @@ api_opt_tcp_congestion_tcp(InitState) ->
 %% Reading the man page it seems like (on linux) that the
 %% value resets itself after some (short) time...
 
-api_opt_tcp_cork_tcp4(suite) ->
-    [];
-api_opt_tcp_cork_tcp4(doc) ->
-    [];
 api_opt_tcp_cork_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_tcp_cork_tcp4,
-           fun() -> has_support_tcp_cork() end,
+           fun() -> has_support_ipv4(), has_support_tcp_cork() end,
            fun() ->
                    Set  = fun(Sock, Value) when is_boolean(Value) ->
                                   socket:setopt(Sock, tcp, cork, Value)
@@ -23568,17 +24917,16 @@ api_opt_tcp_cork_tcp(InitState) ->
 %%
 %% Note that there is no point in reading this value back,
 %% since the kernel imposes its own rules with regard
-%% to what is an acceptible value.
+%% to what is an acceptable value.
 %%
 
-api_opt_tcp_maxseg_tcp4(suite) ->
-    [];
-api_opt_tcp_maxseg_tcp4(doc) ->
-    [];
 api_opt_tcp_maxseg_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
-    tc_try(api_opt_tcp_maxseg_tcp4,
-           fun() -> has_support_tcp_maxseg() end,
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   has_support_ipv4(),
+                   has_support_tcp_maxseg()
+           end,
            fun() ->
                    Set  = fun(Sock, Value) when is_integer(Value) ->
                                   socket:setopt(Sock, tcp, maxseg, Value)
@@ -23637,6 +24985,8 @@ api_opt_tcp_maxseg_tcp(InitState) ->
                                {ok, DefMaxSeg} ->
                                    ?SEV_IPRINT("maxseg default: ~p", [DefMaxSeg]),
                                    {ok, State#{def_maxseg => DefMaxSeg}};
+                               {error, enoprotoopt = Reason} ->
+                                   {skip, Reason};
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -23644,7 +24994,7 @@ api_opt_tcp_maxseg_tcp(InitState) ->
          
          %% Note that there is no point in reading this value back,
          %% since the kernel imposes its own rules with regard
-         %% to what is an acceptible value.
+         %% to what is an acceptable value.
          %% So, even if the set operation is a success, the value
          %% still might not have changed.
          %%
@@ -23698,14 +25048,10 @@ api_opt_tcp_maxseg_tcp(InitState) ->
 %% This is a very simple test. We simple set and get the value.
 %% To test that it has an effect is just "to much work"...
 
-api_opt_tcp_nodelay_tcp4(suite) ->
-    [];
-api_opt_tcp_nodelay_tcp4(doc) ->
-    [];
 api_opt_tcp_nodelay_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_tcp_nodelay_tcp4,
-           fun() -> has_support_tcp_nodelay() end,
+           fun() -> has_support_ipv4(), has_support_tcp_nodelay() end,
            fun() ->
                    Set  = fun(Sock, Value) when is_boolean(Value) ->
                                   socket:setopt(Sock, tcp, nodelay, Value)
@@ -23810,20 +25156,814 @@ api_opt_tcp_nodelay_tcp(InitState) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%% Tests that the keepcnt tcp socket option.
+%%
+%% "The maximum number of keepalive probes TCP should send before
+%%  dropping the connection"
+%%
+
+api_opt_tcp_keepcnt_tcp4(_Config) when is_list(_Config) ->
+    ?TT(?SECS(5)),
+    tc_try(?FUNCTION_NAME,
+           fun() -> has_support_ipv4(), has_support_tcp_keepcnt() end,
+           fun() ->
+                   Set  = fun(Sock, Value) when is_integer(Value) ->
+                                  socket:setopt(Sock, tcp, keepcnt, Value)
+                          end,
+                   Get  = fun(Sock) ->
+                                  socket:getopt(Sock, tcp, keepcnt)
+                          end,
+                   InitState = #{domain => inet,
+                                 proto  => tcp,
+                                 set    => Set,
+                                 get    => Get},
+                   ok = api_opt_tcp_keepcnt_tcp(InitState)
+           end).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+api_opt_tcp_keepcnt_tcp(InitState) ->
+    process_flag(trap_exit, true),
+    ServerSeq =
+        [
+         %% *** Wait for start order ***
+         #{desc => "await start (from tester)",
+           cmd  => fun(State) ->
+                           Tester = ?SEV_AWAIT_START(),
+                           {ok, State#{tester => Tester}}
+                   end},
+         #{desc => "monitor tester",
+           cmd  => fun(#{tester := Tester}) ->
+                           _MRef = erlang:monitor(process, Tester),
+                           ok
+                   end},
+
+         %% *** Init part ***
+         #{desc => "which local address",
+           cmd  => fun(#{domain := Domain} = State) ->
+                           LSA = which_local_socket_addr(Domain),
+                           {ok, State#{lsa => LSA}}
+                   end},
+         #{desc => "create socket",
+           cmd  => fun(#{domain := Domain,
+                         proto  := Proto} = State) ->
+                           case socket:open(Domain, stream, Proto) of
+                               {ok, Sock} ->
+                                   {ok, State#{sock => Sock}};
+                               {error, _} = ERROR ->
+                                   ERROR
+                           end
+                   end},
+         #{desc => "bind to local address",
+           cmd  => fun(#{sock := LSock, lsa := LSA} = _State) ->
+                           case sock_bind(LSock, LSA) of
+                               ok ->
+                                   Port = sock_port(LSock),
+                                   ?SEV_IPRINT("bound to port: ~w", [Port]),
+                                   ok;
+                               {error, _} = ERROR ->
+                                   ERROR
+                           end
+                   end},
+         #{desc => "announce ready (init)",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_ANNOUNCE_READY(Tester, init),
+                           ok
+                   end},
+
+
+         %% The actual test
+         #{desc => "await continue (get keepcnt(1))",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_AWAIT_CONTINUE(Tester, tester, get_keepcnt)
+                   end},
+         #{desc => "get keepcnt",
+           cmd  => fun(#{sock := Sock, get := Get} = State) ->
+                           case Get(Sock) of
+                               {ok, KeepCnt} ->
+                                   ?SEV_IPRINT("keepcnt: ~p", [KeepCnt]),
+                                   {ok, State#{keepcnt => KeepCnt}};
+                               {error, _} = ERROR ->
+                                   ERROR
+                           end
+                   end},
+         #{desc => "announce ready (get keepcnt(1))",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_ANNOUNCE_READY(Tester, get_keepcnt),
+                           ok
+                   end},
+
+
+         #{desc => "await continue (set keepcnt)",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_AWAIT_CONTINUE(Tester, tester, set_keepcnt)
+                   end},
+         #{desc => "set keepcnt",
+           cmd  => fun(#{sock    := Sock,
+                         set     := Set,
+                         keepcnt := KeepCnt} = State) ->
+                           NewKeepCnt =
+                               if
+                                   (KeepCnt >= 255) ->
+                                       KeepCnt - 1;
+                                   true ->
+                                       KeepCnt + 1
+                               end,
+                           case Set(Sock, NewKeepCnt) of
+                               ok ->
+                                   ?SEV_IPRINT("keepcnt updated (to ~p)",
+                                               [NewKeepCnt]),
+                                   {ok, State#{keepcnt => NewKeepCnt}};
+                               {error, _} = ERROR ->
+                                   ERROR
+                           end
+                   end},
+         #{desc => "announce ready (set keepcnt)",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_ANNOUNCE_READY(Tester, set_keepcnt),
+                           ok
+                   end},
+
+
+         #{desc => "await continue (get keepcnt(2))",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_AWAIT_CONTINUE(Tester, tester, get_keepcnt)
+                   end},
+         #{desc => "get keepcnt(2)",
+           cmd  => fun(#{sock    := Sock,
+                         get     := Get,
+                         keepcnt := ExpKeepCnt} = _State) ->
+                           case Get(Sock) of
+                               {ok, KeepCnt} when (ExpKeepCnt =:= KeepCnt) ->
+                                   ?SEV_IPRINT("expected keepcnt (~p)",
+                                               [ExpKeepCnt]),
+                                   ok;
+                               {ok, KeepCnt} ->
+                                   ?SEV_EPRINT("unexpected keepcnt:"
+                                               "~n   Expected KeepCnt: ~p"
+                                               "~n   Actual KeepCnt:   ~p",
+                                               [ExpKeepCnt, KeepCnt]),
+                                   {error,
+                                    {unexpected_keepcnt, ExpKeepCnt, KeepCnt}};
+                               {error, Reason} = ERROR ->
+                                   ?SEV_EPRINT("failed get keepcnt: "
+                                               "~n   ~p", [Reason]),
+                                   ERROR
+                           end
+                   end},
+         #{desc => "announce ready (get keepcnt)",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_ANNOUNCE_READY(Tester, get_keepcnt),
+                           ok
+                   end},
+
+
+         %% *** Termination ***
+         #{desc => "await terminate",
+           cmd  => fun(#{tester := Tester} = State) ->
+                           case ?SEV_AWAIT_TERMINATE(Tester, tester) of
+                               ok ->
+                                   {ok, maps:remove(tester, State)};
+                               {error, _} = ERROR ->
+                                   ERROR
+                           end
+                   end},
+         #{desc => "close connection socket",
+           cmd  => fun(#{sock := Sock} = State) ->
+                           ok = socket:close(Sock),
+                           {ok, maps:remove(sock, State)}
+                   end},
+
+         %% *** We are done ***
+         ?SEV_FINISH_NORMAL
+        ],
+
+
+    TesterSeq =
+        [
+         %% *** Init part ***
+         #{desc => "monitor server",
+           cmd  => fun(#{server := Pid} = _State) ->
+                           _MRef = erlang:monitor(process, Pid),
+                           ok
+                   end},
+
+         %% Start the server
+         #{desc => "order server start",
+           cmd  => fun(#{server := Pid} = _State) ->
+                           ?SEV_ANNOUNCE_START(Pid),
+                           ok
+                   end},
+         #{desc => "await server ready (init)",
+           cmd  => fun(#{server := Pid} = _State) ->
+                           ok = ?SEV_AWAIT_READY(Pid, server, init),
+                           ok
+                   end},
+
+         %% *** The actual test ***
+         #{desc => "order server to continue (with get-keepcnt(1))",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_ANNOUNCE_CONTINUE(Server, get_keepcnt),
+                           ok
+                   end},
+         #{desc => "await server ready (get-keepcnt(1))",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_AWAIT_READY(Server, server, get_keepcnt)
+                   end},
+
+         #{desc => "order server to continue (with set-keepcnt)",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_ANNOUNCE_CONTINUE(Server, set_keepcnt),
+                           ok
+                   end},
+         #{desc => "await server ready (set-keepcnt)",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_AWAIT_READY(Server, server, set_keepcnt)
+                   end},
+
+         #{desc => "order server to continue (with get-keepcnt(2))",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_ANNOUNCE_CONTINUE(Server, get_keepcnt),
+                           ok
+                   end},
+         #{desc => "await server ready (get-keepcnt(2))",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_AWAIT_READY(Server, server, get_keepcnt)
+                   end},
+
+
+         %% *** Termination ***
+         #{desc => "order server to terminate",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_ANNOUNCE_TERMINATE(Server),
+                           ok
+                   end},
+         #{desc => "await server termination",
+           cmd  => fun(#{server := Server} = State) ->
+                           ?SEV_AWAIT_TERMINATION(Server),
+                           State1 = maps:remove(server, State),
+                           {ok, State1}
+                   end},
+
+         %% *** We are done ***
+         ?SEV_FINISH_NORMAL
+        ],
+
+
+    i("start server evaluator"),
+    Server = ?SEV_START("server", ServerSeq, InitState),
+
+    i("start tester evaluator"),
+    TesterInitState = #{server => Server#ev.pid},
+    Tester = ?SEV_START("tester", TesterSeq, TesterInitState),
+
+    ok = ?SEV_AWAIT_FINISH([Server, Tester]).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Tests that the keepidle tcp socket option.
+%%
+%% "Gets or sets the number of seconds a TCP connection will remain
+%%  idle before keepalive probes are sent to the remote."
+%%
+
+api_opt_tcp_keepidle_tcp4(_Config) when is_list(_Config) ->
+    ?TT(?SECS(5)),
+    tc_try(?FUNCTION_NAME,
+           fun() -> has_support_ipv4(), has_support_tcp_keepidle() end,
+           fun() ->
+                   Set  = fun(Sock, Value) when is_integer(Value) ->
+                                  socket:setopt(Sock, tcp, keepidle, Value)
+                          end,
+                   Get  = fun(Sock) ->
+                                  socket:getopt(Sock, tcp, keepidle)
+                          end,
+                   InitState = #{domain => inet,
+                                 proto  => tcp,
+                                 set    => Set,
+                                 get    => Get},
+                   ok = api_opt_tcp_keepidle_tcp(InitState)
+           end).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+api_opt_tcp_keepidle_tcp(InitState) ->
+    process_flag(trap_exit, true),
+    ServerSeq =
+        [
+         %% *** Wait for start order ***
+         #{desc => "await start (from tester)",
+           cmd  => fun(State) ->
+                           Tester = ?SEV_AWAIT_START(),
+                           {ok, State#{tester => Tester}}
+                   end},
+         #{desc => "monitor tester",
+           cmd  => fun(#{tester := Tester}) ->
+                           _MRef = erlang:monitor(process, Tester),
+                           ok
+                   end},
+
+         %% *** Init part ***
+         #{desc => "which local address",
+           cmd  => fun(#{domain := Domain} = State) ->
+                           LSA = which_local_socket_addr(Domain),
+                           {ok, State#{lsa => LSA}}
+                   end},
+         #{desc => "create socket",
+           cmd  => fun(#{domain := Domain,
+                         proto  := Proto} = State) ->
+                           case socket:open(Domain, stream, Proto) of
+                               {ok, Sock} ->
+                                   {ok, State#{sock => Sock}};
+                               {error, _} = ERROR ->
+                                   ERROR
+                           end
+                   end},
+         #{desc => "bind to local address",
+           cmd  => fun(#{sock := LSock, lsa := LSA} = _State) ->
+                           case sock_bind(LSock, LSA) of
+                               ok ->
+                                   Port = sock_port(LSock),
+                                   ?SEV_IPRINT("bound to port: ~w", [Port]),
+                                   ok;
+                               {error, _} = ERROR ->
+                                   ERROR
+                           end
+                   end},
+         #{desc => "announce ready (init)",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_ANNOUNCE_READY(Tester, init),
+                           ok
+                   end},
+
+
+         %% The actual test
+         #{desc => "await continue (get keepidle(1))",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_AWAIT_CONTINUE(Tester, tester, get_keepidle)
+                   end},
+         #{desc => "get keepidle",
+           cmd  => fun(#{sock := Sock, get := Get} = State) ->
+                           case Get(Sock) of
+                               {ok, KeepIdle} ->
+                                   ?SEV_IPRINT("keepidle: ~p", [KeepIdle]),
+                                   {ok, State#{keepidle => KeepIdle}};
+                               {error, _} = ERROR ->
+                                   ERROR
+                           end
+                   end},
+         #{desc => "announce ready (get keepidle(1))",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_ANNOUNCE_READY(Tester, get_keepidle),
+                           ok
+                   end},
+
+
+         #{desc => "await continue (set keepidle)",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_AWAIT_CONTINUE(Tester, tester, set_keepidle)
+                   end},
+         #{desc => "set keepidle",
+           cmd  => fun(#{sock     := Sock,
+                         set      := Set,
+                         keepidle := KeepIdle} = State) ->
+                           NewKeepIdle = KeepIdle + 1,
+                           case Set(Sock, NewKeepIdle) of
+                               ok ->
+                                   ?SEV_IPRINT("keepidle updated (to ~p)",
+                                               [NewKeepIdle]),
+                                   {ok, State#{keepidle => NewKeepIdle}};
+                               {error, _} = ERROR ->
+                                   ERROR
+                           end
+                   end},
+         #{desc => "announce ready (set keepidle)",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_ANNOUNCE_READY(Tester, set_keepidle),
+                           ok
+                   end},
+
+
+         #{desc => "await continue (get keepidle(2))",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_AWAIT_CONTINUE(Tester, tester, get_keepidle)
+                   end},
+         #{desc => "get keepidle(2)",
+           cmd  => fun(#{sock     := Sock,
+                         get      := Get,
+                         keepidle := ExpKeepIdle} = _State) ->
+                           case Get(Sock) of
+                               {ok, KeepIdle} when (ExpKeepIdle =:= KeepIdle) ->
+                                   ?SEV_IPRINT("expected keepidle (~p)",
+                                               [ExpKeepIdle]),
+                                   ok;
+                               {ok, KeepIdle} ->
+                                   ?SEV_EPRINT("unexpected keepidle:"
+                                               "~n   Expected KeepIdle: ~p"
+                                               "~n   Actual KeepIdle:   ~p",
+                                               [ExpKeepIdle, KeepIdle]),
+                                   {error,
+                                    {unexpected_keepidle,
+                                     ExpKeepIdle, KeepIdle}};
+                               {error, Reason} = ERROR ->
+                                   ?SEV_EPRINT("failed get keepidle: "
+                                               "~n   ~p", [Reason]),
+                                   ERROR
+                           end
+                   end},
+         #{desc => "announce ready (get keepidle(2))",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_ANNOUNCE_READY(Tester, get_keepidle),
+                           ok
+                   end},
+
+
+         %% *** Termination ***
+         #{desc => "await terminate",
+           cmd  => fun(#{tester := Tester} = State) ->
+                           case ?SEV_AWAIT_TERMINATE(Tester, tester) of
+                               ok ->
+                                   {ok, maps:remove(tester, State)};
+                               {error, _} = ERROR ->
+                                   ERROR
+                           end
+                   end},
+         #{desc => "close connection socket",
+           cmd  => fun(#{sock := Sock} = State) ->
+                           ok = socket:close(Sock),
+                           {ok, maps:remove(sock, State)}
+                   end},
+
+         %% *** We are done ***
+         ?SEV_FINISH_NORMAL
+        ],
+
+
+    TesterSeq =
+        [
+         %% *** Init part ***
+         #{desc => "monitor server",
+           cmd  => fun(#{server := Pid} = _State) ->
+                           _MRef = erlang:monitor(process, Pid),
+                           ok
+                   end},
+
+         %% Start the server
+         #{desc => "order server start",
+           cmd  => fun(#{server := Pid} = _State) ->
+                           ?SEV_ANNOUNCE_START(Pid),
+                           ok
+                   end},
+         #{desc => "await server ready (init)",
+           cmd  => fun(#{server := Pid} = _State) ->
+                           ok = ?SEV_AWAIT_READY(Pid, server, init),
+                           ok
+                   end},
+
+         %% *** The actual test ***
+         #{desc => "order server to continue (with get-keepidle(1))",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_ANNOUNCE_CONTINUE(Server, get_keepidle),
+                           ok
+                   end},
+         #{desc => "await server ready (get-keepidle(1))",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_AWAIT_READY(Server, server, get_keepidle)
+                   end},
+
+         #{desc => "order server to continue (with set-keepidle)",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_ANNOUNCE_CONTINUE(Server, set_keepidle),
+                           ok
+                   end},
+         #{desc => "await server ready (set-keepidle)",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_AWAIT_READY(Server, server, set_keepidle)
+                   end},
+
+         #{desc => "order server to continue (with get-keepidle(2))",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_ANNOUNCE_CONTINUE(Server, get_keepidle),
+                           ok
+                   end},
+         #{desc => "await server ready (get-keepidle(2))",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_AWAIT_READY(Server, server, get_keepidle)
+                   end},
+
+
+         %% *** Termination ***
+         #{desc => "order server to terminate",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_ANNOUNCE_TERMINATE(Server),
+                           ok
+                   end},
+         #{desc => "await server termination",
+           cmd  => fun(#{server := Server} = State) ->
+                           ?SEV_AWAIT_TERMINATION(Server),
+                           State1 = maps:remove(server, State),
+                           {ok, State1}
+                   end},
+
+         %% *** We are done ***
+         ?SEV_FINISH_NORMAL
+        ],
+
+
+    i("start server evaluator"),
+    Server = ?SEV_START("server", ServerSeq, InitState),
+
+    i("start tester evaluator"),
+    TesterInitState = #{server => Server#ev.pid},
+    Tester = ?SEV_START("tester", TesterSeq, TesterInitState),
+
+    ok = ?SEV_AWAIT_FINISH([Server, Tester]).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Tests that the keepintvl tcp socket option.
+%%
+%% "Gets or sets the number of seconds a TCP connection will wait for
+%%  a keepalive response before sending another keepalive probe."
+%%
+
+api_opt_tcp_keepintvl_tcp4(_Config) when is_list(_Config) ->
+    ?TT(?SECS(5)),
+    tc_try(?FUNCTION_NAME,
+           fun() -> has_support_ipv4(), has_support_tcp_keepintvl() end,
+           fun() ->
+                   Set  = fun(Sock, Value) when is_integer(Value) ->
+                                  socket:setopt(Sock, tcp, keepintvl, Value)
+                          end,
+                   Get  = fun(Sock) ->
+                                  socket:getopt(Sock, tcp, keepintvl)
+                          end,
+                   InitState = #{domain => inet,
+                                 proto  => tcp,
+                                 set    => Set,
+                                 get    => Get},
+                   ok = api_opt_tcp_keepintvl_tcp(InitState)
+           end).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+api_opt_tcp_keepintvl_tcp(InitState) ->
+    process_flag(trap_exit, true),
+    ServerSeq =
+        [
+         %% *** Wait for start order ***
+         #{desc => "await start (from tester)",
+           cmd  => fun(State) ->
+                           Tester = ?SEV_AWAIT_START(),
+                           {ok, State#{tester => Tester}}
+                   end},
+         #{desc => "monitor tester",
+           cmd  => fun(#{tester := Tester}) ->
+                           _MRef = erlang:monitor(process, Tester),
+                           ok
+                   end},
+
+         %% *** Init part ***
+         #{desc => "which local address",
+           cmd  => fun(#{domain := Domain} = State) ->
+                           LSA = which_local_socket_addr(Domain),
+                           {ok, State#{lsa => LSA}}
+                   end},
+         #{desc => "create socket",
+           cmd  => fun(#{domain := Domain,
+                         proto  := Proto} = State) ->
+                           case socket:open(Domain, stream, Proto) of
+                               {ok, Sock} ->
+                                   {ok, State#{sock => Sock}};
+                               {error, _} = ERROR ->
+                                   ERROR
+                           end
+                   end},
+         #{desc => "bind to local address",
+           cmd  => fun(#{sock := LSock, lsa := LSA} = _State) ->
+                           case sock_bind(LSock, LSA) of
+                               ok ->
+                                   Port = sock_port(LSock),
+                                   ?SEV_IPRINT("bound to port: ~w", [Port]),
+                                   ok;
+                               {error, _} = ERROR ->
+                                   ERROR
+                           end
+                   end},
+         #{desc => "announce ready (init)",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_ANNOUNCE_READY(Tester, init),
+                           ok
+                   end},
+
+
+         %% The actual test
+         #{desc => "await continue (get keepintvl(1))",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_AWAIT_CONTINUE(Tester, tester, get_keepintvl)
+                   end},
+         #{desc => "get keepintvl",
+           cmd  => fun(#{sock := Sock, get := Get} = State) ->
+                           case Get(Sock) of
+                               {ok, KeepIntVl} ->
+                                   ?SEV_IPRINT("keepintvl: ~p", [KeepIntVl]),
+                                   {ok, State#{keepintvl => KeepIntVl}};
+                               {error, _} = ERROR ->
+                                   ERROR
+                           end
+                   end},
+         #{desc => "announce ready (get keepintvl(1))",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_ANNOUNCE_READY(Tester, get_keepintvl),
+                           ok
+                   end},
+
+
+         #{desc => "await continue (set keepintvl)",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_AWAIT_CONTINUE(Tester, tester, set_keepintvl)
+                   end},
+         #{desc => "set keepintvl",
+           cmd  => fun(#{sock     := Sock,
+                         set      := Set,
+                         keepintvl := KeepIntVl} = State) ->
+                           NewKeepIntVl = KeepIntVl + 1,
+                           case Set(Sock, NewKeepIntVl) of
+                               ok ->
+                                   ?SEV_IPRINT("keepIntVl updated (to ~p)",
+                                               [NewKeepIntVl]),
+                                   {ok, State#{keepintvl => NewKeepIntVl}};
+                               {error, _} = ERROR ->
+                                   ERROR
+                           end
+                   end},
+         #{desc => "announce ready (set keepintvl)",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_ANNOUNCE_READY(Tester, set_keepintvl),
+                           ok
+                   end},
+
+
+         #{desc => "await continue (get keepintvl(2))",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_AWAIT_CONTINUE(Tester, tester, get_keepintvl)
+                   end},
+         #{desc => "get keepintvl(2)",
+           cmd  => fun(#{sock      := Sock,
+                         get       := Get,
+                         keepintvl := ExpKeepIntVl} = _State) ->
+                           case Get(Sock) of
+                               {ok, KeepIntVl}
+                                 when (ExpKeepIntVl =:= KeepIntVl) ->
+                                   ?SEV_IPRINT("expected keepintvl (~p)",
+                                               [ExpKeepIntVl]),
+                                   ok;
+                               {ok, KeepIntVl} ->
+                                   ?SEV_EPRINT("unexpected keepintvl:"
+                                               "~n   Expected KeepIntVl: ~p"
+                                               "~n   Actual KeepIntVl:   ~p",
+                                               [ExpKeepIntVl, KeepIntVl]),
+                                   {error,
+                                    {unexpected_keepintvl,
+                                     ExpKeepIntVl, KeepIntVl}};
+                               {error, Reason} = ERROR ->
+                                   ?SEV_EPRINT("failed get keepintvl: "
+                                               "~n   ~p", [Reason]),
+                                   ERROR
+                           end
+                   end},
+         #{desc => "announce ready (get keepintvl(2))",
+           cmd  => fun(#{tester := Tester}) ->
+                           ?SEV_ANNOUNCE_READY(Tester, get_keepintvl),
+                           ok
+                   end},
+
+
+         %% *** Termination ***
+         #{desc => "await terminate",
+           cmd  => fun(#{tester := Tester} = State) ->
+                           case ?SEV_AWAIT_TERMINATE(Tester, tester) of
+                               ok ->
+                                   {ok, maps:remove(tester, State)};
+                               {error, _} = ERROR ->
+                                   ERROR
+                           end
+                   end},
+         #{desc => "close connection socket",
+           cmd  => fun(#{sock := Sock} = State) ->
+                           ok = socket:close(Sock),
+                           {ok, maps:remove(sock, State)}
+                   end},
+
+         %% *** We are done ***
+         ?SEV_FINISH_NORMAL
+        ],
+
+
+    TesterSeq =
+        [
+         %% *** Init part ***
+         #{desc => "monitor server",
+           cmd  => fun(#{server := Pid} = _State) ->
+                           _MRef = erlang:monitor(process, Pid),
+                           ok
+                   end},
+
+         %% Start the server
+         #{desc => "order server start",
+           cmd  => fun(#{server := Pid} = _State) ->
+                           ?SEV_ANNOUNCE_START(Pid),
+                           ok
+                   end},
+         #{desc => "await server ready (init)",
+           cmd  => fun(#{server := Pid} = _State) ->
+                           ok = ?SEV_AWAIT_READY(Pid, server, init),
+                           ok
+                   end},
+
+         %% *** The actual test ***
+         #{desc => "order server to continue (with get-keepintvl(1))",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_ANNOUNCE_CONTINUE(Server, get_keepintvl),
+                           ok
+                   end},
+         #{desc => "await server ready (get-keepintvl(1))",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_AWAIT_READY(Server, server, get_keepintvl)
+                   end},
+
+         #{desc => "order server to continue (with set-keepintvl)",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_ANNOUNCE_CONTINUE(Server, set_keepintvl),
+                           ok
+                   end},
+         #{desc => "await server ready (set-keepintvl)",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_AWAIT_READY(Server, server, set_keepintvl)
+                   end},
+
+         #{desc => "order server to continue (with get-keepintvl(2))",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_ANNOUNCE_CONTINUE(Server, get_keepintvl),
+                           ok
+                   end},
+         #{desc => "await server ready (get-keepintvl(2))",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_AWAIT_READY(Server, server, get_keepintvl)
+                   end},
+
+
+         %% *** Termination ***
+         #{desc => "order server to terminate",
+           cmd  => fun(#{server := Server} = _State) ->
+                           ?SEV_ANNOUNCE_TERMINATE(Server),
+                           ok
+                   end},
+         #{desc => "await server termination",
+           cmd  => fun(#{server := Server} = State) ->
+                           ?SEV_AWAIT_TERMINATION(Server),
+                           State1 = maps:remove(server, State),
+                           {ok, State1}
+                   end},
+
+         %% *** We are done ***
+         ?SEV_FINISH_NORMAL
+        ],
+
+
+    i("start server evaluator"),
+    Server = ?SEV_START("server", ServerSeq, InitState),
+
+    i("start tester evaluator"),
+    TesterInitState = #{server => Server#ev.pid},
+    Tester = ?SEV_START("tester", TesterSeq, TesterInitState),
+
+    ok = ?SEV_AWAIT_FINISH([Server, Tester]).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 %% Tests that the cork udp socket option.
 %%
 %% This is a very simple test. We simple set and get the value.
 %% To test that it has an effect is just "to much work"...
 %%
 
-api_opt_udp_cork_udp4(suite) ->
-    [];
-api_opt_udp_cork_udp4(doc) ->
-    [];
 api_opt_udp_cork_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(api_opt_udp_cork_udp4,
-           fun() -> has_support_udp_cork() end,
+           fun() -> has_support_ipv4(), has_support_udp_cork() end,
            fun() ->
                    Set  = fun(Sock, Value) when is_boolean(Value) ->
                                   socket:setopt(Sock, udp, cork, Value)
@@ -23939,13 +26079,9 @@ api_opt_udp_cork_udp(InitState) ->
 
 %% This test case is intended to test the connect timeout option
 %% on an IPv4 TCP (stream) socket.
-api_to_connect_tcp4(suite) ->
-    [];
-api_to_connect_tcp4(doc) ->
-    [];
 api_to_connect_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
-    Cond = fun() -> api_to_connect_cond() end,
+    Cond = fun() -> has_support_ipv4(), api_to_connect_cond() end,
     tc_try(api_to_connect_tcp4,
            Cond,
            fun() ->
@@ -23961,7 +26097,7 @@ api_to_connect_cond() ->
 
 %% I don't know exactly at which version this starts to work.
 %% I know it does not work for 4.4.*, but is does for 4.15.
-%% So, just to simplify, we require atleast 4.15
+%% So, just to simplify, we require at least 4.15
 api_to_connect_cond({unix, linux}, {Maj, Min, _Rev}) ->
     if
         (Maj > 4) ->
@@ -23998,10 +26134,6 @@ api_to_connect_cond(_, _) ->
 
 %% This test case is intended to test the connect timeout option
 %% on an IPv6 TCP (stream) socket.
-api_to_connect_tcp6(suite) ->
-    [];
-api_to_connect_tcp6(doc) ->
-    [];
 api_to_connect_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_to_connect_tcp6,
@@ -24019,7 +26151,7 @@ api_to_connect_tcp6(_Config) when is_list(_Config) ->
 %% We use the backlog (listen) argument to test this.
 %% Note that the behaviour of the TCP "server side" can vary when 
 %% a client connect to a "busy" server (full backlog).
-%% For instance, on FreeBSD (11.2) the reponse when the backlog is full
+%% For instance, on FreeBSD (11.2) the response when the backlog is full
 %% is a econreset.
 
 api_to_connect_tcp(InitState) ->
@@ -24119,16 +26251,9 @@ api_to_connect_tcp(InitState) ->
                            {ok, State#{local_sa => LSA}}
                    end},
          #{desc => "create node",
-           cmd  => fun(#{host := Host} = State) ->
-			   ?SEV_IPRINT("try create node on ~p", [Host]),
-                           case start_node(Host, client) of
-                               {ok, Node} ->
-                                   ?SEV_IPRINT("client node ~p started",
-                                               [Node]),
-                                   {ok, State#{node => Node}};
-                               {error, Reason} ->
-                                   {skip, Reason}
-                           end
+           cmd  => fun(#{host := _Host} = State) ->
+                           {Peer, Node} = ?START_NODE("client"),
+                           {ok, State#{node => Node, peer => Peer}}
                    end},
          #{desc => "monitor client node",
            cmd  => fun(#{node := Node} = _State) ->
@@ -24233,9 +26358,9 @@ api_to_connect_tcp(InitState) ->
                            {ok, State1}
                    end},
          #{desc => "stop client node",
-           cmd  => fun(#{node := Node} = State) ->
+           cmd  => fun(#{peer := Peer} = State) ->
                            {ok,
-                            try stop_node(Node) of
+                            try peer:stop(Peer) of
                                 ok ->
                                     State#{node_stop => ok};
                                 {error, Reason} ->
@@ -24257,14 +26382,14 @@ api_to_connect_tcp(InitState) ->
                            receive
                                {nodedown, Node} ->
                                    ?SEV_IPRINT("nodedown received - cleanup"),
-                                   State1 = maps:remove(node_id, State),
-                                   State2 = maps:remove(node,    State1),
+                                   State1 = maps:remove(peer, State),
+                                   State2 = maps:remove(node, State1),
                                    {ok, State2}
                            end;
                       (#{node_stop := error} = State) ->
                            ?SEV_IPRINT("Failed node stop - cleanup"),
-                           State1 = maps:remove(node_id, State),
-                           State2 = maps:remove(node,    State1),
+                           State1 = maps:remove(peer, State),
+                           State2 = maps:remove(node, State1),
                            {ok, State2}
                    end},
 
@@ -24511,13 +26636,10 @@ api_to_connect_tcp_await_timeout3([Sock|Socka]) ->
 
 %% This test case is intended to test the accept timeout option
 %% on an IPv4 TCP (stream) socket.
-api_to_accept_tcp4(suite) ->
-    [];
-api_to_accept_tcp4(doc) ->
-    [];
 api_to_accept_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_to_accept_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    InitState = #{domain => inet, timeout => 5000},
                    ok = api_to_accept_tcp(InitState)
@@ -24528,13 +26650,9 @@ api_to_accept_tcp4(_Config) when is_list(_Config) ->
 
 %% This test case is intended to test the accept timeout option
 %% on an IPv6 TCP (stream) socket.
-api_to_accept_tcp6(suite) ->
-    [];
-api_to_accept_tcp6(doc) ->
-    [];
 api_to_accept_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
-    tc_try(api_to_accept_tcp4,
+    tc_try(api_to_accept_tcp6,
            fun() -> has_support_ipv6() end,
            fun() ->
                    InitState = #{domain => inet6, timeout => 5000},
@@ -24625,13 +26743,10 @@ api_to_accept_tcp(InitState) ->
 %% This test case is intended to test the multi accept timeout option
 %% on an IPv4 TCP (stream) socket with multiple acceptor processes 
 %% (three in this case).
-api_to_maccept_tcp4(suite) ->
-    [];
-api_to_maccept_tcp4(doc) ->
-    [];
 api_to_maccept_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(20)),
     tc_try(api_to_maccept_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    InitState = #{domain => inet, timeout => 5000},
                    ok = api_to_maccept_tcp(InitState)
@@ -24642,13 +26757,9 @@ api_to_maccept_tcp4(_Config) when is_list(_Config) ->
 
 %% This test case is intended to test the accept timeout option
 %% on an IPv6 TCP (stream) socket.
-api_to_maccept_tcp6(suite) ->
-    [];
-api_to_maccept_tcp6(doc) ->
-    [];
 api_to_maccept_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(20)),
-    tc_try(api_to_maccept_tcp4,
+    tc_try(api_to_maccept_tcp6,
            fun() -> has_support_ipv6() end,
            fun() ->
                    InitState = #{domain => inet6, timeout => 5000},
@@ -24995,12 +27106,9 @@ api_to_maccept_tcp(InitState) ->
 
 %% This test case is intended to test the send timeout option
 %% on an IPv4 TCP (stream) socket.
-api_to_send_tcp4(suite) ->
-    [];
-api_to_send_tcp4(doc) ->
-    [];
 api_to_send_tcp4(_Config) when is_list(_Config) ->
     tc_try(api_to_send_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    not_yet_implemented()%% ,
                    %% ok = api_to_send_tcp(inet)
@@ -25011,10 +27119,6 @@ api_to_send_tcp4(_Config) when is_list(_Config) ->
 
 %% This test case is intended to test the send timeout option
 %% on an IPv6 TCP (stream) socket.
-api_to_send_tcp6(suite) ->
-    [];
-api_to_send_tcp6(doc) ->
-    [];
 api_to_send_tcp6(_Config) when is_list(_Config) ->
     tc_try(api_to_send_tcp6,
            fun() -> has_support_ipv6() end,
@@ -25028,12 +27132,9 @@ api_to_send_tcp6(_Config) when is_list(_Config) ->
 
 %% This test case is intended to test the sendto timeout option
 %% on an IPv4 UDP (dgram) socket.
-api_to_sendto_udp4(suite) ->
-    [];
-api_to_sendto_udp4(doc) ->
-    [];
 api_to_sendto_udp4(_Config) when is_list(_Config) ->
     tc_try(api_to_sendto_udp4,
+           fun () -> has_support_ipv4() end,
            fun() ->
                    not_yet_implemented()%% ,
                    %% ok = api_to_sendto_to_udp(inet)
@@ -25044,10 +27145,6 @@ api_to_sendto_udp4(_Config) when is_list(_Config) ->
 
 %% This test case is intended to test the sendto timeout option
 %% on an IPv6 UDP (dgram) socket.
-api_to_sendto_udp6(suite) ->
-    [];
-api_to_sendto_udp6(doc) ->
-    [];
 api_to_sendto_udp6(_Config) when is_list(_Config) ->
     tc_try(api_to_sendto_udp6,
            fun() -> has_support_ipv6() end,
@@ -25061,12 +27158,9 @@ api_to_sendto_udp6(_Config) when is_list(_Config) ->
 
 %% This test case is intended to test the sendmsg timeout option
 %% on an IPv4 TCP (stream) socket.
-api_to_sendmsg_tcp4(suite) ->
-    [];
-api_to_sendmsg_tcp4(doc) ->
-    [];
 api_to_sendmsg_tcp4(_Config) when is_list(_Config) ->
     tc_try(api_to_sendmsg_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    not_yet_implemented()%% ,
                    %% ok = api_to_sendmsg_tcp(inet)
@@ -25077,10 +27171,6 @@ api_to_sendmsg_tcp4(_Config) when is_list(_Config) ->
 
 %% This test case is intended to test the sendmsg timeout option
 %% on an IPv6 TCP (stream) socket.
-api_to_sendmsg_tcp6(suite) ->
-    [];
-api_to_sendmsg_tcp6(doc) ->
-    [];
 api_to_sendmsg_tcp6(_Config) when is_list(_Config) ->
     tc_try(api_to_sendmsg_tcp6,
            fun() -> has_support_ipv6() end,
@@ -25095,12 +27185,9 @@ api_to_sendmsg_tcp6(_Config) when is_list(_Config) ->
 %% This test case is intended to test the recv timeout option
 %% on an IPv4 UDP (dgram) socket. To test this we must connect
 %% the socket.
-api_to_recv_udp4(suite) ->
-    [];
-api_to_recv_udp4(doc) ->
-    [];
 api_to_recv_udp4(_Config) when is_list(_Config) ->
     tc_try(api_to_recv_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    not_yet_implemented()%%,
                    %%ok = api_to_recv_udp(inet)
@@ -25112,10 +27199,6 @@ api_to_recv_udp4(_Config) when is_list(_Config) ->
 %% This test case is intended to test the recv timeout option
 %% on an IPv6 UDP (dgram) socket. To test this we must connect
 %% the socket.
-api_to_recv_udp6(suite) ->
-    [];
-api_to_recv_udp6(doc) ->
-    [];
 api_to_recv_udp6(_Config) when is_list(_Config) ->
     tc_try(api_to_recv_udp6,
            fun() -> has_support_ipv6() end,
@@ -25129,13 +27212,10 @@ api_to_recv_udp6(_Config) when is_list(_Config) ->
 
 %% This test case is intended to test the recv timeout option
 %% on an IPv4 TCP (stream) socket.
-api_to_recv_tcp4(suite) ->
-    [];
-api_to_recv_tcp4(doc) ->
-    [];
 api_to_recv_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_to_recv_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Recv = fun(Sock, To) -> socket:recv(Sock, 0, To) end,
                    InitState = #{domain  => inet,
@@ -25149,10 +27229,6 @@ api_to_recv_tcp4(_Config) when is_list(_Config) ->
 
 %% This test case is intended to test the recv timeout option
 %% on an IPv6 TCP (stream) socket.
-api_to_recv_tcp6(suite) ->
-    [];
-api_to_recv_tcp6(doc) ->
-    [];
 api_to_recv_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_to_recv_tcp6,
@@ -25486,13 +27562,10 @@ api_to_receive_tcp(InitState) ->
 
 %% This test case is intended to test the recvfrom timeout option
 %% on an IPv4 UDP (dgram) socket.
-api_to_recvfrom_udp4(suite) ->
-    [];
-api_to_recvfrom_udp4(doc) ->
-    [];
 api_to_recvfrom_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_to_recvfrom_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Recv = fun(Sock, To) -> socket:recvfrom(Sock, 0, To) end,
                    InitState = #{domain  => inet,
@@ -25506,10 +27579,6 @@ api_to_recvfrom_udp4(_Config) when is_list(_Config) ->
 
 %% This test case is intended to test the recvfrom timeout option
 %% on an IPv6 UDP (dgram) socket.
-api_to_recvfrom_udp6(suite) ->
-    [];
-api_to_recvfrom_udp6(doc) ->
-    [];
 api_to_recvfrom_udp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_to_recvfrom_udp6,
@@ -25602,13 +27671,10 @@ api_to_receive_udp(InitState) ->
 
 %% This test case is intended to test the recvmsg timeout option
 %% on an IPv4 UDP (dgram) socket.
-api_to_recvmsg_udp4(suite) ->
-    [];
-api_to_recvmsg_udp4(doc) ->
-    [];
 api_to_recvmsg_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_to_recvmsg_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Recv = fun(Sock, To) -> socket:recvmsg(Sock, To) end,
                    InitState = #{domain  => inet,
@@ -25622,10 +27688,6 @@ api_to_recvmsg_udp4(_Config) when is_list(_Config) ->
 
 %% This test case is intended to test the recvmsg timeout option
 %% on an IPv6 UDP (dgram) socket.
-api_to_recvmsg_udp6(suite) ->
-    [];
-api_to_recvmsg_udp6(doc) ->
-    [];
 api_to_recvmsg_udp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_to_recvmsg_udp6,
@@ -25643,13 +27705,10 @@ api_to_recvmsg_udp6(_Config) when is_list(_Config) ->
 
 %% This test case is intended to test the recvmsg timeout option
 %% on an IPv4 TCP (stream) socket.
-api_to_recvmsg_tcp4(suite) ->
-    [];
-api_to_recvmsg_tcp4(doc) ->
-    [];
 api_to_recvmsg_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_to_recvmsg_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Recv = fun(Sock, To) -> socket:recvmsg(Sock, To) end,
                    InitState = #{domain  => inet,
@@ -25663,10 +27722,6 @@ api_to_recvmsg_tcp4(_Config) when is_list(_Config) ->
 
 %% This test case is intended to test the recvmsg timeout option
 %% on an IPv6 TCP (stream) socket.
-api_to_recvmsg_tcp6(suite) ->
-    [];
-api_to_recvmsg_tcp6(doc) ->
-    [];
 api_to_recvmsg_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(api_to_recvmsg_tcp6,
@@ -25693,10 +27748,6 @@ api_to_recvmsg_tcp6(_Config) when is_list(_Config) ->
 %% We create a bunch of different sockets and ensure that the registry
 %% has the correct info.
 
-reg_s_single_open_and_close_and_count(suite) ->
-    [];
-reg_s_single_open_and_close_and_count(doc) ->
-    [];
 reg_s_single_open_and_close_and_count(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(reg_s_single_open_and_close_and_count,
@@ -25707,6 +27758,8 @@ reg_s_single_open_and_close_and_count(_Config) when is_list(_Config) ->
 
 reg_s_single_open_and_close_and_count() ->
     socket:use_registry(true),
+
+    {OS, _} = os:type(),
 
     %% We may have some sockets already existing.
     %% Make sure we dont count them when we test.
@@ -25748,10 +27801,14 @@ reg_s_single_open_and_close_and_count() ->
                 []
         end ++
         case SupportsLOCAL of
-            true ->
+            true when (OS =/= win32) ->
                 [
                  {local, stream, default},
                  {local, dgram,  default}
+                ];
+            true ->
+                [
+                 {local, stream, default}
                 ];
             false ->
                 []
@@ -25962,8 +28019,8 @@ reg_s_single_open_and_close_and_count() ->
     OwnSockets = lists:sort(
                    [fun({D, T})->
                             i("create ~w:~w socket", [D, T]),
-                            {ok, OS} = socket:open(D, T, default),
-                            OS
+                            {ok, OSocks} = socket:open(D, T, default),
+                            OSocks
                     end(SockInfo) || SockInfo <-
                                          [{inet, dgram},
                                           {inet, dgram},
@@ -26086,10 +28143,6 @@ reg_sr_num2(Existing, F) ->
 %% We create a bunch of different sockets and ensure that the registry
 %% has the correct info.
 
-reg_s_optional_open_and_close_and_count(suite) ->
-    [];
-reg_s_optional_open_and_close_and_count(doc) ->
-    [];
 reg_s_optional_open_and_close_and_count(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(reg_s_optional_open_and_close_and_count,
@@ -26198,10 +28251,6 @@ reg_s_optional_open_and_close_and_count() ->
 %% Create one socket, monitor from a different process then close socket.
 %% The process that did the monitor shall receive a socket DOWN.
 
-monitor_simple_open_and_close(suite) ->
-    [];
-monitor_simple_open_and_close(doc) ->
-    [];
 monitor_simple_open_and_close(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(monitor_simple_open_and_close,
@@ -26458,10 +28507,6 @@ mon_simple_open_and_close(InitState) ->
 %% owner process.
 %% The process that did the monitor shall receive a socket DOWN.
 
-monitor_simple_open_and_exit(suite) ->
-    [];
-monitor_simple_open_and_exit(doc) ->
-    [];
 monitor_simple_open_and_exit(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(monitor_simple_open_and_exit,
@@ -26653,10 +28698,6 @@ mon_simple_open_and_exit(InitState) ->
 %% (demonitor) and then close socket.
 %% The process that did the monitor shall *not* receive a socket DOWN.
 
-monitor_simple_open_and_demon_and_close(suite) ->
-    [];
-monitor_simple_open_and_demon_and_close(doc) ->
-    [];
 monitor_simple_open_and_demon_and_close(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(monitor_simple_open_and_demon_and_close,
@@ -26848,10 +28889,6 @@ mon_simple_open_and_demon_and_close(InitState) ->
 %% Create several sockets, monitor from a different process then close
 %% socket. The process that did the monitor shall receive a socket DOWN.
 
-monitor_open_and_close_multi_socks(suite) ->
-    [];
-monitor_open_and_close_multi_socks(doc) ->
-    [];
 monitor_open_and_close_multi_socks(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(monitor_open_and_close_multi_socks,
@@ -27293,10 +29330,6 @@ mon_open_and_close_multi_socks(InitState) ->
 %% the owner process.
 %% The process that did the monitor shall receive a socket DOWN.
 
-monitor_open_and_exit_multi_socks(suite) ->
-    [];
-monitor_open_and_exit_multi_socks(doc) ->
-    [];
 monitor_open_and_exit_multi_socks(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(monitor_open_and_exit_multi_socks,
@@ -27614,10 +29647,6 @@ mon_open_and_exit_multi_socks(InitState) ->
 %% The process that did the monitor shall receive a socket DOWN for
 %% the sockets that are still monitored.
 
-monitor_open_and_demon_and_close_multi_socks(suite) ->
-    [];
-monitor_open_and_demon_and_close_multi_socks(doc) ->
-    [];
 monitor_open_and_demon_and_close_multi_socks(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(monitor_open_and_demon_and_close_multi_socks,
@@ -27987,10 +30016,6 @@ mon_open_and_demon_and_close_multi_socks(InitState) ->
 %% processes, then close socket (from 'owner').
 %% The processes that did the monitor shall receive a socket DOWN.
 
-monitor_open_and_close_multi_mon(suite) ->
-    [];
-monitor_open_and_close_multi_mon(doc) ->
-    [];
 monitor_open_and_close_multi_mon(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(monitor_open_and_close_multi_mon,
@@ -28580,10 +30605,6 @@ mon_open_and_close_multi_mon(InitState) ->
 %% processes, then close socket (from 'owner').
 %% The processes that did the monitor shall receive a socket DOWN.
 
-monitor_open_and_exit_multi_mon(suite) ->
-    [];
-monitor_open_and_exit_multi_mon(doc) ->
-    [];
 monitor_open_and_exit_multi_mon(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(monitor_open_and_exit_multi_mon,
@@ -29138,10 +31159,6 @@ mon_open_and_exit_multi_mon(InitState) ->
 %% The processes that did the monitor shall receive one socket DOWN for
 %% each socket.
 
-monitor_open_and_close_multi_socks_and_mon(suite) ->
-    [];
-monitor_open_and_close_multi_socks_and_mon(doc) ->
-    [];
 monitor_open_and_close_multi_socks_and_mon(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(monitor_open_and_close_multi_socks_and_mon,
@@ -30096,10 +32113,6 @@ mon_open_and_close_multi_socks_and_mon(InitState) ->
 %% The processes that did the monitor shall receive one socket DOWN for
 %% each socket.
 
-monitor_open_and_exit_multi_socks_and_mon(suite) ->
-    [];
-monitor_open_and_exit_multi_socks_and_mon(doc) ->
-    [];
 monitor_open_and_exit_multi_socks_and_mon(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(monitor_open_and_exit_multi_socks_and_mon,
@@ -30847,10 +32860,6 @@ mon_open_and_exit_multi_socks_and_mon(InitState) ->
 %% The processes that did the monitor shall receive one socket DOWN for
 %% each socket.
 
-monitor_closed_socket(suite) ->
-    [];
-monitor_closed_socket(doc) ->
-    [];
 monitor_closed_socket(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(monitor_closed_socket,
@@ -31146,10 +33155,6 @@ mon_closed_socket(InitState) ->
 %% ("removed") when the controlling process terminates (without explicitly 
 %% calling the close function). For a IPv4 TCP (stream) socket.
 
-sc_cpe_socket_cleanup_tcp4(suite) ->
-    [];
-sc_cpe_socket_cleanup_tcp4(doc) ->
-    [];
 sc_cpe_socket_cleanup_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(sc_cpe_socket_cleanup_tcp4,
@@ -31166,10 +33171,6 @@ sc_cpe_socket_cleanup_tcp4(_Config) when is_list(_Config) ->
 %% ("removed") when the controlling process terminates (without explicitly 
 %% calling the close function). For a IPv6 TCP (stream) socket.
 
-sc_cpe_socket_cleanup_tcp6(suite) ->
-    [];
-sc_cpe_socket_cleanup_tcp6(doc) ->
-    [];
 sc_cpe_socket_cleanup_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(sc_cpe_socket_cleanup_tcp6,
@@ -31187,10 +33188,6 @@ sc_cpe_socket_cleanup_tcp6(_Config) when is_list(_Config) ->
 %% ("removed") when the controlling process terminates (without explicitly 
 %% calling the close function). For a Unix Domain (stream) socket (TCP).
 
-sc_cpe_socket_cleanup_tcpL(suite) ->
-    [];
-sc_cpe_socket_cleanup_tcpL(doc) ->
-    [];
 sc_cpe_socket_cleanup_tcpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(sc_cpe_socket_cleanup_tcpL,
@@ -31208,13 +33205,10 @@ sc_cpe_socket_cleanup_tcpL(_Config) when is_list(_Config) ->
 %% ("removed") when the controlling process terminates (without explicitly 
 %% calling the close function). For a IPv4 UDP (dgram) socket.
 
-sc_cpe_socket_cleanup_udp4(suite) ->
-    [];
-sc_cpe_socket_cleanup_udp4(doc) ->
-    [];
 sc_cpe_socket_cleanup_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(sc_cpe_socket_cleanup_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    InitState = #{domain   => inet,
                                  type     => dgram,
@@ -31229,10 +33223,6 @@ sc_cpe_socket_cleanup_udp4(_Config) when is_list(_Config) ->
 %% (removed) when the controlling process terminates (without explicitly 
 %% calling the close function). For a IPv6 UDP (dgram) socket.
 
-sc_cpe_socket_cleanup_udp6(suite) ->
-    [];
-sc_cpe_socket_cleanup_udp6(doc) ->
-    [];
 sc_cpe_socket_cleanup_udp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(sc_cpe_socket_cleanup_udp6,
@@ -31250,14 +33240,13 @@ sc_cpe_socket_cleanup_udp6(_Config) when is_list(_Config) ->
 %% ("removed") when the controlling process terminates (without explicitly 
 %% calling the close function). For a Unix Domain (dgram) socket (UDP).
 
-sc_cpe_socket_cleanup_udpL(suite) ->
-    [];
-sc_cpe_socket_cleanup_udpL(doc) ->
-    [];
 sc_cpe_socket_cleanup_udpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(sc_cpe_socket_cleanup_udpL,
-           fun() -> has_support_unix_domain_socket() end,
+           fun() ->
+		   has_support_unix_domain_socket(),
+		   is_not_windows()
+	   end,
            fun() ->
                    InitState = #{domain   => local,
                                  type     => dgram,
@@ -31303,7 +33292,7 @@ sc_cpe_socket_cleanup(InitState) ->
                    end},
 
          %% *** The actual test ***
-         %% We *intentially* leave the socket "as is", no explicit close
+         %% We *intentionally* leave the socket "as is", no explicit close
          #{desc => "await terminate (from tester)",
            cmd  => fun(#{tester := Tester} = State) ->
                            case ?SEV_AWAIT_TERMINATE(Tester, tester) of
@@ -31412,13 +33401,10 @@ sc_cpe_socket_cleanup(InitState) ->
 %% 
 %% </KOLLA>
 
-sc_lc_recv_response_tcp4(suite) ->
-    [];
-sc_lc_recv_response_tcp4(doc) ->
-    [];
 sc_lc_recv_response_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(sc_lc_recv_response_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Recv      = fun(Sock) -> socket:recv(Sock) end,
                    InitState = #{domain   => inet,
@@ -31433,10 +33419,6 @@ sc_lc_recv_response_tcp4(_Config) when is_list(_Config) ->
 %% locally closed while the process is calling the recv function.
 %% Socket is IPv6.
 
-sc_lc_recv_response_tcp6(suite) ->
-    [];
-sc_lc_recv_response_tcp6(doc) ->
-    [];
 sc_lc_recv_response_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(sc_lc_recv_response_tcp6,
@@ -31455,14 +33437,12 @@ sc_lc_recv_response_tcp6(_Config) when is_list(_Config) ->
 %% locally closed while the process is calling the recv function.
 %% Socket is Unix Domain (stream) socket.
 
-sc_lc_recv_response_tcpL(suite) ->
-    [];
-sc_lc_recv_response_tcpL(doc) ->
-    [];
 sc_lc_recv_response_tcpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(sc_lc_recv_response_tcpL,
-           fun() -> has_support_unix_domain_socket() end,
+           fun() ->
+		   has_support_unix_domain_socket()
+	   end,
            fun() ->
                    Recv      = fun(Sock) -> socket:recv(Sock) end,
                    InitState = #{domain   => local,
@@ -31647,7 +33627,7 @@ sc_lc_receive_response_tcp(InitState) ->
         ],
 
     %% The point of this is to perform the recv for which
-    %% we are testing the reponse.
+    %% we are testing the response.
     HandlerSeq =
         [
          %% *** Wait for start order part ***
@@ -32099,15 +34079,14 @@ sc_lc_receive_response_tcp(InitState) ->
 %% Socket is IPv4.
 %% 
 
-sc_lc_recvfrom_response_udp4(suite) ->
-    [];
-sc_lc_recvfrom_response_udp4(doc) ->
-    [];
 sc_lc_recvfrom_response_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
-    tc_try(sc_lc_recvfrom_response_udp4,
+    tc_try(?FUNCTION_NAME,
+           fun() -> has_support_ipv4() end,
            fun() ->
-                   Recv      = fun(Sock, To) -> socket:recvfrom(Sock, [], To) end,
+                   Recv      = fun(Sock, To) ->
+                                       socket:recvfrom(Sock, [], To)
+                               end,
                    InitState = #{domain   => inet,
                                  protocol => udp,
                                  recv     => Recv},
@@ -32120,16 +34099,14 @@ sc_lc_recvfrom_response_udp4(_Config) when is_list(_Config) ->
 %% locally closed while the process is calling the recv function.
 %% Socket is IPv6.
 
-sc_lc_recvfrom_response_udp6(suite) ->
-    [];
-sc_lc_recvfrom_response_udp6(doc) ->
-    [];
 sc_lc_recvfrom_response_udp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
-    tc_try(sc_lc_recvfrom_response_udp6,
+    tc_try(?FUNCTION_NAME,
            fun() -> has_support_ipv6() end,
            fun() ->
-                   Recv      = fun(Sock, To) -> socket:recvfrom(Sock, [], To) end,
+                   Recv      = fun(Sock, To) ->
+                                       socket:recvfrom(Sock, [], To)
+                               end,
                    InitState = #{domain   => inet6,
                                  protocol => udp,
                                  recv     => Recv},
@@ -32142,14 +34119,13 @@ sc_lc_recvfrom_response_udp6(_Config) when is_list(_Config) ->
 %% locally closed while the process is calling the recv function.
 %% Socket is Unix Domainm (dgram) socket.
 
-sc_lc_recvfrom_response_udpL(suite) ->
-    [];
-sc_lc_recvfrom_response_udpL(doc) ->
-    [];
 sc_lc_recvfrom_response_udpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
-    tc_try(sc_lc_recvfrom_response_udpL,
-           fun() -> has_support_unix_domain_socket() end,
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+		   has_support_unix_domain_socket(),
+		   is_not_windows()
+	   end,
            fun() ->
                    Recv      = fun(Sock, To) ->
                                        socket:recvfrom(Sock, [], To)
@@ -32187,20 +34163,7 @@ sc_lc_receive_response_udp(InitState) ->
          #{desc => "open socket",
            cmd  => fun(#{domain := Domain, protocol := Proto} = State) ->
                            Sock = sock_open(Domain, dgram, Proto),
-                           %% SA   = sock_sockname(Sock),
-                           case socket:sockname(Sock) of
-                               {ok, SA} ->
-                                   {ok, State#{sock => Sock, sa => SA}};
-                               {error, eafnosupport = Reason} ->
-                                   ?SEV_IPRINT("Failed get socket name: "
-                                               "~n   ~p", [Reason]),
-                                   (catch socket:close(Sock)),
-                                   {skip, Reason};
-                               {error, Reason} = ERROR ->
-                                   ?SEV_EPRINT("Failed get socket name: "
-                                               "~n   ~p", [Reason]),
-                                   ERROR
-                           end
+                           {ok, State#{sock => Sock}}
                    end},
          #{desc => "bind socket",
            cmd  => fun(#{sock := Sock, local_sa := LSA}) ->
@@ -32210,6 +34173,22 @@ sc_lc_receive_response_udp(InitState) ->
                                    ok;
                                {error, Reason} = ERROR ->
                                    ?SEV_EPRINT("src bind failed: ~p", [Reason]),
+                                   ERROR
+                           end
+                   end},
+         #{desc => "socket name",
+           cmd  => fun(#{sock := Sock} = State) ->
+                           case socket:sockname(Sock) of
+                               {ok, SA} ->
+                                   {ok, State#{sa => SA}};
+                               {error, eafnosupport = Reason} ->
+                                   ?SEV_IPRINT("Failed get socket name: "
+                                               "~n   ~p", [Reason]),
+                                   (catch socket:close(Sock)),
+                                   {skip, Reason};
+                               {error, Reason} = ERROR ->
+                                   ?SEV_EPRINT("Failed get socket name: "
+                                               "~n   ~p", [Reason]),
                                    ERROR
                            end
                    end},
@@ -32419,7 +34398,7 @@ sc_lc_receive_response_udp(InitState) ->
 
 
          %% The actual test
-         %% Make all the seondary servers continue, with an infinit recvfrom
+         %% Make all the seondary servers continue, with an infinite recvfrom
          %% and then the prim-server with a timed recvfrom.
          %% After the prim server notifies us (about the timeout) we order it
          %% to close the socket, which should cause the all the secondary 
@@ -32571,13 +34550,13 @@ sc_lc_receive_response_udp(InitState) ->
 %% locally closed while the process is calling the recvmsg function.
 %% Socket is IPv4.
 
-sc_lc_recvmsg_response_tcp4(suite) ->
-    [];
-sc_lc_recvmsg_response_tcp4(doc) ->
-    [];
 sc_lc_recvmsg_response_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
-    tc_try(sc_lc_recvmsg_response_tcp4,
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   is_not_windows(), % recvmsg does not work on Windows
+                   has_support_ipv4()
+           end,
            fun() ->
                    Recv      = fun(Sock) -> socket:recvmsg(Sock) end,
                    InitState = #{domain   => inet,
@@ -32592,14 +34571,13 @@ sc_lc_recvmsg_response_tcp4(_Config) when is_list(_Config) ->
 %% locally closed while the process is calling the recvmsg function.
 %% Socket is IPv6.
 
-sc_lc_recvmsg_response_tcp6(suite) ->
-    [];
-sc_lc_recvmsg_response_tcp6(doc) ->
-    [];
 sc_lc_recvmsg_response_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
-    tc_try(sc_recvmsg_response_tcp6,
-           fun() -> has_support_ipv6() end,
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   is_not_windows(), % recvmsg does not work on Windows
+                   has_support_ipv6()
+           end,
            fun() ->
                    Recv      = fun(Sock) -> socket:recvmsg(Sock) end,
                    InitState = #{domain   => inet6,
@@ -32614,14 +34592,13 @@ sc_lc_recvmsg_response_tcp6(_Config) when is_list(_Config) ->
 %% locally closed while the process is calling the recvmsg function.
 %% Socket is Unix Domain (stream) socket.
 
-sc_lc_recvmsg_response_tcpL(suite) ->
-    [];
-sc_lc_recvmsg_response_tcpL(doc) ->
-    [];
 sc_lc_recvmsg_response_tcpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
-    tc_try(sc_recvmsg_response_tcpL,
-           fun() -> has_support_unix_domain_socket() end,
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   is_not_windows(), % recvmsg does not work on Windows
+                   has_support_unix_domain_socket()
+           end,
            fun() ->
                    Recv      = fun(Sock) -> socket:recvmsg(Sock) end,
                    InitState = #{domain   => local,
@@ -32636,12 +34613,9 @@ sc_lc_recvmsg_response_tcpL(_Config) when is_list(_Config) ->
 %% locally closed while the process is calling the recvmsg function.
 %% Socket is IPv4.
 
-sc_lc_recvmsg_response_udp4(suite) ->
-    [];
-sc_lc_recvmsg_response_udp4(doc) ->
-    [];
 sc_lc_recvmsg_response_udp4(_Config) when is_list(_Config) ->
     tc_try(sc_lc_recvmsg_response_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    ?TT(?SECS(10)),
                    Recv      = fun(Sock, To) -> socket:recvmsg(Sock, To) end,
@@ -32657,10 +34631,6 @@ sc_lc_recvmsg_response_udp4(_Config) when is_list(_Config) ->
 %% locally closed while the process is calling the recvmsg function.
 %% Socket is IPv6.
 
-sc_lc_recvmsg_response_udp6(suite) ->
-    [];
-sc_lc_recvmsg_response_udp6(doc) ->
-    [];
 sc_lc_recvmsg_response_udp6(_Config) when is_list(_Config) ->
     tc_try(sc_recvmsg_response_udp6,
            fun() -> has_support_ipv6() end,
@@ -32680,14 +34650,13 @@ sc_lc_recvmsg_response_udp6(_Config) when is_list(_Config) ->
 %% locally closed while the process is calling the recvmsg function.
 %% Socket is Unix Domain (dgram) socket.
 
-sc_lc_recvmsg_response_udpL(suite) ->
-    [];
-sc_lc_recvmsg_response_udpL(doc) ->
-    [];
 sc_lc_recvmsg_response_udpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(sc_recvmsg_response_udpL,
-           fun() -> has_support_unix_domain_socket() end,
+           fun() ->
+		   has_support_unix_domain_socket(),
+		   is_not_windows()
+	   end,
            fun() ->
                    Recv      = fun(Sock, To) -> socket:recvmsg(Sock, To) end,
                    InitState = #{domain   => local,
@@ -32705,13 +34674,10 @@ sc_lc_recvmsg_response_udpL(_Config) when is_list(_Config) ->
 %% git the setup anyway.
 %% Socket is IPv4.
 
-sc_lc_acceptor_response_tcp4(suite) ->
-    [];
-sc_lc_acceptor_response_tcp4(doc) ->
-    [];
 sc_lc_acceptor_response_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(sc_lc_acceptor_response_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    InitState = #{domain   => inet,
                                  protocol => tcp},
@@ -32726,10 +34692,6 @@ sc_lc_acceptor_response_tcp4(_Config) when is_list(_Config) ->
 %% git the setup anyway.
 %% Socket is IPv6.
 
-sc_lc_acceptor_response_tcp6(suite) ->
-    [];
-sc_lc_acceptor_response_tcp6(doc) ->
-    [];
 sc_lc_acceptor_response_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(sc_lc_acceptor_response_tcp6,
@@ -32748,10 +34710,6 @@ sc_lc_acceptor_response_tcp6(_Config) when is_list(_Config) ->
 %% git the setup anyway.
 %% Socket is Unix Domain (stream) socket.
 
-sc_lc_acceptor_response_tcpL(suite) ->
-    [];
-sc_lc_acceptor_response_tcpL(doc) ->
-    [];
 sc_lc_acceptor_response_tcpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(sc_lc_acceptor_response_tcpL,
@@ -33020,7 +34978,7 @@ sc_lc_acceptor_response_tcp(InitState) ->
 
 
          %% The actual test
-         %% Make all the seondary servers continue, with an infinit recvfrom
+         %% Make all the seondary servers continue, with an infinite recvfrom
          %% and then the prim-server with a timed recvfrom.
          %% After the prim server notifies us (about the timeout) we order it
          %% to close the socket, which should cause the all the secondary 
@@ -33176,13 +35134,10 @@ sc_lc_acceptor_response_tcp(InitState) ->
 %% now, we will make do with different VMs on the same host.
 %%
 
-sc_rc_recv_response_tcp4(suite) ->
-    [];
-sc_rc_recv_response_tcp4(doc) ->
-    [];
 sc_rc_recv_response_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
-    tc_try(sc_rc_recv_response_tcp4,
+    tc_try(?FUNCTION_NAME,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Recv      = fun(Sock) -> socket:recv(Sock) end,
                    InitState = #{domain   => inet,
@@ -33197,13 +35152,9 @@ sc_rc_recv_response_tcp4(_Config) when is_list(_Config) ->
 %% remotely closed while the process is calling the recv function.
 %% Socket is IPv6.
 
-sc_rc_recv_response_tcp6(suite) ->
-    [];
-sc_rc_recv_response_tcp6(doc) ->
-    [];
 sc_rc_recv_response_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
-    tc_try(sc_rc_recv_response_tcp6,
+    tc_try(?FUNCTION_NAME,
            fun() -> has_support_ipv6() end,
            fun() ->
                    Recv      = fun(Sock) -> socket:recv(Sock) end,
@@ -33219,13 +35170,9 @@ sc_rc_recv_response_tcp6(_Config) when is_list(_Config) ->
 %% remotely closed while the process is calling the recv function.
 %% Socket is Unix Domain (stream) socket.
 
-sc_rc_recv_response_tcpL(suite) ->
-    [];
-sc_rc_recv_response_tcpL(doc) ->
-    [];
 sc_rc_recv_response_tcpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
-    tc_try(sc_rc_recv_response_tcpL,
+    tc_try(?FUNCTION_NAME,
            fun() -> has_support_unix_domain_socket() end,
            fun() ->
                    Recv      = fun(Sock) -> socket:recv(Sock) end,
@@ -33383,6 +35330,8 @@ sc_rc_receive_response_tcp(InitState) ->
                            ?SEV_ANNOUNCE_READY(Tester, accept),
                            ok
                    end},
+
+
          #{desc => "await continue (recv)",
            cmd  => fun(#{tester := Tester} = _State) ->
                            ?SEV_AWAIT_CONTINUE(Tester, tester, recv)
@@ -33403,19 +35352,31 @@ sc_rc_receive_response_tcp(InitState) ->
                            ok
                    end},
          #{desc => "await ready from handler 1 (recv)",
-           cmd  => fun(#{tester := Tester, handler1 := Pid} = _State) ->
-                           case ?SEV_AWAIT_READY(Pid, handler1, recv, 
-                                                 [{tester, Tester}]) of
+           cmd  => fun(#{tester := Tester,
+                         handler1 := Pid1,
+                         handler2 := Pid2,
+                         handler3 := Pid3} = _State) ->
+                           case ?SEV_AWAIT_READY(Pid1, handler1, recv, 
+                                                 [{tester, Tester},
+                                                  {handler2, Pid2},
+                                                  {handler3, Pid3}]) of
                                {ok, Result} ->
                                    Result;
-                               {error, _} = ERROR ->
+                               {error, Reason} = ERROR ->
+                                   ?SEV_EPRINT("Unexpected failure: "
+                                               "~n   ~p", [Reason]),
                                    ERROR
                            end
                    end},
          #{desc => "await ready from handler 2 (recv)",
-           cmd  => fun(#{tester := Tester, handler2 := Pid} = _State) ->
-                           case ?SEV_AWAIT_READY(Pid, handler2, recv, 
-                                                 [{tester, Tester}]) of
+           cmd  => fun(#{tester := Tester,
+                         handler1 := Pid1,
+                         handler2 := Pid2,
+                         handler3 := Pid3} = _State) ->
+                           case ?SEV_AWAIT_READY(Pid2, handler2, recv, 
+                                                 [{tester, Tester},
+                                                  {handler1, Pid1},
+                                                  {handler3, Pid3}]) of
                                {ok, Result} ->
                                    Result;
                                {error, _} = ERROR ->
@@ -33423,9 +35384,14 @@ sc_rc_receive_response_tcp(InitState) ->
                            end
                    end},
          #{desc => "await ready from handler 3 (recv)",
-           cmd  => fun(#{tester := Tester, handler3 := Pid} = _State) ->
-                           case ?SEV_AWAIT_READY(Pid, handler3, recv, 
-                                                 [{tester, Tester}]) of
+           cmd  => fun(#{tester := Tester,
+                         handler1 := Pid1,
+                         handler2 := Pid2,
+                         handler3 := Pid3} = _State) ->
+                           case ?SEV_AWAIT_READY(Pid3, handler3, recv, 
+                                                 [{tester, Tester},
+                                                  {handler1, Pid1},
+                                                  {handler2, Pid2}]) of
                                {ok, Result} ->
                                    Result;
                                {error, _} = ERROR ->
@@ -33535,19 +35501,11 @@ sc_rc_receive_response_tcp(InitState) ->
 
          %% *** Init part ***
          #{desc => "create node",
-           cmd  => fun(#{host := Host, node_id := NodeID} = State) ->
-                           case start_node(Host,
-                                           l2a(f("client_~w", [NodeID]))) of
-                               {ok, Node} ->
-                                   ?SEV_IPRINT("client node ~p started",
-                                               [Node]),
-                                   {ok, State#{node => Node}};
-                               {error, Reason} ->
-                                   ?SEV_EPRINT("failed starting "
-                                               "client node ~p (=> SKIP):"
-                                               "~n   ~p", [NodeID, Reason]),
-                                   {skip, Reason}
-                           end
+           cmd  => fun(#{node_id := NodeID} = State) ->
+                           {Peer, Node} =
+                               ?START_NODE(?CT_PEER_NAME(f("client_~w",
+                                                           [NodeID]))),
+                           {ok, State#{node => Node, peer => Peer}}
                    end},
          #{desc => "monitor client node 1",
            cmd  => fun(#{node := Node} = _State) ->
@@ -33665,9 +35623,9 @@ sc_rc_receive_response_tcp(InitState) ->
                            {ok, State1}
                    end},
          #{desc => "stop client node",
-           cmd  => fun(#{node := Node} = State) ->
+           cmd  => fun(#{peer := Peer} = State) ->
                            {ok,
-                            try stop_node(Node) of
+                            try peer:stop(Peer) of
                                 ok ->
                                     State#{node_stop => ok};
                                 {error, Reason} ->
@@ -33690,14 +35648,14 @@ sc_rc_receive_response_tcp(InitState) ->
                            receive
                                {nodedown, Node} ->
                                    ?SEV_IPRINT("nodedown received - cleanup"),
-                                   State1 = maps:remove(node_id, State),
-                                   State2 = maps:remove(node,    State1),
+                                   State1 = maps:remove(peer, State),
+                                   State2 = maps:remove(node, State1),
                                    {ok, State2}
                            end;
                       (#{node_stop := error} = State) ->
                            ?SEV_IPRINT("Failed node stop - cleanup"),
-                           State1 = maps:remove(node_id, State),
-                           State2 = maps:remove(node,    State1),
+                           State1 = maps:remove(peer, State),
+                           State2 = maps:remove(node, State1),
                            {ok, State2}
                    end},
 
@@ -33989,9 +35947,9 @@ sc_rc_receive_response_tcp(InitState) ->
     Tester = ?SEV_START("tester", TesterSeq, TesterInitState),
 
     i("await evaluator"),
-    ?line ok = ?SEV_AWAIT_FINISH([Server,
-                                  Client1, Client2, Client3,
-                                  Tester]).
+    ok = ?SEV_AWAIT_FINISH([Server,
+                            Client1, Client2, Client3,
+                            Tester]).
 
 
 sc_rc_tcp_client_start(Node) ->
@@ -34134,14 +36092,20 @@ sc_rc_tcp_handler_recv(Recv, Sock) ->
     try Recv(Sock) of
         {error, closed} ->
             ok;
-        {ok, _} ->
-            ?SEV_IPRINT("unexpected success"),
+        {ok, Data} ->
+            ?SEV_IPRINT("unexpected success: "
+                        "~n   (Unexp) Data: ~p"
+                        "~n   Socket Info:  ~p", [Data, socket:info(Sock)]),
             {error, unexpected_success};
         {error, Reason} = ERROR ->
             ?SEV_IPRINT("receive error: "
                         "~n   ~p", [Reason]),
             ERROR
     catch
+        error:notsup = Error:Stack ->
+            ?SEV_IPRINT("receive ~w error: skip"
+                        "~n   Stack: ~p", [Error, Stack]),
+            exit({skip, Error});
         C:E:S ->
             ?SEV_IPRINT("receive failure: "
                         "~n   Class: ~p"
@@ -34161,13 +36125,10 @@ sc_rc_tcp_handler_announce_ready(Parent, Slogan, Result) ->
 %% remotely closed while the process is calling the recvmsg function.
 %% Socket is IPv4.
 
-sc_rc_recvmsg_response_tcp4(suite) ->
-    [];
-sc_rc_recvmsg_response_tcp4(doc) ->
-    [];
 sc_rc_recvmsg_response_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(sc_rc_recvmsg_response_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    Recv      = fun(Sock) -> socket:recvmsg(Sock) end,
                    InitState = #{domain   => inet,
@@ -34182,10 +36143,6 @@ sc_rc_recvmsg_response_tcp4(_Config) when is_list(_Config) ->
 %% remotely closed while the process is calling the recvmsg function.
 %% Socket is IPv6.
 
-sc_rc_recvmsg_response_tcp6(suite) ->
-    [];
-sc_rc_recvmsg_response_tcp6(doc) ->
-    [];
 sc_rc_recvmsg_response_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(sc_rc_recvmsg_response_tcp6,
@@ -34204,10 +36161,6 @@ sc_rc_recvmsg_response_tcp6(_Config) when is_list(_Config) ->
 %% remotely closed while the process is calling the recvmsg function.
 %% Socket is Unix Domain (stream) socket.
 
-sc_rc_recvmsg_response_tcpL(suite) ->
-    [];
-sc_rc_recvmsg_response_tcpL(doc) ->
-    [];
 sc_rc_recvmsg_response_tcpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(sc_rc_recvmsg_response_tcpL,
@@ -34234,13 +36187,10 @@ sc_rc_recvmsg_response_tcpL(_Config) when is_list(_Config) ->
 %% This would of course not work for Unix Domain sockets.
 %%
 
-sc_rs_recv_send_shutdown_receive_tcp4(suite) ->
-    [];
-sc_rs_recv_send_shutdown_receive_tcp4(doc) ->
-    [];
 sc_rs_recv_send_shutdown_receive_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
-    tc_try(sc_rs_recv_send_shutdown_receive_tcp4,
+    tc_try(?FUNCTION_NAME,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    MsgData   = ?DATA,
                    Recv      = fun(Sock) ->
@@ -34265,12 +36215,8 @@ sc_rs_recv_send_shutdown_receive_tcp4(_Config) when is_list(_Config) ->
 %% reader attempts a recv.
 %% Socket is IPv6.
 
-sc_rs_recv_send_shutdown_receive_tcp6(suite) ->
-    [];
-sc_rs_recv_send_shutdown_receive_tcp6(doc) ->
-    [];
 sc_rs_recv_send_shutdown_receive_tcp6(_Config) when is_list(_Config) ->
-    tc_try(sc_rs_recv_send_shutdown_receive_tcp6,
+    tc_try(?FUNCTION_NAME,
            fun() -> has_support_ipv6() end,
            fun() ->
                    ?TT(?SECS(10)),
@@ -34297,13 +36243,9 @@ sc_rs_recv_send_shutdown_receive_tcp6(_Config) when is_list(_Config) ->
 %% reader attempts a recv.
 %% Socket is Unix Domain (stream) socket.
 
-sc_rs_recv_send_shutdown_receive_tcpL(suite) ->
-    [];
-sc_rs_recv_send_shutdown_receive_tcpL(doc) ->
-    [];
 sc_rs_recv_send_shutdown_receive_tcpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
-    tc_try(sc_rs_recv_send_shutdown_receive_tcpL,
+    tc_try(?FUNCTION_NAME,
            fun() -> has_support_unix_domain_socket() end,
            fun() ->
                    MsgData   = ?DATA,
@@ -34539,15 +36481,9 @@ sc_rs_send_shutdown_receive_tcp(InitState) ->
 
          %% *** Init part ***
          #{desc => "create node",
-           cmd  => fun(#{host := Host} = State) ->
-                           case start_node(Host, client) of
-                               {ok, Node} ->
-                                   ?SEV_IPRINT("client node ~p started",
-                                               [Node]),
-                                   {ok, State#{node => Node}};
-                               {error, Reason} ->
-                                   {skip, Reason}
-                           end
+           cmd  => fun(State) ->
+                           {Peer, Node} = ?START_NODE("client"),
+                           {ok, State#{peer => Peer, node => Node}}
                    end},
          #{desc => "monitor client node",
            cmd  => fun(#{node := Node} = _State) ->
@@ -34712,9 +36648,9 @@ sc_rs_send_shutdown_receive_tcp(InitState) ->
                            {ok, State1}
                    end},
          #{desc => "stop client node",
-           cmd  => fun(#{node := Node} = State) ->
+           cmd  => fun(#{peer := Peer} = State) ->
                            {ok,
-                            try stop_node(Node) of
+                            try peer:stop(Peer) of
                                 ok ->
                                     State#{node_stop => ok};
                                 {error, Reason} ->
@@ -34736,14 +36672,14 @@ sc_rs_send_shutdown_receive_tcp(InitState) ->
                            receive
                                {nodedown, Node} ->
                                    ?SEV_IPRINT("nodedown received - cleanup"),
-                                   State1 = maps:remove(node_id, State),
-                                   State2 = maps:remove(node,    State1),
+                                   State1 = maps:remove(peer, State),
+                                   State2 = maps:remove(node, State1),
                                    {ok, State2}
                            end;
                       (#{node_stop := error} = State) ->
                            ?SEV_IPRINT("Failed node stop - cleanup"),
-                           State1 = maps:remove(node_id, State),
-                           State2 = maps:remove(node,    State1),
+                           State1 = maps:remove(peer, State),
+                           State2 = maps:remove(node, State1),
                            {ok, State2}
                    end},
 
@@ -35034,11 +36970,14 @@ sc_rs_tcp_client_connect(Sock, ServerSA) ->
 
 sc_rs_tcp_client_send(Sock, Send, Data) ->
     i("sc_rs_tcp_client_send -> entry"),
-    case Send(Sock, Data) of
+    try Send(Sock, Data) of
         ok ->
             ok;
         {error, Reason} ->
             exit({send, Reason})
+    catch
+        error : notsup = Reason : _ ->
+            exit({skip, Reason})
     end.
 
 sc_rs_tcp_client_shutdown(Sock) ->
@@ -35106,7 +37045,7 @@ sc_rs_tcp_handler_await(Parent, Slogan) ->
     ?SEV_IPRINT("await ~w", [Slogan]),
     ?SEV_AWAIT_CONTINUE(Parent, parent, Slogan).
 
-%% This hould actually work - we leave it for now
+%% This should actually work - we leave it for now
 sc_rs_tcp_handler_recv(Recv, Sock, First) ->
     ?SEV_IPRINT("recv"),
     try Recv(Sock) of
@@ -35122,6 +37061,8 @@ sc_rs_tcp_handler_recv(Recv, Sock, First) ->
                         "~n   ~p", [Reason]),
             ERROR
     catch
+        error : notsup = Reason : _ ->
+            exit({skip, Reason});
         C:E:S ->
             ?SEV_IPRINT("receive failure: "
                         "~n   Class: ~p"
@@ -35143,12 +37084,9 @@ sc_rs_tcp_handler_announce_ready(Parent, Slogan, Result) ->
 %% reader attempts a recv.
 %% Socket is IPv4.
 
-sc_rs_recvmsg_send_shutdown_receive_tcp4(suite) ->
-    [];
-sc_rs_recvmsg_send_shutdown_receive_tcp4(doc) ->
-    [];
 sc_rs_recvmsg_send_shutdown_receive_tcp4(_Config) when is_list(_Config) ->
-    tc_try(sc_rs_recvmsg_send_shutdown_receive_tcp4,
+    tc_try(?FUNCTION_NAME,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    ?TT(?SECS(30)),
                    MsgData   = ?DATA,
@@ -35182,12 +37120,8 @@ sc_rs_recvmsg_send_shutdown_receive_tcp4(_Config) when is_list(_Config) ->
 %% reader attempts a recv.
 %% Socket is IPv6.
 
-sc_rs_recvmsg_send_shutdown_receive_tcp6(suite) ->
-    [];
-sc_rs_recvmsg_send_shutdown_receive_tcp6(doc) ->
-    [];
 sc_rs_recvmsg_send_shutdown_receive_tcp6(_Config) when is_list(_Config) ->
-    tc_try(sc_rs_recvmsg_send_shutdown_receive_tcp6,
+    tc_try(?FUNCTION_NAME,
            fun() -> has_support_ipv6() end,
            fun() ->
                    ?TT(?SECS(10)),
@@ -35222,13 +37156,9 @@ sc_rs_recvmsg_send_shutdown_receive_tcp6(_Config) when is_list(_Config) ->
 %% reader attempts a recv.
 %% Socket is UNix Domain (stream) socket.
 
-sc_rs_recvmsg_send_shutdown_receive_tcpL(suite) ->
-    [];
-sc_rs_recvmsg_send_shutdown_receive_tcpL(doc) ->
-    [];
 sc_rs_recvmsg_send_shutdown_receive_tcpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
-    tc_try(sc_rs_recvmsg_send_shutdown_receive_tcpL,
+    tc_try(?FUNCTION_NAME,
            fun() -> has_support_unix_domain_socket() end,
            fun() ->
                    {ok, CWD} = file:get_cwd(),
@@ -35268,14 +37198,34 @@ sc_rs_recvmsg_send_shutdown_receive_tcpL(_Config) when is_list(_Config) ->
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% This test case is intended to (*really* simply) test
+%% "some" ioctl features.
+%%
+
+ioctl_simple1(_Config) when is_list(_Config) ->
+    ?TT(?SECS(5)),
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   has_support_ioctl_requests()
+           end,
+           fun() ->
+                   InitState = #{},
+                   ok = do_ioctl_simple1(InitState)
+           end).
+
+
+do_ioctl_simple1(_State) ->
+    Requests = socket:supports(ioctl_requests),
+    ?P("Requests: ~p", [Requests]),
+    ok.
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% This test case is intended to (simply) test "some" ioctl features.
 %%
 
-ioctl_simple1(suite) ->
-    [];
-ioctl_simple1(doc) ->
-    [];
-ioctl_simple1(_Config) when is_list(_Config) ->
+ioctl_simple2(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(?FUNCTION_NAME,
            fun() ->
@@ -35284,11 +37234,11 @@ ioctl_simple1(_Config) when is_list(_Config) ->
            end,
            fun() ->
                    InitState = #{},
-                   ok = do_ioctl_simple(InitState)
+                   ok = do_ioctl_simple2(InitState)
            end).
 
 
-do_ioctl_simple(_State) ->
+do_ioctl_simple2(_State) ->
     i("create dummy dgram:UDP socket"),
     {ok, Sock1} = socket:open(inet, dgram, udp),
     i("perform simple ioctl (expect success)"),
@@ -35353,14 +37303,85 @@ do_ioctl_simple(_State) ->
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% This test case is intended to (simply) test the ioctl nread feature.
+%%
+
+ioctl_nread(_Config) when is_list(_Config) ->
+    ?TT(?SECS(5)),
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   has_support_ioctl_requests(),
+                   has_support_ioctl_nread()
+           end,
+           fun() ->
+                   InitState = #{},
+                   ok = do_ioctl_nread(InitState)
+           end).
+
+do_ioctl_nread(_) ->
+    i("Get local socket address"),
+    LSA = which_local_socket_addr(inet),
+    i("Use LSA: ~p", [LSA]),
+
+    i("Create dgram:UDP socket 1"),
+    {ok, S1} = socket:open(inet, dgram, udp),
+
+    i("Bind socket 1"),
+    ok = socket:bind(S1, LSA),
+
+    i("Create dgram:UDP socket 2"),
+    {ok, S2} = socket:open(inet, dgram, udp),
+
+    i("Bind socket 2"),
+    ok = socket:bind(S2, LSA),
+
+    i("Check data to read - expect 0 bytes"),
+    {ok, 0} = socket:ioctl(S1, nread),
+    
+    i("Get socket 1 port number"),
+    {ok, #{port := Port1}} = socket:sockname(S1),
+    
+    i("Send data to socket 1 (from socket 2)"),
+    Data   = <<0,1,2,3,4,5,6,7,8,9>>,
+    DataSz = byte_size(Data),
+    ok = socket:sendto(S2, Data, LSA#{port => Port1}),
+    
+    i("Give it some time to arrive"),
+    ?SLEEP(?SECS(1)),
+    
+    i("Verify that the correct amount of data (atleast ~p) is available", [DataSz]),
+    case socket:ioctl(S1, nread) of
+        {ok, DataSize} when (DataSize >= DataSz) ->
+            i("Success: "
+	      "~n   Min Size:    ~p"
+	      "~n   Actual Size: ~p", [DataSz, DataSize]),
+	    ok;
+	{ok, DataSize} ->
+            i("Unexpected data size: "
+	      "~n   Expected (min) Size: ~p"
+	      "~n   Actual Size:                ~p", [DataSz, DataSize]),
+	    ct:fail({invalid_data_size, DataSz, DataSize})
+    end,
+
+    i("Read the data"),
+    {ok, {_, Data}} = socket:recvfrom(S1),
+    
+    i("Verify that the data has been read (no more data is available)"),
+    {ok, 0} = socket:ioctl(S1, nread),
+
+    i("Cleanup"),
+    socket:close(S1),
+    socket:close(S2),
+
+    i("Done"),
+    ok.
+
+    
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% These test case(s) are intended to (simply) test "some" ioctl get
 %% request(s).
 %%
 
-ioctl_get_gifname(suite) ->
-    [];
-ioctl_get_gifname(doc) ->
-    [];
 ioctl_get_gifname(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(?FUNCTION_NAME,
@@ -35410,10 +37431,6 @@ do_ioctl_get_gifname(_State) ->
 
 %% --- gifindex ---
 
-ioctl_get_gifindex(suite) ->
-    [];
-ioctl_get_gifindex(doc) ->
-    [];
 ioctl_get_gifindex(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(?FUNCTION_NAME,
@@ -35465,10 +37482,6 @@ do_ioctl_get_gifindex(_State) ->
 
 %% --- gifaddr ---
 
-ioctl_get_gifaddr(suite) ->
-    [];
-ioctl_get_gifaddr(doc) ->
-    [];
 ioctl_get_gifaddr(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(?FUNCTION_NAME,
@@ -35532,10 +37545,6 @@ do_ioctl_get_gifaddr(_State) ->
 
 %% --- gifdstaddr ---
 
-ioctl_get_gifdstaddr(suite) ->
-    [];
-ioctl_get_gifdstaddr(doc) ->
-    [];
 ioctl_get_gifdstaddr(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(?FUNCTION_NAME,
@@ -35550,17 +37559,17 @@ ioctl_get_gifdstaddr(_Config) when is_list(_Config) ->
 
 
 do_ioctl_get_gifdstaddr(_State) ->
-    Domain = inet,
+    Domain = inet_or_inet6(),
     LSA    = which_local_socket_addr(Domain),
 
     i("create and init listen stream:TCP socket"),
-    {ok, LSock} = socket:open(inet, stream, tcp),
+    {ok, LSock} = socket:open(Domain, stream, tcp),
     ok = socket:bind(LSock, LSA#{port => 0}),
     ok = socket:listen(LSock),
     {ok, #{port := LPort}} = socket:sockname(LSock),
     
     i("create and init connection stream:TCP socket"),
-    {ok, CSock} = socket:open(inet, stream, tcp),
+    {ok, CSock} = socket:open(Domain, stream, tcp),
 
     i("attempt connect (nowait)"),
     {ok, ASock} =
@@ -35625,16 +37634,13 @@ verify_gifdstaddr(Sock, Prefix, IfIdx, IfName) ->
               "~n      ~p", [Prefix, IfName, IfIdx, Crap]),
             socket:close(Sock),
             ?FAIL({unexpected_addr, Prefix, IfName, IfIdx, Crap});
-        {error, eaddrnotavail = Reason} ->
+        {error, IgnoredReason} when IgnoredReason =:= eaddrnotavail;
+                                    IgnoredReason =:= eperm;
+                                    IgnoredReason =:= enotty ->
             i("[~s] got unexpected error for interface ~p (~w) => "
               "SKIP interface"
-              "~n      Reason: ~p", [Prefix, IfName, IfIdx, Reason]),
+              "~n      Reason: ~p", [Prefix, IfName, IfIdx, IgnoredReason]),
             ignore;
-	{error, eperm = Reason} ->
-	    i("[~s] got unexpected error for interface ~p (~w) => "
-	      "SKIP interface"
-	      "~n      Reason: ~p", [Prefix, IfName, IfIdx, Reason]),
-	    ignore;
 	{error, einval = Reason} when (OsFam =:= unix) andalso
                                       ((OsName =:= darwin) orelse 
                                        (OsName =:= freebsd) orelse 
@@ -35656,10 +37662,6 @@ verify_gifdstaddr(Sock, Prefix, IfIdx, IfName) ->
 
 %% --- gifbrdaddr ---
 
-ioctl_get_gifbrdaddr(suite) ->
-    [];
-ioctl_get_gifbrdaddr(doc) ->
-    [];
 ioctl_get_gifbrdaddr(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(?FUNCTION_NAME,
@@ -35674,17 +37676,17 @@ ioctl_get_gifbrdaddr(_Config) when is_list(_Config) ->
 
 
 do_ioctl_get_gifbrdaddr(_State) ->
-    Domain = inet,
+    Domain = inet_or_inet6(),
     LSA    = which_local_socket_addr(Domain),
 
     i("create and init listen stream:TCP socket"),
-    {ok, LSock} = socket:open(inet, stream, tcp),
+    {ok, LSock} = socket:open(Domain, stream, tcp),
     ok = socket:bind(LSock, LSA#{port => 0}),
     ok = socket:listen(LSock),
     {ok, #{port := LPort}} = socket:sockname(LSock),
     
     i("create and init connection stream:TCP socket"),
-    {ok, CSock} = socket:open(inet, stream, tcp),
+    {ok, CSock} = socket:open(Domain, stream, tcp),
 
     i("attempt connect (nowait)"),
     {ok, ASock} =
@@ -35748,16 +37750,13 @@ verify_gifbrdaddr(Sock, Prefix, IfIdx, IfName) ->
               "~n      ~p", [Prefix, IfName, IfIdx, Crap]),
             socket:close(Sock),
             ?FAIL({unexpected_addr, IfName, IfIdx, Crap});
-        {error, eaddrnotavail = Reason} ->
+        {error, IgnoredReason} when IgnoredReason =:= eaddrnotavail;
+                                    IgnoredReason =:= eperm;
+                                    IgnoredReason =:= enotty ->
             i("[~s] got unexpected error for interface ~p (~w) => "
-	      "SKIP interface"
-              "~n      Reason: ~p", [Prefix, IfName, IfIdx, Reason]),
+             "SKIP interface"
+              "~n      Reason: ~p", [Prefix, IfName, IfIdx, IgnoredReason]),
             ignore;
-	{error, eperm = Reason} ->
-	    i("[~s] got unexpected error for interface ~p (~w) => "
-	      "SKIP interface"
-	      "~n      Reason: ~p", [Prefix, IfName, IfIdx, Reason]),
-	    ignore;
 	{error, einval = Reason} when (OsFam =:= unix) andalso
                                       ((OsName =:= darwin) orelse
                                        (OsName =:= freebsd) orelse
@@ -35778,10 +37777,6 @@ verify_gifbrdaddr(Sock, Prefix, IfIdx, IfName) ->
 
 %% --- gifnetmask ---
 
-ioctl_get_gifnetmask(suite) ->
-    [];
-ioctl_get_gifnetmask(doc) ->
-    [];
 ioctl_get_gifnetmask(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(?FUNCTION_NAME,
@@ -35844,10 +37839,6 @@ do_ioctl_get_gifnetmask(_State) ->
 
 %% --- gifmtu ---
 
-ioctl_get_gifmtu(suite) ->
-    [];
-ioctl_get_gifmtu(doc) ->
-    [];
 ioctl_get_gifmtu(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(?FUNCTION_NAME,
@@ -35900,10 +37891,6 @@ do_ioctl_get_gifmtu(_State) ->
 
 %% --- gifhwaddr ---
 
-ioctl_get_gifhwaddr(suite) ->
-    [];
-ioctl_get_gifhwaddr(doc) ->
-    [];
 ioctl_get_gifhwaddr(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(?FUNCTION_NAME,
@@ -35929,22 +37916,8 @@ do_ioctl_get_gifhwaddr(_State) ->
     %% This a *very* simple test...
     %% ...just to check that we actually get an socket address
     _ = [case socket:ioctl(Sock, gifhwaddr, IfName) of
-             {ok, #{family := ArphdrFam,
-                    addr   := Addr}} when is_atom(ArphdrFam) ->
-                 case erlang:atom_to_list(ArphdrFam) of
-                     "arphrd_" ++ _ ->
-                         i("got (expected) (HW) socket address for "
-                           "interface ~p (~w): "
-                           "~n      (~w) ~p", [IfName, IfIdx, ArphdrFam, Addr]),
-                         ok;
-                     _ ->
-                         i("<ERROR> got unexpected family for interface ~p (~w)"
-                           "~n      ~p", [IfName, IfIdx, ArphdrFam]),
-                         socket:close(Sock),
-                         ?FAIL({unexpected_family, IfName, IfIdx, ArphdrFam})
-                 end;
              {ok, #{family := Fam,
-                    addr   := Addr}} when is_integer(Fam) ->
+                    addr   := Addr}} when is_atom(Fam) orelse is_integer(Fam) ->
                  i("got (expected) socket address for interface ~p (~w): "
                    "~n      (~w) ~p", [IfName, IfIdx, Fam, Addr]),
                  ok;
@@ -35971,10 +37944,6 @@ do_ioctl_get_gifhwaddr(_State) ->
 
 %% --- giftxqlen ---
 
-ioctl_get_giftxqlen(suite) ->
-    [];
-ioctl_get_giftxqlen(doc) ->
-    [];
 ioctl_get_giftxqlen(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(?FUNCTION_NAME,
@@ -36027,10 +37996,6 @@ do_ioctl_get_giftxqlen(_State) ->
 
 %% --- gifflags ---
 
-ioctl_get_gifflags(suite) ->
-    [];
-ioctl_get_gifflags(doc) ->
-    [];
 ioctl_get_gifflags(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(?FUNCTION_NAME,
@@ -36099,10 +38064,6 @@ do_ioctl_get_gifflags(_State) ->
 
 %% --- gifmap ---
 
-ioctl_get_gifmap(suite) ->
-    [];
-ioctl_get_gifmap(doc) ->
-    [];
 ioctl_get_gifmap(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
     tc_try(?FUNCTION_NAME,
@@ -36154,19 +38115,211 @@ do_ioctl_get_gifmap(_State) ->
 
 
 
+%% --- tcp_info ---
+
+ioctl_tcp_info(_Config) when is_list(_Config) ->
+    ?TT(?SECS(15)),
+    Cond = fun() ->
+		   has_support_ioctl_tcp_info()
+	   end,
+    TC   = fun() ->
+		   Domain = inet,
+		   case which_local_addr(Domain) of
+		       {ok, Addr} ->
+			   State = #{domain => Domain,
+				     laddr  => Addr},
+			   do_ioctl_tcp_info(State);
+		       {error, Reason} ->
+			   skip({no_local_addr, Reason})
+		   end
+	   end,
+    tc_try(?FUNCTION_NAME, Cond, TC).
+
+
+do_ioctl_tcp_info(#{domain := Domain,
+		    laddr  := LAddr} = _State) ->
+    LSA = #{family => Domain, addr => LAddr},
+
+    i("[server] create stream:TCP server listen socket"),
+    {ok, L} = socket:open(Domain, stream, tcp),
+
+    i("[server] bind to ~p", [LSA]),
+    ok = socket:bind(L, LSA),
+
+    i("[server] make listen socket"),
+    ok = socket:listen(L),
+
+    i("[server] get sockname"),
+    {ok, SSA} = socket:sockname(L),
+
+
+    i("[client] create stream:TCP socket"),
+    {ok, C} = socket:open(Domain, stream, tcp),
+
+    i("[client] bind to ~p", [LSA]),
+    ok = socket:bind(C, LSA),
+
+    i("[client] connect to server: "
+      "~n   ~p", [SSA]),
+    ok = socket:connect(C, SSA),
+
+    
+    i("[server] accept connection"),
+    {ok, A} = socket:accept(L),
+
+    
+    i("[client] try get tcp info"),
+    case socket:ioctl(C, tcp_info) of
+	{ok, CTcpInfo0} ->
+	    i("[client] tcp info: "
+	      "~n   ~p"
+	      "~n", [CTcpInfo0]),
+	    ok;
+	{error, CReason0} ->
+	    i("[client] failed get TCP info: "
+	      "~n   ~p"
+	      "~n", [CReason0]),
+	    skip({client_tcp_info, 0, CReason0})
+    end,
+
+    i("[server] try get tcp info"),
+    case socket:ioctl(A, tcp_info) of
+	{ok, ATcpInfo0} ->
+	    i("[server] tcp info: "
+	      "~n   ~p"
+	      "~n", [ATcpInfo0]),
+	    ok;
+	{error, AReason0} ->
+	    i("[server] failed get TCP info: "
+	      "~n   ~p"
+	      "~n", [AReason0]),
+	    skip({server_tcp_info, 0, AReason0})
+    end,
+
+
+    Data = <<0,1,2,3,4,5,6,7,8,9,
+	     0,1,2,3,4,5,6,7,8,9>>,
+    DSz  = byte_size(Data),
+    i("[client] send some data"),
+    ok = socket:send(C, Data),
+
+    i("[client] try get tcp info (verify bytes-out)"),
+    case socket:ioctl(C, tcp_info) of
+	{ok, #{bytes_out := BytesOut} = CTcpInfo1} when (BytesOut =:= DSz) ->
+	    i("[client] tcp info: "
+	      "~n   ~p"
+	      "~n", [CTcpInfo1]),
+	    ok;
+	{error, CReason1} ->
+	    i("[client] failed get TCP info: "
+	      "~n   ~p"
+	      "~n", [CReason1]),
+	    skip({client_tcp_info, 1, CReason1})
+    end,
+
+    i("[server] try get tcp info (verify bytes-in)"),
+    case socket:ioctl(A, tcp_info) of
+	{ok, #{bytes_in := BytesIn} = ATcpInfo1} when (BytesIn =:= DSz) ->
+	    i("[server] tcp info: "
+	      "~n   ~p"
+	      "~n", [ATcpInfo1]),
+	    ok;
+	{error, AReason1} ->
+	    i("[server] failed get TCP info: "
+	      "~n   ~p"
+	      "~n", [AReason1]),
+	    skip({server_tcp_info, 1, AReason1})
+    end,
+
+
+    i("[server] recv some data"),
+    {ok, _} = socket:recv(A),
+
+    i("[client] try get tcp info"),
+    {ok, CConnTime2} =
+	case socket:ioctl(C, tcp_info) of
+	    {ok, #{connection_time := CCT2} = CTcpInfo2} ->
+		i("[client] tcp info: "
+		  "~n   ~p"
+		  "~n", [CTcpInfo2]),
+		{ok, CCT2};
+	    {error, CReason2} ->
+		i("[client] failed get TCP info: "
+		  "~n   ~p"
+		  "~n", [CReason2]),
+		skip({client_tcp_info, 2, CReason2})
+	end,
+
+    i("[server] try get tcp info"),
+    {ok, AConnTime2} =
+	case socket:ioctl(A, tcp_info) of
+	    {ok, #{connection_time := ACT2} = ATcpInfo2} ->
+		i("[server] tcp info: "
+		  "~n   ~p"
+		  "~n", [ATcpInfo2]),
+		{ok, ACT2};
+	    {error, AReason2} ->
+		i("[server] failed get TCP info: "
+		  "~n   ~p"
+		  "~n", [AReason2]),
+		skip({server_tcp_info, 2, AReason2})
+	end,
+
+    SLEEP = ?SECS(5),
+    ?SLEEP(SLEEP),
+
+    i("[client] try get tcp info (verify connection time)"),
+    case socket:ioctl(C, tcp_info) of
+	{ok, #{connection_time := CCT3} = CTcpInfo3}
+	  when (CCT3 >= (SLEEP+CConnTime2)) ->
+	    i("[client] tcp info: "
+	      "~n   ~p"
+	      "~n", [CTcpInfo3]),
+	    ok;
+	{error, CReason3} ->
+	    i("[client] failed get TCP info: "
+	      "~n   ~p"
+	      "~n", [CReason3]),
+	    skip({client_tcp_info, 3, CReason3})
+    end,
+
+    i("[server] try get tcp info (verify connection time)"),
+    case socket:ioctl(A, tcp_info) of
+	{ok, #{connection_time := ACT3} = ATcpInfo3} 
+	  when (ACT3 >= (SLEEP+AConnTime2)) ->
+	    i("[server] tcp info: "
+	      "~n   ~p"
+	      "~n", [ATcpInfo3]),
+	    ok;
+	{error, AReason3} ->
+	    i("[server] failed get TCP info: "
+	      "~n   ~p"
+	      "~n", [AReason3]),
+	    skip({server_tcp_info, 3, AReason3})
+    end,
+
+
+    i("cleanup"),
+    ok = socket:close(L),
+    ok = socket:close(A),
+    ok = socket:close(C),
+
+    i("done"),
+    ok.
+
+
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% This test case is intended to (simply) test that the counters
 %% for both read and write.
 %% So that its easy to extend, we use fun's for read and write.
 %% We use TCP on IPv4.
 
-traffic_send_and_recv_counters_tcp4(suite) ->
-    [];
-traffic_send_and_recv_counters_tcp4(doc) ->
-    [];
 traffic_send_and_recv_counters_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(15)),
     tc_try(traffic_send_and_recv_counters_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    InitState = #{domain => inet,
                                  proto  => tcp,
@@ -36182,10 +38335,6 @@ traffic_send_and_recv_counters_tcp4(_Config) when is_list(_Config) ->
 %% So that its easy to extend, we use fun's for read and write.
 %% We use TCP on IPv6.
 
-traffic_send_and_recv_counters_tcp6(suite) ->
-    [];
-traffic_send_and_recv_counters_tcp6(doc) ->
-    [];
 traffic_send_and_recv_counters_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(15)),
     tc_try(traffic_send_and_recv_counters_tcp6,
@@ -36205,10 +38354,6 @@ traffic_send_and_recv_counters_tcp6(_Config) when is_list(_Config) ->
 %% So that its easy to extend, we use fun's for read and write.
 %% We use default (TCP) on local.
 
-traffic_send_and_recv_counters_tcpL(suite) ->
-    [];
-traffic_send_and_recv_counters_tcpL(doc) ->
-    [];
 traffic_send_and_recv_counters_tcpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(15)),
     tc_try(traffic_send_and_recv_counters_tcpL,
@@ -36228,13 +38373,13 @@ traffic_send_and_recv_counters_tcpL(_Config) when is_list(_Config) ->
 %% So that its easy to extend, we use fun's for read and write.
 %% We use TCP on IPv4.
 
-traffic_sendmsg_and_recvmsg_counters_tcp4(suite) ->
-    [];
-traffic_sendmsg_and_recvmsg_counters_tcp4(doc) ->
-    [];
 traffic_sendmsg_and_recvmsg_counters_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(15)),
     tc_try(traffic_sendmsg_and_recvmsg_counters_tcp4,
+           fun() ->
+                   is_not_windows(),
+                   has_support_ipv4()
+           end,
            fun() ->
                    InitState = #{domain => inet,
                                  proto  => tcp,
@@ -36260,14 +38405,13 @@ traffic_sendmsg_and_recvmsg_counters_tcp4(_Config) when is_list(_Config) ->
 %% So that its easy to extend, we use fun's for read and write.
 %% We use TCP on IPv6.
 
-traffic_sendmsg_and_recvmsg_counters_tcp6(suite) ->
-    [];
-traffic_sendmsg_and_recvmsg_counters_tcp6(doc) ->
-    [];
 traffic_sendmsg_and_recvmsg_counters_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(15)),
     tc_try(traffic_sendmsg_and_recvmsg_counters_tcp6,
-           fun() -> has_support_ipv6() end,
+           fun() ->
+                   is_not_windows(),
+                   has_support_ipv6()
+           end,
            fun() ->
                    InitState = #{domain => inet6,
                                  proto  => tcp,
@@ -36293,10 +38437,6 @@ traffic_sendmsg_and_recvmsg_counters_tcp6(_Config) when is_list(_Config) ->
 %% So that its easy to extend, we use fun's for read and write.
 %% We use default (TCP) on local.
 
-traffic_sendmsg_and_recvmsg_counters_tcpL(suite) ->
-    [];
-traffic_sendmsg_and_recvmsg_counters_tcpL(doc) ->
-    [];
 traffic_sendmsg_and_recvmsg_counters_tcpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(15)),
     tc_try(traffic_sendmsg_and_recvmsg_counters_tcpL,
@@ -37365,13 +39505,10 @@ traffic_sar_counters_validation2(Counters, [{Cnt, Val}|ValidateCounters]) ->
 %% So that its easy to extend, we use fun's for read and write.
 %% We use UDP on IPv4.
 
-traffic_sendto_and_recvfrom_counters_udp4(suite) ->
-    [];
-traffic_sendto_and_recvfrom_counters_udp4(doc) ->
-    [];
 traffic_sendto_and_recvfrom_counters_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(15)),
     tc_try(traffic_sendto_and_recvfrom_counters_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    InitState = #{domain => inet,
                                  proto  => udp,
@@ -37391,10 +39528,6 @@ traffic_sendto_and_recvfrom_counters_udp4(_Config) when is_list(_Config) ->
 %% So that its easy to extend, we use fun's for read and write.
 %% We use UDP on IPv6.
 
-traffic_sendto_and_recvfrom_counters_udp6(suite) ->
-    [];
-traffic_sendto_and_recvfrom_counters_udp6(doc) ->
-    [];
 traffic_sendto_and_recvfrom_counters_udp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(15)),
     tc_try(traffic_sendto_and_recvfrom_counters_udp6,
@@ -37418,14 +39551,13 @@ traffic_sendto_and_recvfrom_counters_udp6(_Config) when is_list(_Config) ->
 %% So that its easy to extend, we use fun's for read and write.
 %% We use default (UDP) on local.
 
-traffic_sendto_and_recvfrom_counters_udpL(suite) ->
-    [];
-traffic_sendto_and_recvfrom_counters_udpL(doc) ->
-    [];
 traffic_sendto_and_recvfrom_counters_udpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(15)),
     tc_try(traffic_sendto_and_recvfrom_counters_udp4,
-           fun() -> has_support_unix_domain_socket() end,
+           fun() ->
+		   has_support_unix_domain_socket(),
+		   is_not_windows()
+	   end,
            fun() ->
                    InitState = #{domain => local,
                                  proto  => default,
@@ -37445,13 +39577,10 @@ traffic_sendto_and_recvfrom_counters_udpL(_Config) when is_list(_Config) ->
 %% So that its easy to extend, we use fun's for read and write.
 %% We use UDP on IPv4.
 
-traffic_sendmsg_and_recvmsg_counters_udp4(suite) ->
-    [];
-traffic_sendmsg_and_recvmsg_counters_udp4(doc) ->
-    [];
 traffic_sendmsg_and_recvmsg_counters_udp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(15)),
     tc_try(traffic_sendmsg_and_recvmsg_counters_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    InitState = #{domain => inet,
                                  proto  => udp,
@@ -37479,10 +39608,6 @@ traffic_sendmsg_and_recvmsg_counters_udp4(_Config) when is_list(_Config) ->
 %% So that its easy to extend, we use fun's for read and write.
 %% We use UDP on IPv6.
 
-traffic_sendmsg_and_recvmsg_counters_udp6(suite) ->
-    [];
-traffic_sendmsg_and_recvmsg_counters_udp6(doc) ->
-    [];
 traffic_sendmsg_and_recvmsg_counters_udp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(15)),
     tc_try(traffic_sendmsg_and_recvmsg_counters_udp6,
@@ -37514,14 +39639,13 @@ traffic_sendmsg_and_recvmsg_counters_udp6(_Config) when is_list(_Config) ->
 %% So that its easy to extend, we use fun's for read and write.
 %% We use default (UDP) on local.
 
-traffic_sendmsg_and_recvmsg_counters_udpL(suite) ->
-    [];
-traffic_sendmsg_and_recvmsg_counters_udpL(doc) ->
-    [];
 traffic_sendmsg_and_recvmsg_counters_udpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(15)),
     tc_try(traffic_sendmsg_and_recvmsg_counters_udpL,
-           fun() -> has_support_unix_domain_socket() end,
+           fun() ->
+		   has_support_unix_domain_socket(),
+		   is_not_windows()
+	   end,
            fun() ->
                    InitState = #{domain => local,
                                  proto  => default,
@@ -38377,13 +40501,10 @@ traffic_send_and_recv_udp(InitState) ->
 %% Second, send in a bunch of "small" chunks, and read in one "big" chunk.
 %% Socket is IPv4.
 
-traffic_send_and_recv_chunks_tcp4(suite) ->
-    [];
-traffic_send_and_recv_chunks_tcp4(doc) ->
-    [];
 traffic_send_and_recv_chunks_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(traffic_send_and_recv_chunks_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    InitState = #{domain => inet,
                                  proto  => tcp},
@@ -38399,10 +40520,6 @@ traffic_send_and_recv_chunks_tcp4(_Config) when is_list(_Config) ->
 %% Second, send in a bunch of "small" chunks, and read in one "big" chunk.
 %% Socket is IPv6.
 
-traffic_send_and_recv_chunks_tcp6(suite) ->
-    [];
-traffic_send_and_recv_chunks_tcp6(doc) ->
-    [];
 traffic_send_and_recv_chunks_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(traffic_send_and_recv_chunks_tcp6,
@@ -38421,10 +40538,6 @@ traffic_send_and_recv_chunks_tcp6(_Config) when is_list(_Config) ->
 %% Second, send in a bunch of "small" chunks, and read in one "big" chunk.
 %% Socket is UNix Domain (Stream) socket.
 
-traffic_send_and_recv_chunks_tcpL(suite) ->
-    [];
-traffic_send_and_recv_chunks_tcpL(doc) ->
-    [];
 traffic_send_and_recv_chunks_tcpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(30)),
     tc_try(traffic_send_and_recv_chunks_tcp6,
@@ -38732,15 +40845,9 @@ traffic_send_and_recv_chunks_tcp(InitState) ->
 
          %% *** Init part ***
          #{desc => "create node",
-           cmd  => fun(#{host := Host} = State) ->
-                           case start_node(Host, client) of
-                               {ok, Node} ->
-                                   ?SEV_IPRINT("(remote) client node ~p started",
-                                               [Node]),
-                                   {ok, State#{node => Node}};
-                               {error, Reason} ->
-                                   {skip, Reason}
-                           end
+           cmd  => fun(State) ->
+                           {Peer, Node} = ?START_NODE("client"),
+                           {ok, State#{peer => Peer, node => Node}}
                    end},
          #{desc => "monitor client node",
            cmd  => fun(#{node := Node} = _State) ->
@@ -39104,9 +41211,9 @@ traffic_send_and_recv_chunks_tcp(InitState) ->
                            {ok, State1}
                    end},
          #{desc => "stop client node",
-           cmd  => fun(#{node := Node} = State) ->
+           cmd  => fun(#{peer := Peer} = State) ->
                            {ok,
-                            try stop_node(Node) of
+                            try peer:stop(Peer) of
                                 ok ->
                                     State#{node_stop => ok};
                                 {error, Reason} ->
@@ -39352,7 +41459,7 @@ traffic_snr_tcp_client(Parent) ->
 
 traffic_snr_tcp_client_send_loop(Parent, Sock) ->
     case ?SEV_AWAIT_CONTINUE(Parent, parent, send) of
-        {ok, stop} -> % Breakes the loop
+        {ok, stop} -> % Breaks the loop
             ?SEV_ANNOUNCE_READY(Parent, send, ok),
             ok;
         {ok, Data} ->
@@ -39457,15 +41564,12 @@ traffic_snr_tcp_client_await_terminate(Parent) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'small' message test case, for IPv4.
 
-traffic_ping_pong_small_send_and_recv_tcp4(suite) ->
-    [];
-traffic_ping_pong_small_send_and_recv_tcp4(doc) ->
-    [];
 traffic_ping_pong_small_send_and_recv_tcp4(Config) when is_list(Config) ->
     ?TT(?SECS(15)),
     Msg = l2b(?TPP_SMALL),
     Num = ?TPP_NUM(Config, ?TPP_SMALL_NUM),
     tc_try(traffic_ping_pong_small_send_and_recv_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    InitState = #{domain => inet,
                                  proto  => tcp,
@@ -39485,10 +41589,6 @@ traffic_ping_pong_small_send_and_recv_tcp4(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'small' message test case, for IPv6.
 
-traffic_ping_pong_small_send_and_recv_tcp6(suite) ->
-    [];
-traffic_ping_pong_small_send_and_recv_tcp6(doc) ->
-    [];
 traffic_ping_pong_small_send_and_recv_tcp6(Config) when is_list(Config) ->
     ?TT(?SECS(15)),
     Msg = l2b(?TPP_SMALL),
@@ -39513,10 +41613,6 @@ traffic_ping_pong_small_send_and_recv_tcp6(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'small' message test case, for Unix Domain (stream) socket.
 
-traffic_ping_pong_small_send_and_recv_tcpL(suite) ->
-    [];
-traffic_ping_pong_small_send_and_recv_tcpL(doc) ->
-    [];
 traffic_ping_pong_small_send_and_recv_tcpL(Config) when is_list(Config) ->
     ?TT(?SECS(15)),
     Msg = l2b(?TPP_SMALL),
@@ -39541,14 +41637,11 @@ traffic_ping_pong_small_send_and_recv_tcpL(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'medium' message test case, for IPv4.
 
-traffic_ping_pong_medium_send_and_recv_tcp4(suite) ->
-    [];
-traffic_ping_pong_medium_send_and_recv_tcp4(doc) ->
-    [];
 traffic_ping_pong_medium_send_and_recv_tcp4(Config) when is_list(Config) ->
     Msg = l2b(?TPP_MEDIUM),
     Num = ?TPP_NUM(Config, ?TPP_MEDIUM_NUM),
     tc_try(traffic_ping_pong_medium_send_and_recv_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    ?TT(?SECS(30)),
                    InitState = #{domain => inet,
@@ -39568,10 +41661,6 @@ traffic_ping_pong_medium_send_and_recv_tcp4(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'medium' message test case, for IPv6.
 
-traffic_ping_pong_medium_send_and_recv_tcp6(suite) ->
-    [];
-traffic_ping_pong_medium_send_and_recv_tcp6(doc) ->
-    [];
 traffic_ping_pong_medium_send_and_recv_tcp6(Config) when is_list(Config) ->
     Msg = l2b(?TPP_MEDIUM),
     Num = ?TPP_NUM(Config, ?TPP_MEDIUM_NUM),
@@ -39597,10 +41686,6 @@ traffic_ping_pong_medium_send_and_recv_tcp6(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'medium' message test case, for Unix Domain (stream) socket.
 
-traffic_ping_pong_medium_send_and_recv_tcpL(suite) ->
-    [];
-traffic_ping_pong_medium_send_and_recv_tcpL(doc) ->
-    [];
 traffic_ping_pong_medium_send_and_recv_tcpL(Config) when is_list(Config) ->
     ?TT(?SECS(30)),
     Msg = l2b(?TPP_MEDIUM),
@@ -39626,16 +41711,13 @@ traffic_ping_pong_medium_send_and_recv_tcpL(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'large' message test case, for IPv4.
 
-traffic_ping_pong_large_send_and_recv_tcp4(suite) ->
-    [];
-traffic_ping_pong_large_send_and_recv_tcp4(doc) ->
-    [];
 traffic_ping_pong_large_send_and_recv_tcp4(Config) when is_list(Config) ->
     ?TT(?SECS(60)),
     Msg = l2b(?TPP_LARGE),
     Num = ?TPP_NUM(Config, ?TPP_LARGE_NUM),
     tc_try(traffic_ping_pong_large_send_and_recv_tcp4,
-           fun() -> is_old_fedora16(),
+           fun() -> has_support_ipv4(),
+                    is_old_fedora16(),
 		    is_slow_ubuntu(Config) end,
            fun() ->
                    InitState = #{domain => inet,
@@ -39655,10 +41737,6 @@ traffic_ping_pong_large_send_and_recv_tcp4(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'large' message test case, for IPv6.
 
-traffic_ping_pong_large_send_and_recv_tcp6(suite) ->
-    [];
-traffic_ping_pong_large_send_and_recv_tcp6(doc) ->
-    [];
 traffic_ping_pong_large_send_and_recv_tcp6(Config) when is_list(Config) ->
     ?TT(?SECS(60)),
     Msg = l2b(?TPP_LARGE),
@@ -39686,10 +41764,6 @@ traffic_ping_pong_large_send_and_recv_tcp6(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'large' message test case, for UNix Domain (stream) socket.
 
-traffic_ping_pong_large_send_and_recv_tcpL(suite) ->
-    [];
-traffic_ping_pong_large_send_and_recv_tcpL(doc) ->
-    [];
 traffic_ping_pong_large_send_and_recv_tcpL(Config) when is_list(Config) ->
     ?TT(?SECS(60)),
     Msg = l2b(?TPP_LARGE),
@@ -39747,7 +41821,7 @@ is_old_fedora16(_) ->
 %% not actually needed.
 %% The host in question is a Ubuntu 20.04...
 is_slow_ubuntu(Config) ->
-    case lookup(esock_factor, 1, Config) of
+    case lookup(kernel_factor, 1, Config) of
 	F when is_integer(F) andalso (F > 1) ->
 	    case os:type() of
 		{unix, linux} ->
@@ -39774,14 +41848,11 @@ is_slow_ubuntu(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'small' message test case, for IPv4.
 
-traffic_ping_pong_small_sendto_and_recvfrom_udp4(suite) ->
-    [];
-traffic_ping_pong_small_sendto_and_recvfrom_udp4(doc) ->
-    [];
 traffic_ping_pong_small_sendto_and_recvfrom_udp4(Config) when is_list(Config) ->
     Msg = l2b(?TPP_SMALL),
     Num = ?TPP_NUM(Config, ?TPP_SMALL_NUM),
     tc_try(traffic_ping_pong_small_sendto_and_recvfrom_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    ?TT(?SECS(45)),
                    InitState = #{domain => inet,
@@ -39801,10 +41872,6 @@ traffic_ping_pong_small_sendto_and_recvfrom_udp4(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'small' message test case, for IPv6.
 
-traffic_ping_pong_small_sendto_and_recvfrom_udp6(suite) ->
-    [];
-traffic_ping_pong_small_sendto_and_recvfrom_udp6(doc) ->
-    [];
 traffic_ping_pong_small_sendto_and_recvfrom_udp6(Config) when is_list(Config) ->
     Msg = l2b(?TPP_SMALL),
     Num = ?TPP_NUM(Config, ?TPP_SMALL_NUM),
@@ -39830,15 +41897,14 @@ traffic_ping_pong_small_sendto_and_recvfrom_udp6(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'small' message test case, for Unix Domain (dgram) socket.
 
-traffic_ping_pong_small_sendto_and_recvfrom_udpL(suite) ->
-    [];
-traffic_ping_pong_small_sendto_and_recvfrom_udpL(doc) ->
-    [];
 traffic_ping_pong_small_sendto_and_recvfrom_udpL(Config) when is_list(Config) ->
     Msg = l2b(?TPP_SMALL),
     Num = ?TPP_NUM(Config, ?TPP_SMALL_NUM),
     tc_try(traffic_ping_pong_small_sendto_and_recvfrom_udpL,
-           fun() -> has_support_unix_domain_socket() end,
+           fun() ->
+		   has_support_unix_domain_socket(),
+		   is_not_windows()
+	   end,
            fun() ->
                    ?TT(?SECS(45)),
                    InitState = #{domain => local,
@@ -39859,14 +41925,11 @@ traffic_ping_pong_small_sendto_and_recvfrom_udpL(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'medium' message test case, for IPv4.
 
-traffic_ping_pong_medium_sendto_and_recvfrom_udp4(suite) ->
-    [];
-traffic_ping_pong_medium_sendto_and_recvfrom_udp4(doc) ->
-    [];
 traffic_ping_pong_medium_sendto_and_recvfrom_udp4(Config) when is_list(Config) ->
     Msg = l2b(?TPP_MEDIUM),
     Num = ?TPP_NUM(Config, ?TPP_MEDIUM_NUM),
     tc_try(traffic_ping_pong_medium_sendto_and_recvfrom_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    ?TT(?SECS(45)),
                    InitState = #{domain => inet,
@@ -39886,10 +41949,6 @@ traffic_ping_pong_medium_sendto_and_recvfrom_udp4(Config) when is_list(Config) -
 %% repeated a set number of times (more times the small the message).
 %% This is the 'medium' message test case, for IPv6.
 
-traffic_ping_pong_medium_sendto_and_recvfrom_udp6(suite) ->
-    [];
-traffic_ping_pong_medium_sendto_and_recvfrom_udp6(doc) ->
-    [];
 traffic_ping_pong_medium_sendto_and_recvfrom_udp6(Config) when is_list(Config) ->
     Msg = l2b(?TPP_MEDIUM),
     Num = ?TPP_NUM(Config, ?TPP_MEDIUM_NUM),
@@ -39915,15 +41974,14 @@ traffic_ping_pong_medium_sendto_and_recvfrom_udp6(Config) when is_list(Config) -
 %% repeated a set number of times (more times the small the message).
 %% This is the 'medium' message test case, for Unix Domain (dgram) socket.
 
-traffic_ping_pong_medium_sendto_and_recvfrom_udpL(suite) ->
-    [];
-traffic_ping_pong_medium_sendto_and_recvfrom_udpL(doc) ->
-    [];
 traffic_ping_pong_medium_sendto_and_recvfrom_udpL(Config) when is_list(Config) ->
     Msg = l2b(?TPP_MEDIUM),
     Num = ?TPP_NUM(Config, ?TPP_MEDIUM_NUM),
     tc_try(traffic_ping_pong_medium_sendto_and_recvfrom_udpL,
-           fun() -> has_support_unix_domain_socket() end,
+           fun() ->
+		   has_support_unix_domain_socket(),
+		   is_not_windows()
+	   end,
            fun() ->
                    ?TT(?SECS(45)),
                    InitState = #{domain => local,
@@ -39944,14 +42002,14 @@ traffic_ping_pong_medium_sendto_and_recvfrom_udpL(Config) when is_list(Config) -
 %% repeated a set number of times (more times the small the message).
 %% This is the 'small' message test case, for IPv4.
 
-traffic_ping_pong_small_sendmsg_and_recvmsg_tcp4(suite) ->
-    [];
-traffic_ping_pong_small_sendmsg_and_recvmsg_tcp4(doc) ->
-    [];
 traffic_ping_pong_small_sendmsg_and_recvmsg_tcp4(Config) when is_list(Config) ->
     Msg = l2b(?TPP_SMALL),
     Num = ?TPP_NUM(Config, ?TPP_SMALL_NUM),
     tc_try(traffic_ping_pong_small_sendmsg_and_recvmsg_tcp4,
+           fun() ->
+                   is_not_windows(),
+                   has_support_ipv4()
+           end,
            fun() ->
                    ?TT(?SECS(20)),
                    InitState = #{domain => inet,
@@ -39971,15 +42029,14 @@ traffic_ping_pong_small_sendmsg_and_recvmsg_tcp4(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'small' message test case, for IPv6.
 
-traffic_ping_pong_small_sendmsg_and_recvmsg_tcp6(suite) ->
-    [];
-traffic_ping_pong_small_sendmsg_and_recvmsg_tcp6(doc) ->
-    [];
 traffic_ping_pong_small_sendmsg_and_recvmsg_tcp6(Config) when is_list(Config) ->
     Msg = l2b(?TPP_SMALL),
     Num = ?TPP_NUM(Config, ?TPP_SMALL_NUM),
     tc_try(traffic_ping_pong_small_sendmsg_and_recvmsg_tcp6,
-           fun() -> has_support_ipv6() end,
+           fun() ->
+                   is_not_windows(),
+                   has_support_ipv6()
+           end,
            fun() ->
                    ?TT(?SECS(20)),
                    InitState = #{domain => inet6,
@@ -39999,15 +42056,14 @@ traffic_ping_pong_small_sendmsg_and_recvmsg_tcp6(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'small' message test case, for Unix Domain (stream) socket.
 
-traffic_ping_pong_small_sendmsg_and_recvmsg_tcpL(suite) ->
-    [];
-traffic_ping_pong_small_sendmsg_and_recvmsg_tcpL(doc) ->
-    [];
 traffic_ping_pong_small_sendmsg_and_recvmsg_tcpL(Config) when is_list(Config) ->
     Msg = l2b(?TPP_SMALL),
     Num = ?TPP_NUM(Config, ?TPP_SMALL_NUM),
     tc_try(traffic_ping_pong_small_sendmsg_and_recvmsg_tcpL,
-           fun() -> has_support_unix_domain_socket() end,
+           fun() ->
+                   is_not_windows(),
+		   has_support_unix_domain_socket()
+	   end,
            fun() ->
                    ?TT(?SECS(20)),
                    InitState = #{domain => local,
@@ -40027,14 +42083,14 @@ traffic_ping_pong_small_sendmsg_and_recvmsg_tcpL(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'medium' message test case, for IPv4.
 
-traffic_ping_pong_medium_sendmsg_and_recvmsg_tcp4(suite) ->
-    [];
-traffic_ping_pong_medium_sendmsg_and_recvmsg_tcp4(doc) ->
-    [];
 traffic_ping_pong_medium_sendmsg_and_recvmsg_tcp4(Config) when is_list(Config) ->
     Msg = l2b(?TPP_MEDIUM),
     Num = ?TPP_NUM(Config, ?TPP_MEDIUM_NUM),
     tc_try(traffic_ping_pong_medium_sendmsg_and_recvmsg_tcp4,
+           fun() ->
+                   is_not_windows(),
+                   has_support_ipv4()
+           end,
            fun() ->
                    ?TT(?SECS(30)),
                    InitState = #{domain => inet,
@@ -40054,15 +42110,14 @@ traffic_ping_pong_medium_sendmsg_and_recvmsg_tcp4(Config) when is_list(Config) -
 %% repeated a set number of times (more times the small the message).
 %% This is the 'medium' message test case, for IPv6.
 
-traffic_ping_pong_medium_sendmsg_and_recvmsg_tcp6(suite) ->
-    [];
-traffic_ping_pong_medium_sendmsg_and_recvmsg_tcp6(doc) ->
-    [];
 traffic_ping_pong_medium_sendmsg_and_recvmsg_tcp6(Config) when is_list(Config) ->
     Msg = l2b(?TPP_MEDIUM),
     Num = ?TPP_NUM(Config, ?TPP_MEDIUM_NUM),
     tc_try(traffic_ping_pong_medium_sendmsg_and_recvmsg_tcp6,
-           fun() -> has_support_ipv6() end,
+           fun() ->
+                   is_not_windows(),
+                   has_support_ipv6()
+           end,
            fun() ->
                    ?TT(?SECS(30)),
                    InitState = #{domain => inet6,
@@ -40082,15 +42137,14 @@ traffic_ping_pong_medium_sendmsg_and_recvmsg_tcp6(Config) when is_list(Config) -
 %% repeated a set number of times (more times the small the message).
 %% This is the 'medium' message test case, for Unix Domain (stream) socket.
 
-traffic_ping_pong_medium_sendmsg_and_recvmsg_tcpL(suite) ->
-    [];
-traffic_ping_pong_medium_sendmsg_and_recvmsg_tcpL(doc) ->
-    [];
 traffic_ping_pong_medium_sendmsg_and_recvmsg_tcpL(Config) when is_list(Config) ->
     Msg = l2b(?TPP_MEDIUM),
     Num = ?TPP_NUM(Config, ?TPP_MEDIUM_NUM),
     tc_try(traffic_ping_pong_medium_sendmsg_and_recvmsg_tcpL,
-           fun() -> has_support_unix_domain_socket() end,
+           fun() ->
+                   is_not_windows(),
+		   has_support_unix_domain_socket()
+	   end,
            fun() ->
                    ?TT(?SECS(30)),
                    InitState = #{domain => local,
@@ -40110,15 +42164,15 @@ traffic_ping_pong_medium_sendmsg_and_recvmsg_tcpL(Config) when is_list(Config) -
 %% repeated a set number of times (more times the small the message).
 %% This is the 'large' message test case, for IPv4.
 
-traffic_ping_pong_large_sendmsg_and_recvmsg_tcp4(suite) ->
-    [];
-traffic_ping_pong_large_sendmsg_and_recvmsg_tcp4(doc) ->
-    [];
 traffic_ping_pong_large_sendmsg_and_recvmsg_tcp4(Config) when is_list(Config) ->
     Msg = l2b(?TPP_LARGE),
     Num = ?TPP_NUM(Config, ?TPP_LARGE_NUM),
     tc_try(traffic_ping_pong_large_sendmsg_and_recvmsg_tcp4,
-           fun() -> traffic_ping_pong_large_sendmsg_and_recvmsg_cond() end,
+           fun() ->
+                   is_not_windows(),
+                   has_support_ipv4(),
+                   traffic_ping_pong_large_sendmsg_and_recvmsg_cond()
+           end,
            fun() ->
                    ?TT(?SECS(60)),
                    InitState = #{domain => inet,
@@ -40148,15 +42202,12 @@ traffic_ping_pong_large_sendmsg_and_recvmsg_cond(_, _) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'large' message test case, for IPv6.
 
-traffic_ping_pong_large_sendmsg_and_recvmsg_tcp6(suite) ->
-    [];
-traffic_ping_pong_large_sendmsg_and_recvmsg_tcp6(doc) ->
-    [];
 traffic_ping_pong_large_sendmsg_and_recvmsg_tcp6(Config) when is_list(Config) ->
     Msg = l2b(?TPP_LARGE),
     Num = ?TPP_NUM(Config, ?TPP_LARGE_NUM),
     tc_try(traffic_ping_pong_large_sendmsg_and_recvmsg_tcp6,
            fun() ->
+                   is_not_windows(),
                    has_support_ipv6(),
                    traffic_ping_pong_large_sendmsg_and_recvmsg_cond()
            end,
@@ -40180,15 +42231,14 @@ traffic_ping_pong_large_sendmsg_and_recvmsg_tcp6(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'large' message test case, for Unix Domain (stream) socket.
 
-traffic_ping_pong_large_sendmsg_and_recvmsg_tcpL(suite) ->
-    [];
-traffic_ping_pong_large_sendmsg_and_recvmsg_tcpL(doc) ->
-    [];
 traffic_ping_pong_large_sendmsg_and_recvmsg_tcpL(Config) when is_list(Config) ->
     Msg = l2b(?TPP_LARGE),
     Num = ?TPP_NUM(Config, ?TPP_LARGE_NUM),
     tc_try(traffic_ping_pong_large_sendmsg_and_recvmsg_tcpL,
-           fun() -> has_support_unix_domain_socket() end,
+           fun() ->
+                   is_not_windows(),
+		   has_support_unix_domain_socket()
+	   end,
            fun() ->
                    ?TT(?SECS(60)),
                    InitState = #{domain => local,
@@ -40209,14 +42259,11 @@ traffic_ping_pong_large_sendmsg_and_recvmsg_tcpL(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'small' message test case, for IPv4.
 
-traffic_ping_pong_small_sendmsg_and_recvmsg_udp4(suite) ->
-    [];
-traffic_ping_pong_small_sendmsg_and_recvmsg_udp4(doc) ->
-    [];
 traffic_ping_pong_small_sendmsg_and_recvmsg_udp4(Config) when is_list(Config) ->
     Msg = l2b(?TPP_SMALL),
     Num = ?TPP_NUM(Config, ?TPP_SMALL_NUM),
     tc_try(traffic_ping_pong_small_sendmsg_and_recvmsg_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    ?TT(?SECS(60)),
                    InitState = #{domain => inet,
@@ -40236,10 +42283,6 @@ traffic_ping_pong_small_sendmsg_and_recvmsg_udp4(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'small' message test case, for IPv6.
 
-traffic_ping_pong_small_sendmsg_and_recvmsg_udp6(suite) ->
-    [];
-traffic_ping_pong_small_sendmsg_and_recvmsg_udp6(doc) ->
-    [];
 traffic_ping_pong_small_sendmsg_and_recvmsg_udp6(Config) when is_list(Config) ->
     Msg = l2b(?TPP_SMALL),
     Num = ?TPP_NUM(Config, ?TPP_SMALL_NUM),
@@ -40264,15 +42307,14 @@ traffic_ping_pong_small_sendmsg_and_recvmsg_udp6(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'small' message test case, for Unix Domain (dgram) socket.
 
-traffic_ping_pong_small_sendmsg_and_recvmsg_udpL(suite) ->
-    [];
-traffic_ping_pong_small_sendmsg_and_recvmsg_udpL(doc) ->
-    [];
 traffic_ping_pong_small_sendmsg_and_recvmsg_udpL(Config) when is_list(Config) ->
     Msg = l2b(?TPP_SMALL),
     Num = ?TPP_NUM(Config, ?TPP_SMALL_NUM),
     tc_try(traffic_ping_pong_small_sendmsg_and_recvmsg_udpL,
-           fun() -> has_support_unix_domain_socket() end,
+           fun() ->
+		   has_support_unix_domain_socket(),
+		   is_not_windows()
+	   end,
            fun() ->
                    ?TT(?SECS(60)),
                    InitState = #{domain => local,
@@ -40292,14 +42334,11 @@ traffic_ping_pong_small_sendmsg_and_recvmsg_udpL(Config) when is_list(Config) ->
 %% repeated a set number of times (more times the small the message).
 %% This is the 'medium' message test case, for IPv4.
 
-traffic_ping_pong_medium_sendmsg_and_recvmsg_udp4(suite) ->
-    [];
-traffic_ping_pong_medium_sendmsg_and_recvmsg_udp4(doc) ->
-    [];
 traffic_ping_pong_medium_sendmsg_and_recvmsg_udp4(Config) when is_list(Config) ->
     Msg = l2b(?TPP_MEDIUM),
     Num = ?TPP_NUM(Config, ?TPP_MEDIUM_NUM),
     tc_try(traffic_ping_pong_medium_sendmsg_and_recvmsg_udp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    ?TT(?SECS(60)),
                    InitState = #{domain => inet,
@@ -40319,10 +42358,6 @@ traffic_ping_pong_medium_sendmsg_and_recvmsg_udp4(Config) when is_list(Config) -
 %% repeated a set number of times (more times the small the message).
 %% This is the 'medium' message test case, for IPv6.
 
-traffic_ping_pong_medium_sendmsg_and_recvmsg_udp6(suite) ->
-    [];
-traffic_ping_pong_medium_sendmsg_and_recvmsg_udp6(doc) ->
-    [];
 traffic_ping_pong_medium_sendmsg_and_recvmsg_udp6(Config) when is_list(Config) ->
     Msg = l2b(?TPP_MEDIUM),
     Num = ?TPP_NUM(Config, ?TPP_MEDIUM_NUM),
@@ -40348,15 +42383,14 @@ traffic_ping_pong_medium_sendmsg_and_recvmsg_udp6(Config) when is_list(Config) -
 %% repeated a set number of times (more times the small the message).
 %% This is the 'medium' message test case, for Unix Domain (dgram) socket.
 
-traffic_ping_pong_medium_sendmsg_and_recvmsg_udpL(suite) ->
-    [];
-traffic_ping_pong_medium_sendmsg_and_recvmsg_udpL(doc) ->
-    [];
 traffic_ping_pong_medium_sendmsg_and_recvmsg_udpL(Config) when is_list(Config) ->
     Msg = l2b(?TPP_MEDIUM),
     Num = ?TPP_NUM(Config, ?TPP_MEDIUM_NUM),
     tc_try(traffic_ping_pong_medium_sendmsg_and_recvmsg_udpL,
-           fun() -> has_support_unix_domain_socket() end,
+           fun() ->
+		   has_support_unix_domain_socket(),
+		   is_not_windows()
+	   end,
            fun() ->
                    ?TT(?SECS(60)),
                    InitState = #{domain => local,
@@ -40431,7 +42465,7 @@ traffic_ping_pong_sendmsg_and_recvmsg_tcp2(InitState) ->
 traffic_ping_pong_send_and_receive_tcp(#{msg := Msg} = InitState) ->
     Fun = fun(Sock) -> 
                   {ok, RcvSz} = socket:getopt(Sock, socket, rcvbuf),
-		  ?SEV_IPRINT("RcvBuf is ~p (needs atleast ~p)", 
+		  ?SEV_IPRINT("RcvBuf is ~p (needs at least ~p)", 
 			      [RcvSz, 16+size(Msg)]),
                   if (RcvSz < size(Msg)) ->
                           NewRcvSz = 1024+size(Msg),
@@ -40449,7 +42483,7 @@ traffic_ping_pong_send_and_receive_tcp(#{msg := Msg} = InitState) ->
                           ok
                   end,
                   {ok, SndSz} = socket:getopt(Sock, socket, sndbuf),
-		  ?SEV_IPRINT("SndBuf is ~p (needs atleast ~p)", 
+		  ?SEV_IPRINT("SndBuf is ~p (needs at least ~p)", 
 			      [SndSz, 16+size(Msg)]),
                   if (SndSz < size(Msg)) ->
                           NewSndSz = 1024+size(Msg),
@@ -40466,7 +42500,12 @@ traffic_ping_pong_send_and_receive_tcp(#{msg := Msg} = InitState) ->
                      true ->
                           ok
                   end,
-                  ok = socket:setopt(Sock, otp, rcvbuf, {12, 1024})
+                  case os:type() of
+                      {win32, nt} ->
+                          ok = socket:setopt(Sock, otp, rcvbuf, 12*1024);
+                      _ ->
+                          ok = socket:setopt(Sock, otp, rcvbuf, {12, 1024})
+                  end
           end,
     traffic_ping_pong_send_and_receive_tcp2(InitState#{buf_init => Fun}).
 
@@ -40681,15 +42720,9 @@ traffic_ping_pong_send_and_receive_tcp2(InitState) ->
 
          %% *** Init part ***
          #{desc => "create node",
-           cmd  => fun(#{host := Host} = State) ->
-                           case start_node(Host, client) of
-                               {ok, Node} ->
-                                   ?SEV_IPRINT("(remote) client node ~p started", 
-                                               [Node]),
-                                   {ok, State#{node => Node}};
-                               {error, Reason} ->
-                                   {skip, Reason}
-                           end
+           cmd  => fun(State) ->
+                           {Peer, Node} = ?START_NODE("client"),
+                           {ok, State#{peer => Peer, node => Node}}
                    end},
          #{desc => "monitor client node",
            cmd  => fun(#{node := Node} = _State) ->
@@ -40834,9 +42867,9 @@ traffic_ping_pong_send_and_receive_tcp2(InitState) ->
                            {ok, State1}
                    end},
          #{desc => "stop client node",
-           cmd  => fun(#{node := Node} = State) ->
+           cmd  => fun(#{peer := Peer} = State) ->
                            {ok,
-                            try stop_node(Node) of
+                            try peer:stop(Peer) of
                                 ok ->
                                     State#{node_stop => ok};
                                 {error, Reason} ->
@@ -40989,36 +43022,63 @@ traffic_ping_pong_send_and_receive_tcp2(InitState) ->
                            {CSent, CReceived, _, CStart, CStop} = CRes,
                            STime = tdiff(SStart, SStop),
                            CTime = tdiff(CStart, CStop),
-                           %% Note that the sizes we are counting is only 
-                           %% the "data" part of the messages. There is also
-                           %% fixed header for each message, which of cource
-                           %% is small for the large messages, but comparatively
-                           %% big for the small messages!
-                           ?SEV_IPRINT("Results: ~w messages exchanged"
-                                       "~n   Server: ~w msec"
-                                       "~n      ~.2f msec/message (roundtrip)"
-                                       "~n      ~.2f messages/msec (roundtrip)"
-                                       "~n      ~w bytes/msec sent"
-                                       "~n      ~w bytes/msec received"
-                                       "~n   Client: ~w msec"
-                                       "~n      ~.2f msec/message (roundtrip)"
-                                       "~n      ~.2f messages/msec (roundtrip)"
-                                       "~n      ~w bytes/msec sent"
-                                       "~n      ~w bytes/msec received",
+                           ?SEV_IPRINT("process result data:"
+                                       "~n   Num:          ~p"
+                                       "~n   Server Sent:  ~p"
+                                       "~n   Server Recv:  ~p"
+                                       "~n   Server Start: ~p"
+                                       "~n   Server Stop:  ~p"
+                                       "~n   Server Time:  ~p"
+                                       "~n   Client Sent:  ~p"
+                                       "~n   Client Recv:  ~p"
+                                       "~n   Client Start: ~p"
+                                       "~n   Client Stop:  ~p"
+                                       "~n   Client Time:  ~p",
                                        [Num,
+                                        SSent, SReceived, SStart, SStop,
                                         STime,
-                                        STime / Num,
-                                        Num / STime,
-                                        SSent div STime,
-                                        SReceived div STime,
-                                        CTime,
-                                        CTime / Num,
-                                        Num / CTime,
-                                        CSent div CTime,
-                                        CReceived div CTime]),
-                           State1 = maps:remove(server_result, State),
-                           State2 = maps:remove(client_result, State1),
-                           {ok, State2}
+                                        CSent, CReceived, CStart, CStop,
+                                        CTime]),
+                           if
+                               (STime =:= 0) orelse
+                               (CTime =:= 0) ->
+                                   {skip,
+                                    ?F("Invalid exec time(s): ~w , ~w",
+                                       [STime, CTime])};
+                               true ->
+                                   %% Note that the sizes we are counting is 
+                                   %% only the "data" part of the messages.
+                                   %% There is also fixed header for each
+                                   %% message, which of course is small for
+                                   %% the large messages, but comparatively
+                                   %% big for the small messages!
+                                   ?SEV_IPRINT(
+                                      "Results: ~w messages exchanged"
+                                      "~n   Server: ~w msec"
+                                      "~n      ~.2f msec/message (roundtrip)"
+                                      "~n      ~.2f messages/msec (roundtrip)"
+                                      "~n      ~w bytes/msec sent"
+                                      "~n      ~w bytes/msec received"
+                                      "~n   Client: ~w msec"
+                                      "~n      ~.2f msec/message (roundtrip)"
+                                      "~n      ~.2f messages/msec (roundtrip)"
+                                      "~n      ~w bytes/msec sent"
+                                      "~n      ~w bytes/msec received",
+                                      [Num,
+                                       STime,
+                                       STime / Num,
+                                       Num / STime,
+                                       SSent div STime,
+                                       SReceived div STime,
+                                       CTime,
+                                       CTime / Num,
+                                       Num / CTime,
+                                       CSent div CTime,
+                                       CReceived div CTime]),
+                                   State1 = maps:remove(server_result, State),
+                                   State2 = maps:remove(client_result, State1),
+                                   {ok, State2}
+                           end
                    end},
 
          %% Terminations
@@ -41393,14 +43453,6 @@ tpp_tcp_send_msg(Sock, Send, Msg, AccSz) when is_binary(Msg) ->
 %% size_of_iovec([B|IOVec], Sz) ->
 %%     size_of_iovec(IOVec, Sz+size(B)).
 
-mq() ->
-    mq(self()).
-
-mq(Pid) when is_pid(Pid) ->
-    Tag = messages,
-    {Tag, Msgs} = process_info(Pid, Tag),
-    Msgs.
-
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -41674,15 +43726,9 @@ traffic_ping_pong_send_and_receive_udp2(InitState) ->
 
          %% *** Init part ***
          #{desc => "create node",
-           cmd  => fun(#{host := Host} = State) ->
-                           case start_node(Host, client) of
-                               {ok, Node} ->
-                                   ?SEV_IPRINT("(remote) client node ~p started", 
-                                               [Node]),
-                                   {ok, State#{node => Node}};
-                               {error, Reason} ->
-                                   {skip, Reason}
-                           end
+           cmd  => fun(State) ->
+                           {Peer, Node} = ?START_NODE("client"),
+                           {ok, State#{peer => Peer, node => Node}}
                    end},
          #{desc => "monitor client node",
            cmd  => fun(#{node := Node} = _State) ->
@@ -41783,9 +43829,9 @@ traffic_ping_pong_send_and_receive_udp2(InitState) ->
                            {ok, State1}
                    end},
          #{desc => "stop client node",
-           cmd  => fun(#{node := Node} = State) ->
+           cmd  => fun(#{peer := Peer} = State) ->
                            {ok,
-                            try stop_node(Node) of
+                            try peer:stop(Peer) of
                                 ok ->
                                     State#{node_stop => ok};
                                 {error, Reason} ->
@@ -41915,25 +43961,33 @@ traffic_ping_pong_send_and_receive_udp2(InitState) ->
                          num           := Num} = State) ->
                            {CSent, CReceived, CStart, CStop} = CRes,
                            CTime = tdiff(CStart, CStop),
-                           %% Note that the sizes we are counting is only 
-                           %% the "data" part of the messages. There is also
-                           %% fixed header for each message, which of cource
-                           %% is small for the large messages, but comparatively
-                           %% big for the small messages!
-                           ?SEV_IPRINT("Results: ~w messages exchanged"
-                                       "~n   Client: ~w msec"
-                                       "~n      ~.2f msec/message (roundtrip)"
-                                       "~n      ~.2f messages/msec (roundtrip)"
-                                       "~n      ~w bytes/msec sent"
-                                       "~n      ~w bytes/msec received",
-                                       [Num,
-                                        CTime,
-                                        CTime / Num,
-                                        Num / CTime,
-                                        CSent div CTime,
-                                        CReceived div CTime]),
-                           State1 = maps:remove(client_result, State),
-                           {ok, State1}
+                           if
+                               (CTime =:= 0) ->
+                                   {skip,
+                                    ?F("Invalid exec time: ~w ", [CTime])};
+                               true ->
+                                   %% Note that the sizes we are counting is
+                                   %% only the "data" part of the messages.
+                                   %% There is also fixed header for each
+                                   %% message, which of course is small for
+                                   %% the large messages, but comparatively
+                                   %% big for the small messages!
+                                   ?SEV_IPRINT(
+                                      "Results: ~w messages exchanged"
+                                      "~n   Client: ~w msec"
+                                      "~n      ~.2f msec/message (roundtrip)"
+                                      "~n      ~.2f messages/msec (roundtrip)"
+                                      "~n      ~w bytes/msec sent"
+                                      "~n      ~w bytes/msec received",
+                                      [Num,
+                                       CTime,
+                                       CTime / Num,
+                                       Num / CTime,
+                                       CSent div CTime,
+                                       CReceived div CTime]),
+                                   State1 = maps:remove(client_result, State),
+                                   {ok, State1}
+                           end
                    end},
 
          %% Terminations
@@ -42194,7 +44248,7 @@ tpp_udp_recv(Sock, Recv, Tag) ->
             ERROR
     catch
 	C:E:S ->
-	    {error, {catched, C, E, S}}
+	    {error, {caught, C, E, S}}
     end.
 
 tpp_udp_send_req(Sock, Send, Data, Dest) ->
@@ -42306,18 +44360,14 @@ tpp_udp_sock_close(Sock, Path) ->
 %% Domain:       inet
 %%
 
-ttest_sgenf_cgenf_small_tcp4(suite) ->
-    [];
-ttest_sgenf_cgenf_small_tcp4(doc) ->
-    [];
 ttest_sgenf_cgenf_small_tcp4(Config) when is_list(Config) ->
-    Runtime = which_ttest_runtime(Config),
+    Runtime        = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_cgenf_small_tcp4,
               Runtime,
               inet,
               gen, false,
               gen, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -42330,10 +44380,6 @@ ttest_sgenf_cgenf_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgenf_cgenf_small_tcp6(suite) ->
-    [];
-ttest_sgenf_cgenf_small_tcp6(doc) ->
-    [];
 ttest_sgenf_cgenf_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_cgenf_small_tcp6,
@@ -42341,7 +44387,7 @@ ttest_sgenf_cgenf_small_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, false,
               gen, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -42354,10 +44400,6 @@ ttest_sgenf_cgenf_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgenf_cgenf_medium_tcp4(suite) ->
-    [];
-ttest_sgenf_cgenf_medium_tcp4(doc) ->
-    [];
 ttest_sgenf_cgenf_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_cgenf_medium_tcp4,
@@ -42365,7 +44407,7 @@ ttest_sgenf_cgenf_medium_tcp4(Config) when is_list(Config) ->
               inet,
               gen, false,
               gen, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -42378,10 +44420,6 @@ ttest_sgenf_cgenf_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgenf_cgenf_medium_tcp6(suite) ->
-    [];
-ttest_sgenf_cgenf_medium_tcp6(doc) ->
-    [];
 ttest_sgenf_cgenf_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_cgenf_medium_tcp6,
@@ -42389,7 +44427,7 @@ ttest_sgenf_cgenf_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, false,
               gen, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -42402,10 +44440,6 @@ ttest_sgenf_cgenf_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgenf_cgenf_large_tcp4(suite) ->
-    [];
-ttest_sgenf_cgenf_large_tcp4(doc) ->
-    [];
 ttest_sgenf_cgenf_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_cgenf_large_tcp4,
@@ -42413,7 +44447,7 @@ ttest_sgenf_cgenf_large_tcp4(Config) when is_list(Config) ->
               inet,
               gen, false,
               gen, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -42426,10 +44460,6 @@ ttest_sgenf_cgenf_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgenf_cgenf_large_tcp6(suite) ->
-    [];
-ttest_sgenf_cgenf_large_tcp6(doc) ->
-    [];
 ttest_sgenf_cgenf_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_cgenf_large_tcp6,
@@ -42437,7 +44467,7 @@ ttest_sgenf_cgenf_large_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, false,
               gen, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -42450,10 +44480,6 @@ ttest_sgenf_cgenf_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgenf_cgeno_small_tcp4(suite) ->
-    [];
-ttest_sgenf_cgeno_small_tcp4(doc) ->
-    [];
 ttest_sgenf_cgeno_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_cgeno_small_tcp4,
@@ -42461,7 +44487,7 @@ ttest_sgenf_cgeno_small_tcp4(Config) when is_list(Config) ->
               inet,
               gen, false,
               gen, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -42474,10 +44500,6 @@ ttest_sgenf_cgeno_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgenf_cgeno_small_tcp6(suite) ->
-    [];
-ttest_sgenf_cgeno_small_tcp6(doc) ->
-    [];
 ttest_sgenf_cgeno_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_cgeno_small_tcp6,
@@ -42485,7 +44507,7 @@ ttest_sgenf_cgeno_small_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, false,
               gen, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -42498,10 +44520,6 @@ ttest_sgenf_cgeno_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgenf_cgeno_medium_tcp4(suite) ->
-    [];
-ttest_sgenf_cgeno_medium_tcp4(doc) ->
-    [];
 ttest_sgenf_cgeno_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_cgeno_medium_tcp4,
@@ -42509,7 +44527,7 @@ ttest_sgenf_cgeno_medium_tcp4(Config) when is_list(Config) ->
               inet,
               gen, false,
               gen, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -42522,10 +44540,6 @@ ttest_sgenf_cgeno_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgenf_cgeno_medium_tcp6(suite) ->
-    [];
-ttest_sgenf_cgeno_medium_tcp6(doc) ->
-    [];
 ttest_sgenf_cgeno_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_cgeno_medium_tcp6,
@@ -42533,7 +44547,7 @@ ttest_sgenf_cgeno_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, false,
               gen, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -42546,10 +44560,6 @@ ttest_sgenf_cgeno_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgenf_cgeno_large_tcp4(suite) ->
-    [];
-ttest_sgenf_cgeno_large_tcp4(doc) ->
-    [];
 ttest_sgenf_cgeno_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_cgeno_large_tcp4,
@@ -42557,7 +44567,7 @@ ttest_sgenf_cgeno_large_tcp4(Config) when is_list(Config) ->
               inet,
               gen, false,
               gen, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -42570,10 +44580,6 @@ ttest_sgenf_cgeno_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgenf_cgeno_large_tcp6(suite) ->
-    [];
-ttest_sgenf_cgeno_large_tcp6(doc) ->
-    [];
 ttest_sgenf_cgeno_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_cgeno_large_tcp6,
@@ -42581,7 +44587,7 @@ ttest_sgenf_cgeno_large_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, false,
               gen, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -42594,10 +44600,6 @@ ttest_sgenf_cgeno_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgenf_cgent_small_tcp4(suite) ->
-    [];
-ttest_sgenf_cgent_small_tcp4(doc) ->
-    [];
 ttest_sgenf_cgent_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_cgent_small_tcp4,
@@ -42605,7 +44607,7 @@ ttest_sgenf_cgent_small_tcp4(Config) when is_list(Config) ->
               inet,
               gen, false,
               gen, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -42618,10 +44620,6 @@ ttest_sgenf_cgent_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgenf_cgent_small_tcp6(suite) ->
-    [];
-ttest_sgenf_cgent_small_tcp6(doc) ->
-    [];
 ttest_sgenf_cgent_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_cgeno_small_tcp6,
@@ -42629,7 +44627,7 @@ ttest_sgenf_cgent_small_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, false,
               gen, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -42642,10 +44640,6 @@ ttest_sgenf_cgent_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgenf_cgent_medium_tcp4(suite) ->
-    [];
-ttest_sgenf_cgent_medium_tcp4(doc) ->
-    [];
 ttest_sgenf_cgent_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_cgent_medium_tcp4,
@@ -42653,7 +44647,7 @@ ttest_sgenf_cgent_medium_tcp4(Config) when is_list(Config) ->
               inet,
               gen, false,
               gen, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -42666,10 +44660,6 @@ ttest_sgenf_cgent_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgenf_cgent_medium_tcp6(suite) ->
-    [];
-ttest_sgenf_cgent_medium_tcp6(doc) ->
-    [];
 ttest_sgenf_cgent_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_cgent_medium_tcp6,
@@ -42677,7 +44667,7 @@ ttest_sgenf_cgent_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, false,
               gen, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -42690,10 +44680,6 @@ ttest_sgenf_cgent_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgenf_cgent_large_tcp4(suite) ->
-    [];
-ttest_sgenf_cgent_large_tcp4(doc) ->
-    [];
 ttest_sgenf_cgent_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_cgent_large_tcp4,
@@ -42701,7 +44687,7 @@ ttest_sgenf_cgent_large_tcp4(Config) when is_list(Config) ->
               inet,
               gen, false,
               gen, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -42714,10 +44700,6 @@ ttest_sgenf_cgent_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgenf_cgent_large_tcp6(suite) ->
-    [];
-ttest_sgenf_cgent_large_tcp6(doc) ->
-    [];
 ttest_sgenf_cgent_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_cgent_large_tcp6,
@@ -42725,7 +44707,7 @@ ttest_sgenf_cgent_large_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, false,
               gen, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -42738,10 +44720,6 @@ ttest_sgenf_cgent_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgenf_csockf_small_tcp4(suite) ->
-    [];
-ttest_sgenf_csockf_small_tcp4(doc) ->
-    [];
 ttest_sgenf_csockf_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_csockf_small_tcp4,
@@ -42749,7 +44727,7 @@ ttest_sgenf_csockf_small_tcp4(Config) when is_list(Config) ->
               inet,
               gen, false,
               sock, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -42762,10 +44740,6 @@ ttest_sgenf_csockf_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgenf_csockf_small_tcp6(suite) ->
-    [];
-ttest_sgenf_csockf_small_tcp6(doc) ->
-    [];
 ttest_sgenf_csockf_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_csockf_small_tcp6,
@@ -42773,7 +44747,7 @@ ttest_sgenf_csockf_small_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, false,
               sock, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -42786,10 +44760,6 @@ ttest_sgenf_csockf_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgenf_csockf_medium_tcp4(suite) ->
-    [];
-ttest_sgenf_csockf_medium_tcp4(doc) ->
-    [];
 ttest_sgenf_csockf_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_csockf_medium_tcp4,
@@ -42797,7 +44767,7 @@ ttest_sgenf_csockf_medium_tcp4(Config) when is_list(Config) ->
               inet,
               gen, false,
               sock, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -42810,10 +44780,6 @@ ttest_sgenf_csockf_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgenf_csockf_medium_tcp6(suite) ->
-    [];
-ttest_sgenf_csockf_medium_tcp6(doc) ->
-    [];
 ttest_sgenf_csockf_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_csockf_medium_tcp6,
@@ -42821,7 +44787,7 @@ ttest_sgenf_csockf_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, false,
               sock, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -42834,10 +44800,6 @@ ttest_sgenf_csockf_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgenf_csockf_large_tcp4(suite) ->
-    [];
-ttest_sgenf_csockf_large_tcp4(doc) ->
-    [];
 ttest_sgenf_csockf_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_csockf_large_tcp4,
@@ -42845,7 +44807,7 @@ ttest_sgenf_csockf_large_tcp4(Config) when is_list(Config) ->
               inet,
               gen, false,
               sock, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -42858,10 +44820,6 @@ ttest_sgenf_csockf_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgenf_csockf_large_tcp6(suite) ->
-    [];
-ttest_sgenf_csockf_large_tcp6(doc) ->
-    [];
 ttest_sgenf_csockf_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_csockf_large_tcp6,
@@ -42869,7 +44827,127 @@ ttest_sgenf_csockf_large_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, false,
               sock, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% This test case uses the time test (ttest) utility to implement a 
+%% ping-pong like test case.
+%% Server:       Transport = gen_tcp(socket), Active = false
+%% Client:       Transport = socket(tcp), Active = false
+%% Message Size: small (=1)
+%% Domain:       inet
+%%
+
+ttest_sgsf_csockf_small_tcp4(Config) when is_list(Config) ->
+    Runtime = which_ttest_runtime(Config),
+    ttest_tcp(?FUNCTION_NAME,
+              Runtime,
+              inet,
+              gs, false,
+              sock, false,
+              1, ttest_small_max_outstanding(Config)).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% This test case uses the time test (ttest) utility to implement a 
+%% ping-pong like test case.
+%% Server:       Transport = gen_tcp(socket), Active = false
+%% Client:       Transport = socket(tcp), Active = false
+%% Message Size: small (=1)
+%% Domain:       inet6
+%% 
+
+ttest_sgsf_csockf_small_tcp6(Config) when is_list(Config) ->
+    Runtime = which_ttest_runtime(Config),
+    ttest_tcp(?FUNCTION_NAME,
+              Runtime,
+              inet6,
+              gs, false,
+              sock, false,
+              1, ttest_small_max_outstanding(Config)).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% This test case uses the time test (ttest) utility to implement a 
+%% ping-pong like test case.
+%% Server:       Transport = gen_tcp(socket), Active = false
+%% Client:       Transport = socket(tcp), Active = false
+%% Message Size: medium (=2)
+%% Domain:       inet
+%%
+
+ttest_sgsf_csockf_medium_tcp4(Config) when is_list(Config) ->
+    Runtime = which_ttest_runtime(Config),
+    ttest_tcp(?FUNCTION_NAME,
+              Runtime,
+              inet,
+              gs, false,
+              sock, false,
+              2, ttest_medium_max_outstanding(Config)).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% This test case uses the time test (ttest) utility to implement a 
+%% ping-pong like test case.
+%% Server:       Transport = gen_tcp(socket), Active = false
+%% Client:       Transport = socket(tcp), Active = false
+%% Message Size: medium (=2)
+%% Domain:       inet6
+%% 
+
+ttest_sgsf_csockf_medium_tcp6(Config) when is_list(Config) ->
+    Runtime = which_ttest_runtime(Config),
+    ttest_tcp(?FUNCTION_NAME,
+              Runtime,
+              inet6,
+              gs, false,
+              sock, false,
+              2, ttest_medium_max_outstanding(Config)).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% This test case uses the time test (ttest) utility to implement a 
+%% ping-pong like test case.
+%% Server:       Transport = gen_tcp(socket), Active = false
+%% Client:       Transport = socket(tcp), Active = false
+%% Message Size: large (=3)
+%% Domain:       inet
+%%
+
+ttest_sgsf_csockf_large_tcp4(Config) when is_list(Config) ->
+    Runtime = which_ttest_runtime(Config),
+    ttest_tcp(?FUNCTION_NAME,
+              Runtime,
+              inet,
+              gs, false,
+              sock, false,
+              3, ttest_large_max_outstanding(Config)).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% This test case uses the time test (ttest) utility to implement a 
+%% ping-pong like test case.
+%% Server:       Transport = gen_tcp(socket), Active = false
+%% Client:       Transport = socket(tcp), Active = false
+%% Message Size: large (=3)
+%% Domain:       inet6
+%% 
+
+ttest_sgsf_csockf_large_tcp6(Config) when is_list(Config) ->
+    Runtime = which_ttest_runtime(Config),
+    ttest_tcp(?FUNCTION_NAME,
+              Runtime,
+              inet6,
+              gs, false,
+              sock, false,
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -42882,10 +44960,6 @@ ttest_sgenf_csockf_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgenf_csocko_small_tcp4(suite) ->
-    [];
-ttest_sgenf_csocko_small_tcp4(doc) ->
-    [];
 ttest_sgenf_csocko_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_csocko_small_tcp4,
@@ -42893,7 +44967,7 @@ ttest_sgenf_csocko_small_tcp4(Config) when is_list(Config) ->
               inet,
               gen, false,
               sock, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -42906,10 +44980,6 @@ ttest_sgenf_csocko_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgenf_csocko_small_tcp6(suite) ->
-    [];
-ttest_sgenf_csocko_small_tcp6(doc) ->
-    [];
 ttest_sgenf_csocko_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_csocko_small_tcp6,
@@ -42917,7 +44987,7 @@ ttest_sgenf_csocko_small_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, false,
               sock, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -42930,10 +45000,6 @@ ttest_sgenf_csocko_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgenf_csocko_medium_tcp4(suite) ->
-    [];
-ttest_sgenf_csocko_medium_tcp4(doc) ->
-    [];
 ttest_sgenf_csocko_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_csocko_medium_tcp4,
@@ -42941,7 +45007,7 @@ ttest_sgenf_csocko_medium_tcp4(Config) when is_list(Config) ->
               inet,
               gen, false,
               sock, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -42954,10 +45020,6 @@ ttest_sgenf_csocko_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgenf_csocko_medium_tcp6(suite) ->
-    [];
-ttest_sgenf_csocko_medium_tcp6(doc) ->
-    [];
 ttest_sgenf_csocko_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_csocko_medium_tcp6,
@@ -42965,7 +45027,7 @@ ttest_sgenf_csocko_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, false,
               sock, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -42978,10 +45040,6 @@ ttest_sgenf_csocko_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgenf_csocko_large_tcp4(suite) ->
-    [];
-ttest_sgenf_csocko_large_tcp4(doc) ->
-    [];
 ttest_sgenf_csocko_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_csocko_large_tcp4,
@@ -42989,7 +45047,7 @@ ttest_sgenf_csocko_large_tcp4(Config) when is_list(Config) ->
               inet,
               gen, false,
               sock, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -43002,10 +45060,6 @@ ttest_sgenf_csocko_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgenf_csocko_large_tcp6(suite) ->
-    [];
-ttest_sgenf_csocko_large_tcp6(doc) ->
-    [];
 ttest_sgenf_csocko_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_csocko_large_tcp6,
@@ -43013,7 +45067,7 @@ ttest_sgenf_csocko_large_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, false,
               sock, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -43026,10 +45080,6 @@ ttest_sgenf_csocko_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgenf_csockt_small_tcp4(suite) ->
-    [];
-ttest_sgenf_csockt_small_tcp4(doc) ->
-    [];
 ttest_sgenf_csockt_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_csockt_small_tcp4,
@@ -43037,7 +45087,7 @@ ttest_sgenf_csockt_small_tcp4(Config) when is_list(Config) ->
               inet,
               gen, false,
               sock, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -43050,10 +45100,6 @@ ttest_sgenf_csockt_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgenf_csockt_small_tcp6(suite) ->
-    [];
-ttest_sgenf_csockt_small_tcp6(doc) ->
-    [];
 ttest_sgenf_csockt_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_csocko_small_tcp6,
@@ -43061,7 +45107,7 @@ ttest_sgenf_csockt_small_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, false,
               sock, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -43074,10 +45120,6 @@ ttest_sgenf_csockt_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgenf_csockt_medium_tcp4(suite) ->
-    [];
-ttest_sgenf_csockt_medium_tcp4(doc) ->
-    [];
 ttest_sgenf_csockt_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_csockt_medium_tcp4,
@@ -43085,7 +45127,7 @@ ttest_sgenf_csockt_medium_tcp4(Config) when is_list(Config) ->
               inet,
               gen, false,
               sock, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -43098,10 +45140,6 @@ ttest_sgenf_csockt_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgenf_csockt_medium_tcp6(suite) ->
-    [];
-ttest_sgenf_csockt_medium_tcp6(doc) ->
-    [];
 ttest_sgenf_csockt_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_csockt_medium_tcp6,
@@ -43109,7 +45147,7 @@ ttest_sgenf_csockt_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, false,
               sock, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -43122,10 +45160,6 @@ ttest_sgenf_csockt_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgenf_csockt_large_tcp4(suite) ->
-    [];
-ttest_sgenf_csockt_large_tcp4(doc) ->
-    [];
 ttest_sgenf_csockt_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_csockt_large_tcp4,
@@ -43133,7 +45167,7 @@ ttest_sgenf_csockt_large_tcp4(Config) when is_list(Config) ->
               inet,
               gen, false,
               sock, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -43146,10 +45180,6 @@ ttest_sgenf_csockt_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgenf_csockt_large_tcp6(suite) ->
-    [];
-ttest_sgenf_csockt_large_tcp6(doc) ->
-    [];
 ttest_sgenf_csockt_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgenf_csockt_large_tcp6,
@@ -43157,7 +45187,7 @@ ttest_sgenf_csockt_large_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, false,
               sock, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -43170,10 +45200,6 @@ ttest_sgenf_csockt_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgeno_cgenf_small_tcp4(suite) ->
-    [];
-ttest_sgeno_cgenf_small_tcp4(doc) ->
-    [];
 ttest_sgeno_cgenf_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_cgenf_small_tcp4,
@@ -43181,7 +45207,7 @@ ttest_sgeno_cgenf_small_tcp4(Config) when is_list(Config) ->
               inet,
               gen, once,
               gen, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -43194,10 +45220,6 @@ ttest_sgeno_cgenf_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgeno_cgenf_small_tcp6(suite) ->
-    [];
-ttest_sgeno_cgenf_small_tcp6(doc) ->
-    [];
 ttest_sgeno_cgenf_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_cgenf_small_tcp6,
@@ -43205,7 +45227,7 @@ ttest_sgeno_cgenf_small_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, once,
               gen, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -43218,10 +45240,6 @@ ttest_sgeno_cgenf_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgeno_cgenf_medium_tcp4(suite) ->
-    [];
-ttest_sgeno_cgenf_medium_tcp4(doc) ->
-    [];
 ttest_sgeno_cgenf_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_cgenf_medium_tcp4,
@@ -43229,7 +45247,7 @@ ttest_sgeno_cgenf_medium_tcp4(Config) when is_list(Config) ->
               inet,
               gen, once,
               gen, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -43242,10 +45260,6 @@ ttest_sgeno_cgenf_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgeno_cgenf_medium_tcp6(suite) ->
-    [];
-ttest_sgeno_cgenf_medium_tcp6(doc) ->
-    [];
 ttest_sgeno_cgenf_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_cgenf_medium_tcp6,
@@ -43253,7 +45267,7 @@ ttest_sgeno_cgenf_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, once,
               gen, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -43266,10 +45280,6 @@ ttest_sgeno_cgenf_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgeno_cgenf_large_tcp4(suite) ->
-    [];
-ttest_sgeno_cgenf_large_tcp4(doc) ->
-    [];
 ttest_sgeno_cgenf_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_cgenf_large_tcp4,
@@ -43277,7 +45287,7 @@ ttest_sgeno_cgenf_large_tcp4(Config) when is_list(Config) ->
               inet,
               gen, once,
               gen, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -43290,10 +45300,6 @@ ttest_sgeno_cgenf_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgeno_cgenf_large_tcp6(suite) ->
-    [];
-ttest_sgeno_cgenf_large_tcp6(doc) ->
-    [];
 ttest_sgeno_cgenf_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_cgenf_large_tcp6,
@@ -43301,7 +45307,7 @@ ttest_sgeno_cgenf_large_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, once,
               gen, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -43314,10 +45320,6 @@ ttest_sgeno_cgenf_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgeno_cgeno_small_tcp4(suite) ->
-    [];
-ttest_sgeno_cgeno_small_tcp4(doc) ->
-    [];
 ttest_sgeno_cgeno_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_cgeno_small_tcp4,
@@ -43325,7 +45327,7 @@ ttest_sgeno_cgeno_small_tcp4(Config) when is_list(Config) ->
               inet,
               gen, once,
               gen, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -43338,10 +45340,6 @@ ttest_sgeno_cgeno_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgeno_cgeno_small_tcp6(suite) ->
-    [];
-ttest_sgeno_cgeno_small_tcp6(doc) ->
-    [];
 ttest_sgeno_cgeno_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_cgeno_small_tcp6,
@@ -43349,7 +45347,7 @@ ttest_sgeno_cgeno_small_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, once,
               gen, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -43362,10 +45360,6 @@ ttest_sgeno_cgeno_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgeno_cgeno_medium_tcp4(suite) ->
-    [];
-ttest_sgeno_cgeno_medium_tcp4(doc) ->
-    [];
 ttest_sgeno_cgeno_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_cgeno_medium_tcp4,
@@ -43373,7 +45367,7 @@ ttest_sgeno_cgeno_medium_tcp4(Config) when is_list(Config) ->
               inet,
               gen, once,
               gen, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -43386,10 +45380,6 @@ ttest_sgeno_cgeno_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgeno_cgeno_medium_tcp6(suite) ->
-    [];
-ttest_sgeno_cgeno_medium_tcp6(doc) ->
-    [];
 ttest_sgeno_cgeno_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_cgeno_medium_tcp6,
@@ -43397,7 +45387,7 @@ ttest_sgeno_cgeno_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, once,
               gen, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -43410,10 +45400,6 @@ ttest_sgeno_cgeno_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgeno_cgeno_large_tcp4(suite) ->
-    [];
-ttest_sgeno_cgeno_large_tcp4(doc) ->
-    [];
 ttest_sgeno_cgeno_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_cgeno_large_tcp4,
@@ -43421,7 +45407,7 @@ ttest_sgeno_cgeno_large_tcp4(Config) when is_list(Config) ->
               inet,
               gen, once,
               gen, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -43434,10 +45420,6 @@ ttest_sgeno_cgeno_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgeno_cgeno_large_tcp6(suite) ->
-    [];
-ttest_sgeno_cgeno_large_tcp6(doc) ->
-    [];
 ttest_sgeno_cgeno_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_cgeno_large_tcp6,
@@ -43445,7 +45427,7 @@ ttest_sgeno_cgeno_large_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, once,
               gen, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -43458,10 +45440,6 @@ ttest_sgeno_cgeno_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgeno_cgent_small_tcp4(suite) ->
-    [];
-ttest_sgeno_cgent_small_tcp4(doc) ->
-    [];
 ttest_sgeno_cgent_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_cgent_small_tcp4,
@@ -43469,7 +45447,7 @@ ttest_sgeno_cgent_small_tcp4(Config) when is_list(Config) ->
               inet,
               gen, once,
               gen, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -43482,10 +45460,6 @@ ttest_sgeno_cgent_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgeno_cgent_small_tcp6(suite) ->
-    [];
-ttest_sgeno_cgent_small_tcp6(doc) ->
-    [];
 ttest_sgeno_cgent_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_cgeno_small_tcp6,
@@ -43493,7 +45467,7 @@ ttest_sgeno_cgent_small_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, once,
               gen, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -43506,10 +45480,6 @@ ttest_sgeno_cgent_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgeno_cgent_medium_tcp4(suite) ->
-    [];
-ttest_sgeno_cgent_medium_tcp4(doc) ->
-    [];
 ttest_sgeno_cgent_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_cgent_medium_tcp4,
@@ -43517,7 +45487,7 @@ ttest_sgeno_cgent_medium_tcp4(Config) when is_list(Config) ->
               inet,
               gen, once,
               gen, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -43530,10 +45500,6 @@ ttest_sgeno_cgent_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgeno_cgent_medium_tcp6(suite) ->
-    [];
-ttest_sgeno_cgent_medium_tcp6(doc) ->
-    [];
 ttest_sgeno_cgent_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_cgent_medium_tcp6,
@@ -43541,7 +45507,7 @@ ttest_sgeno_cgent_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, once,
               gen, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -43554,10 +45520,6 @@ ttest_sgeno_cgent_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgeno_cgent_large_tcp4(suite) ->
-    [];
-ttest_sgeno_cgent_large_tcp4(doc) ->
-    [];
 ttest_sgeno_cgent_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_cgent_large_tcp4,
@@ -43565,7 +45527,7 @@ ttest_sgeno_cgent_large_tcp4(Config) when is_list(Config) ->
               inet,
               gen, once,
               gen, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -43578,10 +45540,6 @@ ttest_sgeno_cgent_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgeno_cgent_large_tcp6(suite) ->
-    [];
-ttest_sgeno_cgent_large_tcp6(doc) ->
-    [];
 ttest_sgeno_cgent_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_cgent_large_tcp6,
@@ -43589,7 +45547,7 @@ ttest_sgeno_cgent_large_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, once,
               gen, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -43602,10 +45560,6 @@ ttest_sgeno_cgent_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgeno_csockf_small_tcp4(suite) ->
-    [];
-ttest_sgeno_csockf_small_tcp4(doc) ->
-    [];
 ttest_sgeno_csockf_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_csockf_small_tcp4,
@@ -43613,7 +45567,7 @@ ttest_sgeno_csockf_small_tcp4(Config) when is_list(Config) ->
               inet,
               gen, once,
               sock, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -43626,10 +45580,6 @@ ttest_sgeno_csockf_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgeno_csockf_small_tcp6(suite) ->
-    [];
-ttest_sgeno_csockf_small_tcp6(doc) ->
-    [];
 ttest_sgeno_csockf_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_csockf_small_tcp6,
@@ -43637,7 +45587,7 @@ ttest_sgeno_csockf_small_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, once,
               sock, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -43650,10 +45600,6 @@ ttest_sgeno_csockf_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgeno_csockf_medium_tcp4(suite) ->
-    [];
-ttest_sgeno_csockf_medium_tcp4(doc) ->
-    [];
 ttest_sgeno_csockf_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_csockf_medium_tcp4,
@@ -43661,7 +45607,7 @@ ttest_sgeno_csockf_medium_tcp4(Config) when is_list(Config) ->
               inet,
               gen, once,
               sock, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -43674,10 +45620,6 @@ ttest_sgeno_csockf_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgeno_csockf_medium_tcp6(suite) ->
-    [];
-ttest_sgeno_csockf_medium_tcp6(doc) ->
-    [];
 ttest_sgeno_csockf_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_csockf_medium_tcp6,
@@ -43685,7 +45627,7 @@ ttest_sgeno_csockf_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, once,
               sock, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -43698,10 +45640,6 @@ ttest_sgeno_csockf_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgeno_csockf_large_tcp4(suite) ->
-    [];
-ttest_sgeno_csockf_large_tcp4(doc) ->
-    [];
 ttest_sgeno_csockf_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_csockf_large_tcp4,
@@ -43709,7 +45647,7 @@ ttest_sgeno_csockf_large_tcp4(Config) when is_list(Config) ->
               inet,
               gen, once,
               sock, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -43722,10 +45660,6 @@ ttest_sgeno_csockf_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgeno_csockf_large_tcp6(suite) ->
-    [];
-ttest_sgeno_csockf_large_tcp6(doc) ->
-    [];
 ttest_sgeno_csockf_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_csockf_large_tcp6,
@@ -43733,7 +45667,7 @@ ttest_sgeno_csockf_large_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, once,
               sock, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -43746,10 +45680,6 @@ ttest_sgeno_csockf_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgeno_csocko_small_tcp4(suite) ->
-    [];
-ttest_sgeno_csocko_small_tcp4(doc) ->
-    [];
 ttest_sgeno_csocko_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_csocko_small_tcp4,
@@ -43757,7 +45687,7 @@ ttest_sgeno_csocko_small_tcp4(Config) when is_list(Config) ->
               inet,
               gen, once,
               sock, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -43770,10 +45700,6 @@ ttest_sgeno_csocko_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgeno_csocko_small_tcp6(suite) ->
-    [];
-ttest_sgeno_csocko_small_tcp6(doc) ->
-    [];
 ttest_sgeno_csocko_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_csocko_small_tcp6,
@@ -43781,7 +45707,7 @@ ttest_sgeno_csocko_small_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, once,
               sock, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -43794,10 +45720,6 @@ ttest_sgeno_csocko_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgeno_csocko_medium_tcp4(suite) ->
-    [];
-ttest_sgeno_csocko_medium_tcp4(doc) ->
-    [];
 ttest_sgeno_csocko_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_csocko_medium_tcp4,
@@ -43805,7 +45727,7 @@ ttest_sgeno_csocko_medium_tcp4(Config) when is_list(Config) ->
               inet,
               gen, once,
               sock, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -43818,10 +45740,6 @@ ttest_sgeno_csocko_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgeno_csocko_medium_tcp6(suite) ->
-    [];
-ttest_sgeno_csocko_medium_tcp6(doc) ->
-    [];
 ttest_sgeno_csocko_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_csocko_medium_tcp6,
@@ -43829,7 +45747,7 @@ ttest_sgeno_csocko_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, once,
               sock, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -43842,10 +45760,6 @@ ttest_sgeno_csocko_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgeno_csocko_large_tcp4(suite) ->
-    [];
-ttest_sgeno_csocko_large_tcp4(doc) ->
-    [];
 ttest_sgeno_csocko_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_csocko_large_tcp4,
@@ -43853,7 +45767,7 @@ ttest_sgeno_csocko_large_tcp4(Config) when is_list(Config) ->
               inet,
               gen, once,
               sock, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -43866,10 +45780,6 @@ ttest_sgeno_csocko_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgeno_csocko_large_tcp6(suite) ->
-    [];
-ttest_sgeno_csocko_large_tcp6(doc) ->
-    [];
 ttest_sgeno_csocko_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_csocko_large_tcp6,
@@ -43877,7 +45787,7 @@ ttest_sgeno_csocko_large_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, once,
               sock, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -43890,10 +45800,6 @@ ttest_sgeno_csocko_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgeno_csockt_small_tcp4(suite) ->
-    [];
-ttest_sgeno_csockt_small_tcp4(doc) ->
-    [];
 ttest_sgeno_csockt_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_csockt_small_tcp4,
@@ -43901,7 +45807,7 @@ ttest_sgeno_csockt_small_tcp4(Config) when is_list(Config) ->
               inet,
               gen, once,
               sock, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -43914,10 +45820,6 @@ ttest_sgeno_csockt_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgeno_csockt_small_tcp6(suite) ->
-    [];
-ttest_sgeno_csockt_small_tcp6(doc) ->
-    [];
 ttest_sgeno_csockt_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_csocko_small_tcp6,
@@ -43925,7 +45827,7 @@ ttest_sgeno_csockt_small_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, once,
               sock, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -43938,10 +45840,6 @@ ttest_sgeno_csockt_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgeno_csockt_medium_tcp4(suite) ->
-    [];
-ttest_sgeno_csockt_medium_tcp4(doc) ->
-    [];
 ttest_sgeno_csockt_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_csockt_medium_tcp4,
@@ -43949,7 +45847,7 @@ ttest_sgeno_csockt_medium_tcp4(Config) when is_list(Config) ->
               inet,
               gen, once,
               sock, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -43962,10 +45860,6 @@ ttest_sgeno_csockt_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgeno_csockt_medium_tcp6(suite) ->
-    [];
-ttest_sgeno_csockt_medium_tcp6(doc) ->
-    [];
 ttest_sgeno_csockt_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_csockt_medium_tcp6,
@@ -43973,7 +45867,7 @@ ttest_sgeno_csockt_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, once,
               sock, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -43986,10 +45880,6 @@ ttest_sgeno_csockt_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgeno_csockt_large_tcp4(suite) ->
-    [];
-ttest_sgeno_csockt_large_tcp4(doc) ->
-    [];
 ttest_sgeno_csockt_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_csockt_large_tcp4,
@@ -43997,7 +45887,7 @@ ttest_sgeno_csockt_large_tcp4(Config) when is_list(Config) ->
               inet,
               gen, once,
               sock, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -44010,10 +45900,6 @@ ttest_sgeno_csockt_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgeno_csockt_large_tcp6(suite) ->
-    [];
-ttest_sgeno_csockt_large_tcp6(doc) ->
-    [];
 ttest_sgeno_csockt_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgeno_csockt_large_tcp6,
@@ -44021,7 +45907,7 @@ ttest_sgeno_csockt_large_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, once,
               sock, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -44034,10 +45920,6 @@ ttest_sgeno_csockt_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgent_cgenf_small_tcp4(suite) ->
-    [];
-ttest_sgent_cgenf_small_tcp4(doc) ->
-    [];
 ttest_sgent_cgenf_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_cgenf_small_tcp4,
@@ -44045,7 +45927,7 @@ ttest_sgent_cgenf_small_tcp4(Config) when is_list(Config) ->
               inet,
               gen, true,
               gen, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -44058,10 +45940,6 @@ ttest_sgent_cgenf_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgent_cgenf_small_tcp6(suite) ->
-    [];
-ttest_sgent_cgenf_small_tcp6(doc) ->
-    [];
 ttest_sgent_cgenf_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_cgenf_small_tcp6,
@@ -44069,7 +45947,7 @@ ttest_sgent_cgenf_small_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, true,
               gen, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -44082,10 +45960,6 @@ ttest_sgent_cgenf_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgent_cgenf_medium_tcp4(suite) ->
-    [];
-ttest_sgent_cgenf_medium_tcp4(doc) ->
-    [];
 ttest_sgent_cgenf_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_cgenf_medium_tcp4,
@@ -44093,7 +45967,7 @@ ttest_sgent_cgenf_medium_tcp4(Config) when is_list(Config) ->
               inet,
               gen, true,
               gen, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -44106,10 +45980,6 @@ ttest_sgent_cgenf_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgent_cgenf_medium_tcp6(suite) ->
-    [];
-ttest_sgent_cgenf_medium_tcp6(doc) ->
-    [];
 ttest_sgent_cgenf_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_cgenf_medium_tcp6,
@@ -44117,7 +45987,7 @@ ttest_sgent_cgenf_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, true,
               gen, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -44130,10 +46000,6 @@ ttest_sgent_cgenf_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgent_cgenf_large_tcp4(suite) ->
-    [];
-ttest_sgent_cgenf_large_tcp4(doc) ->
-    [];
 ttest_sgent_cgenf_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_cgenf_large_tcp4,
@@ -44141,7 +46007,7 @@ ttest_sgent_cgenf_large_tcp4(Config) when is_list(Config) ->
               inet,
               gen, true,
               gen, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -44154,10 +46020,6 @@ ttest_sgent_cgenf_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgent_cgenf_large_tcp6(suite) ->
-    [];
-ttest_sgent_cgenf_large_tcp6(doc) ->
-    [];
 ttest_sgent_cgenf_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_cgenf_large_tcp6,
@@ -44165,7 +46027,7 @@ ttest_sgent_cgenf_large_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, true,
               gen, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -44178,10 +46040,6 @@ ttest_sgent_cgenf_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgent_cgeno_small_tcp4(suite) ->
-    [];
-ttest_sgent_cgeno_small_tcp4(doc) ->
-    [];
 ttest_sgent_cgeno_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_cgeno_small_tcp4,
@@ -44189,7 +46047,7 @@ ttest_sgent_cgeno_small_tcp4(Config) when is_list(Config) ->
               inet,
               gen, true,
               gen, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -44202,10 +46060,6 @@ ttest_sgent_cgeno_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgent_cgeno_small_tcp6(suite) ->
-    [];
-ttest_sgent_cgeno_small_tcp6(doc) ->
-    [];
 ttest_sgent_cgeno_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_cgeno_small_tcp6,
@@ -44213,7 +46067,7 @@ ttest_sgent_cgeno_small_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, true,
               gen, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -44226,10 +46080,6 @@ ttest_sgent_cgeno_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgent_cgeno_medium_tcp4(suite) ->
-    [];
-ttest_sgent_cgeno_medium_tcp4(doc) ->
-    [];
 ttest_sgent_cgeno_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_cgeno_medium_tcp4,
@@ -44237,7 +46087,7 @@ ttest_sgent_cgeno_medium_tcp4(Config) when is_list(Config) ->
               inet,
               gen, true,
               gen, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -44250,10 +46100,6 @@ ttest_sgent_cgeno_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgent_cgeno_medium_tcp6(suite) ->
-    [];
-ttest_sgent_cgeno_medium_tcp6(doc) ->
-    [];
 ttest_sgent_cgeno_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_cgeno_medium_tcp6,
@@ -44261,7 +46107,7 @@ ttest_sgent_cgeno_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, true,
               gen, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -44274,10 +46120,6 @@ ttest_sgent_cgeno_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgent_cgeno_large_tcp4(suite) ->
-    [];
-ttest_sgent_cgeno_large_tcp4(doc) ->
-    [];
 ttest_sgent_cgeno_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_cgeno_large_tcp4,
@@ -44285,7 +46127,7 @@ ttest_sgent_cgeno_large_tcp4(Config) when is_list(Config) ->
               inet,
               gen, true,
               gen, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -44298,10 +46140,6 @@ ttest_sgent_cgeno_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgent_cgeno_large_tcp6(suite) ->
-    [];
-ttest_sgent_cgeno_large_tcp6(doc) ->
-    [];
 ttest_sgent_cgeno_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_cgeno_large_tcp6,
@@ -44309,7 +46147,7 @@ ttest_sgent_cgeno_large_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, true,
               gen, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -44322,10 +46160,6 @@ ttest_sgent_cgeno_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgent_cgent_small_tcp4(suite) ->
-    [];
-ttest_sgent_cgent_small_tcp4(doc) ->
-    [];
 ttest_sgent_cgent_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_cgent_small_tcp4,
@@ -44333,7 +46167,7 @@ ttest_sgent_cgent_small_tcp4(Config) when is_list(Config) ->
               inet,
               gen, true,
               gen, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -44346,10 +46180,6 @@ ttest_sgent_cgent_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgent_cgent_small_tcp6(suite) ->
-    [];
-ttest_sgent_cgent_small_tcp6(doc) ->
-    [];
 ttest_sgent_cgent_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_cgeno_small_tcp6,
@@ -44357,7 +46187,7 @@ ttest_sgent_cgent_small_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, true,
               gen, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -44370,10 +46200,9 @@ ttest_sgent_cgent_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgent_cgent_medium_tcp4(suite) ->
-    [];
-ttest_sgent_cgent_medium_tcp4(doc) ->
-    ["Server(gen,true), Client(gen,true), Domain=inet, msg=medium"];
+ttest_sgent_cgent_medium_tcp4() ->
+    [{doc, "Server(gen,true), Client(gen,true), Domain=inet, msg=medium"}].
+
 ttest_sgent_cgent_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_cgent_medium_tcp4,
@@ -44381,7 +46210,7 @@ ttest_sgent_cgent_medium_tcp4(Config) when is_list(Config) ->
               inet,
               gen, true,
               gen, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -44393,11 +46222,9 @@ ttest_sgent_cgent_medium_tcp4(Config) when is_list(Config) ->
 %% Message Size: medium (=2)
 %% Domain:       inet6
 %% 
+ttest_sgent_cgent_medium_tcp6() ->
+    [{doc, "Server(gen,true), Client(gen,true), Domain=inet6, msg=medium"}].
 
-ttest_sgent_cgent_medium_tcp6(suite) ->
-    [];
-ttest_sgent_cgent_medium_tcp6(doc) ->
-    ["Server(gen,true), Client(gen,true), Domain=inet6, msg=medium"];
 ttest_sgent_cgent_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_cgent_medium_tcp6,
@@ -44405,7 +46232,7 @@ ttest_sgent_cgent_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, true,
               gen, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -44418,10 +46245,9 @@ ttest_sgent_cgent_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgent_cgent_large_tcp4(suite) ->
-    [];
-ttest_sgent_cgent_large_tcp4(doc) ->
-    ["Server(gen,true), Client(gen,true), Domain=inet, msg=large"];
+ttest_sgent_cgent_large_tcp4() ->
+    [{doc, "Server(gen,true), Client(gen,true), Domain=inet, msg=large"}].
+
 ttest_sgent_cgent_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_cgent_large_tcp4,
@@ -44429,7 +46255,7 @@ ttest_sgent_cgent_large_tcp4(Config) when is_list(Config) ->
               inet,
               gen, true,
               gen, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -44442,10 +46268,9 @@ ttest_sgent_cgent_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgent_cgent_large_tcp6(suite) ->
-    [];
-ttest_sgent_cgent_large_tcp6(doc) ->
-    ["Server(gen,true), Client(gen,true), Domain=inet6, msg=large"];
+ttest_sgent_cgent_large_tcp6() ->
+    [{doc, "Server(gen,true), Client(gen,true), Domain=inet6, msg=large"}].
+
 ttest_sgent_cgent_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_cgent_large_tcp6,
@@ -44453,7 +46278,7 @@ ttest_sgent_cgent_large_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, true,
               gen, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -44466,10 +46291,7 @@ ttest_sgent_cgent_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgent_csockf_small_tcp4(suite) ->
-    [];
-ttest_sgent_csockf_small_tcp4(doc) ->
-    [];
+
 ttest_sgent_csockf_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_csockf_small_tcp4,
@@ -44477,7 +46299,7 @@ ttest_sgent_csockf_small_tcp4(Config) when is_list(Config) ->
               inet,
               gen, true,
               sock, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -44490,10 +46312,6 @@ ttest_sgent_csockf_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgent_csockf_small_tcp6(suite) ->
-    [];
-ttest_sgent_csockf_small_tcp6(doc) ->
-    [];
 ttest_sgent_csockf_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_csockf_small_tcp6,
@@ -44501,7 +46319,7 @@ ttest_sgent_csockf_small_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, true,
               sock, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -44514,10 +46332,6 @@ ttest_sgent_csockf_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgent_csockf_medium_tcp4(suite) ->
-    [];
-ttest_sgent_csockf_medium_tcp4(doc) ->
-    [];
 ttest_sgent_csockf_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_csockf_medium_tcp4,
@@ -44525,7 +46339,7 @@ ttest_sgent_csockf_medium_tcp4(Config) when is_list(Config) ->
               inet,
               gen, true,
               sock, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -44538,10 +46352,6 @@ ttest_sgent_csockf_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgent_csockf_medium_tcp6(suite) ->
-    [];
-ttest_sgent_csockf_medium_tcp6(doc) ->
-    [];
 ttest_sgent_csockf_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_csockf_medium_tcp6,
@@ -44549,7 +46359,7 @@ ttest_sgent_csockf_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, true,
               sock, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -44562,10 +46372,6 @@ ttest_sgent_csockf_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgent_csockf_large_tcp4(suite) ->
-    [];
-ttest_sgent_csockf_large_tcp4(doc) ->
-    [];
 ttest_sgent_csockf_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_csockf_large_tcp4,
@@ -44573,7 +46379,7 @@ ttest_sgent_csockf_large_tcp4(Config) when is_list(Config) ->
               inet,
               gen, true,
               sock, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -44586,10 +46392,6 @@ ttest_sgent_csockf_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgent_csockf_large_tcp6(suite) ->
-    [];
-ttest_sgent_csockf_large_tcp6(doc) ->
-    [];
 ttest_sgent_csockf_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_csockf_large_tcp6,
@@ -44597,7 +46399,7 @@ ttest_sgent_csockf_large_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, true,
               sock, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -44610,10 +46412,6 @@ ttest_sgent_csockf_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgent_csocko_small_tcp4(suite) ->
-    [];
-ttest_sgent_csocko_small_tcp4(doc) ->
-    [];
 ttest_sgent_csocko_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_csocko_small_tcp4,
@@ -44621,7 +46419,7 @@ ttest_sgent_csocko_small_tcp4(Config) when is_list(Config) ->
               inet,
               gen, true,
               sock, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -44634,10 +46432,6 @@ ttest_sgent_csocko_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgent_csocko_small_tcp6(suite) ->
-    [];
-ttest_sgent_csocko_small_tcp6(doc) ->
-    [];
 ttest_sgent_csocko_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_csocko_small_tcp6,
@@ -44645,7 +46439,7 @@ ttest_sgent_csocko_small_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, true,
               sock, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -44658,10 +46452,6 @@ ttest_sgent_csocko_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgent_csocko_medium_tcp4(suite) ->
-    [];
-ttest_sgent_csocko_medium_tcp4(doc) ->
-    [];
 ttest_sgent_csocko_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_csocko_medium_tcp4,
@@ -44669,7 +46459,7 @@ ttest_sgent_csocko_medium_tcp4(Config) when is_list(Config) ->
               inet,
               gen, true,
               sock, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -44682,10 +46472,6 @@ ttest_sgent_csocko_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgent_csocko_medium_tcp6(suite) ->
-    [];
-ttest_sgent_csocko_medium_tcp6(doc) ->
-    [];
 ttest_sgent_csocko_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_csocko_medium_tcp6,
@@ -44693,7 +46479,7 @@ ttest_sgent_csocko_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, true,
               sock, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -44706,10 +46492,6 @@ ttest_sgent_csocko_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgent_csocko_large_tcp4(suite) ->
-    [];
-ttest_sgent_csocko_large_tcp4(doc) ->
-    [];
 ttest_sgent_csocko_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_csocko_large_tcp4,
@@ -44717,7 +46499,7 @@ ttest_sgent_csocko_large_tcp4(Config) when is_list(Config) ->
               inet,
               gen, true,
               sock, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -44730,10 +46512,6 @@ ttest_sgent_csocko_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgent_csocko_large_tcp6(suite) ->
-    [];
-ttest_sgent_csocko_large_tcp6(doc) ->
-    [];
 ttest_sgent_csocko_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_csocko_large_tcp6,
@@ -44741,7 +46519,7 @@ ttest_sgent_csocko_large_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, true,
               sock, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -44754,10 +46532,6 @@ ttest_sgent_csocko_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgent_csockt_small_tcp4(suite) ->
-    [];
-ttest_sgent_csockt_small_tcp4(doc) ->
-    [];
 ttest_sgent_csockt_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_csockt_small_tcp4,
@@ -44765,7 +46539,7 @@ ttest_sgent_csockt_small_tcp4(Config) when is_list(Config) ->
               inet,
               gen, true,
               sock, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -44778,10 +46552,6 @@ ttest_sgent_csockt_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgent_csockt_small_tcp6(suite) ->
-    [];
-ttest_sgent_csockt_small_tcp6(doc) ->
-    [];
 ttest_sgent_csockt_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_csocko_small_tcp6,
@@ -44789,7 +46559,7 @@ ttest_sgent_csockt_small_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, true,
               sock, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -44802,10 +46572,6 @@ ttest_sgent_csockt_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgent_csockt_medium_tcp4(suite) ->
-    [];
-ttest_sgent_csockt_medium_tcp4(doc) ->
-    [];
 ttest_sgent_csockt_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_csockt_medium_tcp4,
@@ -44813,7 +46579,7 @@ ttest_sgent_csockt_medium_tcp4(Config) when is_list(Config) ->
               inet,
               gen, true,
               sock, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -44826,10 +46592,6 @@ ttest_sgent_csockt_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgent_csockt_medium_tcp6(suite) ->
-    [];
-ttest_sgent_csockt_medium_tcp6(doc) ->
-    [];
 ttest_sgent_csockt_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_csockt_medium_tcp6,
@@ -44837,7 +46599,7 @@ ttest_sgent_csockt_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, true,
               sock, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -44850,10 +46612,6 @@ ttest_sgent_csockt_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_sgent_csockt_large_tcp4(suite) ->
-    [];
-ttest_sgent_csockt_large_tcp4(doc) ->
-    [];
 ttest_sgent_csockt_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_csockt_large_tcp4,
@@ -44861,7 +46619,7 @@ ttest_sgent_csockt_large_tcp4(Config) when is_list(Config) ->
               inet,
               gen, true,
               sock, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -44874,10 +46632,6 @@ ttest_sgent_csockt_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_sgent_csockt_large_tcp6(suite) ->
-    [];
-ttest_sgent_csockt_large_tcp6(doc) ->
-    [];
 ttest_sgent_csockt_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_sgent_csockt_large_tcp6,
@@ -44885,7 +46639,7 @@ ttest_sgent_csockt_large_tcp6(Config) when is_list(Config) ->
               inet6,
               gen, true,
               sock, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -44898,10 +46652,6 @@ ttest_sgent_csockt_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockf_cgenf_small_tcp4(suite) ->
-    [];
-ttest_ssockf_cgenf_small_tcp4(doc) ->
-    [];
 ttest_ssockf_cgenf_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_cgenf_small_tcp4,
@@ -44909,7 +46659,7 @@ ttest_ssockf_cgenf_small_tcp4(Config) when is_list(Config) ->
               inet,
               sock, false,
               gen, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -44922,10 +46672,6 @@ ttest_ssockf_cgenf_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockf_cgenf_small_tcp6(suite) ->
-    [];
-ttest_ssockf_cgenf_small_tcp6(doc) ->
-    [];
 ttest_ssockf_cgenf_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_cgenf_small_tcp6,
@@ -44933,7 +46679,7 @@ ttest_ssockf_cgenf_small_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, false,
               gen, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -44946,10 +46692,6 @@ ttest_ssockf_cgenf_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockf_cgenf_medium_tcp4(suite) ->
-    [];
-ttest_ssockf_cgenf_medium_tcp4(doc) ->
-    [];
 ttest_ssockf_cgenf_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_cgenf_medium_tcp4,
@@ -44957,7 +46699,7 @@ ttest_ssockf_cgenf_medium_tcp4(Config) when is_list(Config) ->
               inet,
               sock, false,
               gen, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -44970,10 +46712,6 @@ ttest_ssockf_cgenf_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockf_cgenf_medium_tcp6(suite) ->
-    [];
-ttest_ssockf_cgenf_medium_tcp6(doc) ->
-    [];
 ttest_ssockf_cgenf_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_cgenf_medium_tcp6,
@@ -44981,7 +46719,7 @@ ttest_ssockf_cgenf_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, false,
               gen, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -44994,10 +46732,6 @@ ttest_ssockf_cgenf_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockf_cgenf_large_tcp4(suite) ->
-    [];
-ttest_ssockf_cgenf_large_tcp4(doc) ->
-    [];
 ttest_ssockf_cgenf_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_cgenf_large_tcp4,
@@ -45005,7 +46739,7 @@ ttest_ssockf_cgenf_large_tcp4(Config) when is_list(Config) ->
               inet,
               sock, false,
               gen, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -45018,10 +46752,6 @@ ttest_ssockf_cgenf_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockf_cgenf_large_tcp6(suite) ->
-    [];
-ttest_ssockf_cgenf_large_tcp6(doc) ->
-    [];
 ttest_ssockf_cgenf_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_cgenf_large_tcp6,
@@ -45029,7 +46759,7 @@ ttest_ssockf_cgenf_large_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, false,
               gen, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -45042,10 +46772,6 @@ ttest_ssockf_cgenf_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockf_cgeno_small_tcp4(suite) ->
-    [];
-ttest_ssockf_cgeno_small_tcp4(doc) ->
-    [];
 ttest_ssockf_cgeno_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_cgeno_small_tcp4,
@@ -45053,7 +46779,7 @@ ttest_ssockf_cgeno_small_tcp4(Config) when is_list(Config) ->
               inet,
               sock, false,
               gen, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -45066,10 +46792,6 @@ ttest_ssockf_cgeno_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockf_cgeno_small_tcp6(suite) ->
-    [];
-ttest_ssockf_cgeno_small_tcp6(doc) ->
-    [];
 ttest_ssockf_cgeno_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_cgeno_small_tcp6,
@@ -45077,7 +46799,7 @@ ttest_ssockf_cgeno_small_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, false,
               gen, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -45090,10 +46812,6 @@ ttest_ssockf_cgeno_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockf_cgeno_medium_tcp4(suite) ->
-    [];
-ttest_ssockf_cgeno_medium_tcp4(doc) ->
-    [];
 ttest_ssockf_cgeno_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_cgeno_medium_tcp4,
@@ -45101,7 +46819,7 @@ ttest_ssockf_cgeno_medium_tcp4(Config) when is_list(Config) ->
               inet,
               sock, false,
               gen, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -45114,10 +46832,6 @@ ttest_ssockf_cgeno_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockf_cgeno_medium_tcp6(suite) ->
-    [];
-ttest_ssockf_cgeno_medium_tcp6(doc) ->
-    [];
 ttest_ssockf_cgeno_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_cgeno_medium_tcp6,
@@ -45125,7 +46839,7 @@ ttest_ssockf_cgeno_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, false,
               gen, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -45138,10 +46852,6 @@ ttest_ssockf_cgeno_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockf_cgeno_large_tcp4(suite) ->
-    [];
-ttest_ssockf_cgeno_large_tcp4(doc) ->
-    [];
 ttest_ssockf_cgeno_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_cgeno_large_tcp4,
@@ -45149,7 +46859,7 @@ ttest_ssockf_cgeno_large_tcp4(Config) when is_list(Config) ->
               inet,
               sock, false,
               gen, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -45162,10 +46872,6 @@ ttest_ssockf_cgeno_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockf_cgeno_large_tcp6(suite) ->
-    [];
-ttest_ssockf_cgeno_large_tcp6(doc) ->
-    [];
 ttest_ssockf_cgeno_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_cgeno_large_tcp6,
@@ -45173,7 +46879,7 @@ ttest_ssockf_cgeno_large_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, false,
               gen, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -45186,10 +46892,6 @@ ttest_ssockf_cgeno_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockf_cgent_small_tcp4(suite) ->
-    [];
-ttest_ssockf_cgent_small_tcp4(doc) ->
-    [];
 ttest_ssockf_cgent_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_cgent_small_tcp4,
@@ -45197,7 +46899,7 @@ ttest_ssockf_cgent_small_tcp4(Config) when is_list(Config) ->
               inet,
               sock, false,
               gen, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -45210,10 +46912,6 @@ ttest_ssockf_cgent_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockf_cgent_small_tcp6(suite) ->
-    [];
-ttest_ssockf_cgent_small_tcp6(doc) ->
-    [];
 ttest_ssockf_cgent_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_cgeno_small_tcp6,
@@ -45221,7 +46919,7 @@ ttest_ssockf_cgent_small_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, false,
               gen, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -45234,10 +46932,6 @@ ttest_ssockf_cgent_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockf_cgent_medium_tcp4(suite) ->
-    [];
-ttest_ssockf_cgent_medium_tcp4(doc) ->
-    [];
 ttest_ssockf_cgent_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_cgent_medium_tcp4,
@@ -45245,7 +46939,7 @@ ttest_ssockf_cgent_medium_tcp4(Config) when is_list(Config) ->
               inet,
               sock, false,
               gen, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -45258,10 +46952,6 @@ ttest_ssockf_cgent_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockf_cgent_medium_tcp6(suite) ->
-    [];
-ttest_ssockf_cgent_medium_tcp6(doc) ->
-    [];
 ttest_ssockf_cgent_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_cgent_medium_tcp6,
@@ -45269,7 +46959,7 @@ ttest_ssockf_cgent_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, false,
               gen, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -45282,10 +46972,6 @@ ttest_ssockf_cgent_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockf_cgent_large_tcp4(suite) ->
-    [];
-ttest_ssockf_cgent_large_tcp4(doc) ->
-    [];
 ttest_ssockf_cgent_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_cgent_large_tcp4,
@@ -45293,7 +46979,7 @@ ttest_ssockf_cgent_large_tcp4(Config) when is_list(Config) ->
               inet,
               sock, false,
               gen, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -45306,10 +46992,6 @@ ttest_ssockf_cgent_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockf_cgent_large_tcp6(suite) ->
-    [];
-ttest_ssockf_cgent_large_tcp6(doc) ->
-    [];
 ttest_ssockf_cgent_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_cgent_large_tcp6,
@@ -45317,7 +46999,127 @@ ttest_ssockf_cgent_large_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, false,
               gen, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% This test case uses the time test (ttest) utility to implement a 
+%% ping-pong like test case.
+%% Server:       Transport = socket(tcp), Active = false
+%% Client:       Transport = gen_tcp(socket), Active = false
+%% Message Size: small (=1)
+%% Domain:       inet
+%%
+
+ttest_ssockf_cgsf_small_tcp4(Config) when is_list(Config) ->
+    Runtime = which_ttest_runtime(Config),
+    ttest_tcp(?FUNCTION_NAME,
+              Runtime,
+              inet,
+              sock, false,
+              gs, false,
+              1, ttest_small_max_outstanding(Config)).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% This test case uses the time test (ttest) utility to implement a 
+%% ping-pong like test case.
+%% Server:       Transport = socket(tcp), Active = false
+%% Client:       Transport = gen_tcp(socket), Active = false
+%% Message Size: small (=1)
+%% Domain:       inet6
+%% 
+
+ttest_ssockf_cgsf_small_tcp6(Config) when is_list(Config) ->
+    Runtime = which_ttest_runtime(Config),
+    ttest_tcp(?FUNCTION_NAME,
+              Runtime,
+              inet6,
+              sock, false,
+              gs, false,
+              1, ttest_small_max_outstanding(Config)).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% This test case uses the time test (ttest) utility to implement a 
+%% ping-pong like test case.
+%% Server:       Transport = socket(tcp), Active = false
+%% Client:       Transport = gen_tcp(socket), Active = false
+%% Message Size: medium (=2)
+%% Domain:       inet
+%%
+
+ttest_ssockf_cgsf_medium_tcp4(Config) when is_list(Config) ->
+    Runtime = which_ttest_runtime(Config),
+    ttest_tcp(?FUNCTION_NAME,
+              Runtime,
+              inet,
+              sock, false,
+              gs, false,
+              2, ttest_medium_max_outstanding(Config)).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% This test case uses the time test (ttest) utility to implement a 
+%% ping-pong like test case.
+%% Server:       Transport = socket(tcp), Active = false
+%% Client:       Transport = gen_tcp(socket), Active = false
+%% Message Size: medium (=2)
+%% Domain:       inet6
+%% 
+
+ttest_ssockf_cgsf_medium_tcp6(Config) when is_list(Config) ->
+    Runtime = which_ttest_runtime(Config),
+    ttest_tcp(?FUNCTION_NAME,
+              Runtime,
+              inet6,
+              sock, false,
+              gs, false,
+              2, ttest_medium_max_outstanding(Config)).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% This test case uses the time test (ttest) utility to implement a 
+%% ping-pong like test case.
+%% Server:       Transport = socket(tcp), Active = false
+%% Client:       Transport = gen_tcp(socket), Active = false
+%% Message Size: large (=3)
+%% Domain:       inet
+%%
+
+ttest_ssockf_cgsf_large_tcp4(Config) when is_list(Config) ->
+    Runtime = which_ttest_runtime(Config),
+    ttest_tcp(?FUNCTION_NAME,
+              Runtime,
+              inet,
+              sock, false,
+              gs, false,
+              3, ttest_large_max_outstanding(Config)).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% This test case uses the time test (ttest) utility to implement a 
+%% ping-pong like test case.
+%% Server:       Transport = socket(tcp), Active = false
+%% Client:       Transport = gen_tcp(socket), Active = false
+%% Message Size: large (=3)
+%% Domain:       inet6
+%% 
+
+ttest_ssockf_cgsf_large_tcp6(Config) when is_list(Config) ->
+    Runtime = which_ttest_runtime(Config),
+    ttest_tcp(?FUNCTION_NAME,
+              Runtime,
+              inet6,
+              sock, false,
+              gs, false,
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -45330,10 +47132,6 @@ ttest_ssockf_cgent_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockf_csockf_small_tcp4(suite) ->
-    [];
-ttest_ssockf_csockf_small_tcp4(doc) ->
-    [];
 ttest_ssockf_csockf_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csockf_small_tcp4,
@@ -45341,7 +47139,7 @@ ttest_ssockf_csockf_small_tcp4(Config) when is_list(Config) ->
               inet,
               sock, false,
               sock, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -45354,10 +47152,6 @@ ttest_ssockf_csockf_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockf_csockf_small_tcp6(suite) ->
-    [];
-ttest_ssockf_csockf_small_tcp6(doc) ->
-    [];
 ttest_ssockf_csockf_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csockf_small_tcp6,
@@ -45365,7 +47159,7 @@ ttest_ssockf_csockf_small_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, false,
               sock, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -45378,10 +47172,6 @@ ttest_ssockf_csockf_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssockf_csockf_small_tcpL(suite) ->
-    [];
-ttest_ssockf_csockf_small_tcpL(doc) ->
-    [];
 ttest_ssockf_csockf_small_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csockf_small_tcpL,
@@ -45389,7 +47179,7 @@ ttest_ssockf_csockf_small_tcpL(Config) when is_list(Config) ->
               local,
               sock, false,
               sock, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -45402,10 +47192,6 @@ ttest_ssockf_csockf_small_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockf_csockf_medium_tcp4(suite) ->
-    [];
-ttest_ssockf_csockf_medium_tcp4(doc) ->
-    [];
 ttest_ssockf_csockf_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csockf_medium_tcp4,
@@ -45413,7 +47199,7 @@ ttest_ssockf_csockf_medium_tcp4(Config) when is_list(Config) ->
               inet,
               sock, false,
               sock, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -45426,10 +47212,6 @@ ttest_ssockf_csockf_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockf_csockf_medium_tcp6(suite) ->
-    [];
-ttest_ssockf_csockf_medium_tcp6(doc) ->
-    [];
 ttest_ssockf_csockf_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csockf_medium_tcp6,
@@ -45437,7 +47219,7 @@ ttest_ssockf_csockf_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, false,
               sock, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -45450,10 +47232,6 @@ ttest_ssockf_csockf_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssockf_csockf_medium_tcpL(suite) ->
-    [];
-ttest_ssockf_csockf_medium_tcpL(doc) ->
-    [];
 ttest_ssockf_csockf_medium_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csockf_medium_tcpL,
@@ -45461,7 +47239,7 @@ ttest_ssockf_csockf_medium_tcpL(Config) when is_list(Config) ->
               local,
               sock, false,
               sock, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -45474,10 +47252,6 @@ ttest_ssockf_csockf_medium_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockf_csockf_large_tcp4(suite) ->
-    [];
-ttest_ssockf_csockf_large_tcp4(doc) ->
-    [];
 ttest_ssockf_csockf_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csockf_large_tcp4,
@@ -45485,7 +47259,7 @@ ttest_ssockf_csockf_large_tcp4(Config) when is_list(Config) ->
               inet,
               sock, false,
               sock, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -45498,10 +47272,6 @@ ttest_ssockf_csockf_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockf_csockf_large_tcp6(suite) ->
-    [];
-ttest_ssockf_csockf_large_tcp6(doc) ->
-    [];
 ttest_ssockf_csockf_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csockf_large_tcp6,
@@ -45509,7 +47279,7 @@ ttest_ssockf_csockf_large_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, false,
               sock, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -45522,10 +47292,6 @@ ttest_ssockf_csockf_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssockf_csockf_large_tcpL(suite) ->
-    [];
-ttest_ssockf_csockf_large_tcpL(doc) ->
-    [];
 ttest_ssockf_csockf_large_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csockf_large_tcpL,
@@ -45533,7 +47299,7 @@ ttest_ssockf_csockf_large_tcpL(Config) when is_list(Config) ->
               local,
               sock, false,
               sock, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -45546,10 +47312,6 @@ ttest_ssockf_csockf_large_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockf_csocko_small_tcp4(suite) ->
-    [];
-ttest_ssockf_csocko_small_tcp4(doc) ->
-    [];
 ttest_ssockf_csocko_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csocko_small_tcp4,
@@ -45557,7 +47319,7 @@ ttest_ssockf_csocko_small_tcp4(Config) when is_list(Config) ->
               inet,
               sock, false,
               sock, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -45570,10 +47332,6 @@ ttest_ssockf_csocko_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockf_csocko_small_tcp6(suite) ->
-    [];
-ttest_ssockf_csocko_small_tcp6(doc) ->
-    [];
 ttest_ssockf_csocko_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csocko_small_tcp6,
@@ -45581,7 +47339,7 @@ ttest_ssockf_csocko_small_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, false,
               sock, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -45594,10 +47352,6 @@ ttest_ssockf_csocko_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssockf_csocko_small_tcpL(suite) ->
-    [];
-ttest_ssockf_csocko_small_tcpL(doc) ->
-    [];
 ttest_ssockf_csocko_small_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csocko_small_tcpL,
@@ -45605,7 +47359,7 @@ ttest_ssockf_csocko_small_tcpL(Config) when is_list(Config) ->
               local,
               sock, false,
               sock, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -45618,10 +47372,6 @@ ttest_ssockf_csocko_small_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockf_csocko_medium_tcp4(suite) ->
-    [];
-ttest_ssockf_csocko_medium_tcp4(doc) ->
-    [];
 ttest_ssockf_csocko_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csocko_medium_tcp4,
@@ -45629,7 +47379,7 @@ ttest_ssockf_csocko_medium_tcp4(Config) when is_list(Config) ->
               inet,
               sock, false,
               sock, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -45642,10 +47392,6 @@ ttest_ssockf_csocko_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockf_csocko_medium_tcp6(suite) ->
-    [];
-ttest_ssockf_csocko_medium_tcp6(doc) ->
-    [];
 ttest_ssockf_csocko_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csocko_medium_tcp6,
@@ -45653,7 +47399,7 @@ ttest_ssockf_csocko_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, false,
               sock, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -45666,10 +47412,6 @@ ttest_ssockf_csocko_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssockf_csocko_medium_tcpL(suite) ->
-    [];
-ttest_ssockf_csocko_medium_tcpL(doc) ->
-    [];
 ttest_ssockf_csocko_medium_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csocko_medium_tcpL,
@@ -45677,7 +47419,7 @@ ttest_ssockf_csocko_medium_tcpL(Config) when is_list(Config) ->
               local,
               sock, false,
               sock, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -45690,10 +47432,6 @@ ttest_ssockf_csocko_medium_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockf_csocko_large_tcp4(suite) ->
-    [];
-ttest_ssockf_csocko_large_tcp4(doc) ->
-    [];
 ttest_ssockf_csocko_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csocko_large_tcp4,
@@ -45701,7 +47439,7 @@ ttest_ssockf_csocko_large_tcp4(Config) when is_list(Config) ->
               inet,
               sock, false,
               sock, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -45714,10 +47452,6 @@ ttest_ssockf_csocko_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockf_csocko_large_tcp6(suite) ->
-    [];
-ttest_ssockf_csocko_large_tcp6(doc) ->
-    [];
 ttest_ssockf_csocko_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csocko_large_tcp6,
@@ -45725,7 +47459,7 @@ ttest_ssockf_csocko_large_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, false,
               sock, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -45738,10 +47472,6 @@ ttest_ssockf_csocko_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssockf_csocko_large_tcpL(suite) ->
-    [];
-ttest_ssockf_csocko_large_tcpL(doc) ->
-    [];
 ttest_ssockf_csocko_large_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csocko_large_tcpL,
@@ -45749,7 +47479,7 @@ ttest_ssockf_csocko_large_tcpL(Config) when is_list(Config) ->
               local,
               sock, false,
               sock, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -45762,10 +47492,6 @@ ttest_ssockf_csocko_large_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockf_csockt_small_tcp4(suite) ->
-    [];
-ttest_ssockf_csockt_small_tcp4(doc) ->
-    [];
 ttest_ssockf_csockt_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csockt_small_tcp4,
@@ -45773,7 +47499,7 @@ ttest_ssockf_csockt_small_tcp4(Config) when is_list(Config) ->
               inet,
               sock, false,
               sock, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -45786,10 +47512,6 @@ ttest_ssockf_csockt_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockf_csockt_small_tcp6(suite) ->
-    [];
-ttest_ssockf_csockt_small_tcp6(doc) ->
-    [];
 ttest_ssockf_csockt_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csocko_small_tcp6,
@@ -45797,7 +47519,7 @@ ttest_ssockf_csockt_small_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, false,
               sock, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -45810,10 +47532,6 @@ ttest_ssockf_csockt_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssockf_csockt_small_tcpL(suite) ->
-    [];
-ttest_ssockf_csockt_small_tcpL(doc) ->
-    [];
 ttest_ssockf_csockt_small_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csocko_small_tcpL,
@@ -45821,7 +47539,7 @@ ttest_ssockf_csockt_small_tcpL(Config) when is_list(Config) ->
               local,
               sock, false,
               sock, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -45834,10 +47552,6 @@ ttest_ssockf_csockt_small_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockf_csockt_medium_tcp4(suite) ->
-    [];
-ttest_ssockf_csockt_medium_tcp4(doc) ->
-    [];
 ttest_ssockf_csockt_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csockt_medium_tcp4,
@@ -45845,7 +47559,7 @@ ttest_ssockf_csockt_medium_tcp4(Config) when is_list(Config) ->
               inet,
               sock, false,
               sock, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -45858,10 +47572,6 @@ ttest_ssockf_csockt_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockf_csockt_medium_tcp6(suite) ->
-    [];
-ttest_ssockf_csockt_medium_tcp6(doc) ->
-    [];
 ttest_ssockf_csockt_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csockt_medium_tcp6,
@@ -45869,7 +47579,7 @@ ttest_ssockf_csockt_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, false,
               sock, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -45882,10 +47592,6 @@ ttest_ssockf_csockt_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssockf_csockt_medium_tcpL(suite) ->
-    [];
-ttest_ssockf_csockt_medium_tcpL(doc) ->
-    [];
 ttest_ssockf_csockt_medium_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csockt_medium_tcpL,
@@ -45893,7 +47599,7 @@ ttest_ssockf_csockt_medium_tcpL(Config) when is_list(Config) ->
               local,
               sock, false,
               sock, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -45906,10 +47612,6 @@ ttest_ssockf_csockt_medium_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockf_csockt_large_tcp4(suite) ->
-    [];
-ttest_ssockf_csockt_large_tcp4(doc) ->
-    [];
 ttest_ssockf_csockt_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csockt_large_tcp4,
@@ -45917,7 +47619,7 @@ ttest_ssockf_csockt_large_tcp4(Config) when is_list(Config) ->
               inet,
               sock, false,
               sock, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -45930,10 +47632,6 @@ ttest_ssockf_csockt_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockf_csockt_large_tcp6(suite) ->
-    [];
-ttest_ssockf_csockt_large_tcp6(doc) ->
-    [];
 ttest_ssockf_csockt_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csockt_large_tcp6,
@@ -45941,7 +47639,7 @@ ttest_ssockf_csockt_large_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, false,
               sock, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -45954,10 +47652,6 @@ ttest_ssockf_csockt_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssockf_csockt_large_tcpL(suite) ->
-    [];
-ttest_ssockf_csockt_large_tcpL(doc) ->
-    [];
 ttest_ssockf_csockt_large_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockf_csockt_large_tcpL,
@@ -45965,7 +47659,7 @@ ttest_ssockf_csockt_large_tcpL(Config) when is_list(Config) ->
               local,
               sock, false,
               sock, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -45978,10 +47672,6 @@ ttest_ssockf_csockt_large_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssocko_cgenf_small_tcp4(suite) ->
-    [];
-ttest_ssocko_cgenf_small_tcp4(doc) ->
-    [];
 ttest_ssocko_cgenf_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_cgenf_small_tcp4,
@@ -45989,7 +47679,7 @@ ttest_ssocko_cgenf_small_tcp4(Config) when is_list(Config) ->
               inet,
               sock, once,
               gen, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -46002,10 +47692,6 @@ ttest_ssocko_cgenf_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssocko_cgenf_small_tcp6(suite) ->
-    [];
-ttest_ssocko_cgenf_small_tcp6(doc) ->
-    [];
 ttest_ssocko_cgenf_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_cgenf_small_tcp6,
@@ -46013,7 +47699,7 @@ ttest_ssocko_cgenf_small_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, once,
               gen, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -46026,10 +47712,6 @@ ttest_ssocko_cgenf_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssocko_cgenf_medium_tcp4(suite) ->
-    [];
-ttest_ssocko_cgenf_medium_tcp4(doc) ->
-    [];
 ttest_ssocko_cgenf_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_cgenf_medium_tcp4,
@@ -46037,7 +47719,7 @@ ttest_ssocko_cgenf_medium_tcp4(Config) when is_list(Config) ->
               inet,
               sock, once,
               gen, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -46050,10 +47732,6 @@ ttest_ssocko_cgenf_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssocko_cgenf_medium_tcp6(suite) ->
-    [];
-ttest_ssocko_cgenf_medium_tcp6(doc) ->
-    [];
 ttest_ssocko_cgenf_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_cgenf_medium_tcp6,
@@ -46061,7 +47739,7 @@ ttest_ssocko_cgenf_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, once,
               gen, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -46074,10 +47752,6 @@ ttest_ssocko_cgenf_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssocko_cgenf_large_tcp4(suite) ->
-    [];
-ttest_ssocko_cgenf_large_tcp4(doc) ->
-    [];
 ttest_ssocko_cgenf_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_cgenf_large_tcp4,
@@ -46085,7 +47759,7 @@ ttest_ssocko_cgenf_large_tcp4(Config) when is_list(Config) ->
               inet,
               sock, once,
               gen, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -46098,10 +47772,6 @@ ttest_ssocko_cgenf_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssocko_cgenf_large_tcp6(suite) ->
-    [];
-ttest_ssocko_cgenf_large_tcp6(doc) ->
-    [];
 ttest_ssocko_cgenf_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_cgenf_large_tcp6,
@@ -46109,7 +47779,7 @@ ttest_ssocko_cgenf_large_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, once,
               gen, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -46122,10 +47792,6 @@ ttest_ssocko_cgenf_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssocko_cgeno_small_tcp4(suite) ->
-    [];
-ttest_ssocko_cgeno_small_tcp4(doc) ->
-    [];
 ttest_ssocko_cgeno_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_cgeno_small_tcp4,
@@ -46133,7 +47799,7 @@ ttest_ssocko_cgeno_small_tcp4(Config) when is_list(Config) ->
               inet,
               sock, once,
               gen, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -46146,10 +47812,6 @@ ttest_ssocko_cgeno_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssocko_cgeno_small_tcp6(suite) ->
-    [];
-ttest_ssocko_cgeno_small_tcp6(doc) ->
-    [];
 ttest_ssocko_cgeno_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_cgeno_small_tcp6,
@@ -46157,7 +47819,7 @@ ttest_ssocko_cgeno_small_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, once,
               gen, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -46170,10 +47832,6 @@ ttest_ssocko_cgeno_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssocko_cgeno_medium_tcp4(suite) ->
-    [];
-ttest_ssocko_cgeno_medium_tcp4(doc) ->
-    [];
 ttest_ssocko_cgeno_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_cgeno_medium_tcp4,
@@ -46181,7 +47839,7 @@ ttest_ssocko_cgeno_medium_tcp4(Config) when is_list(Config) ->
               inet,
               sock, once,
               gen, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -46194,10 +47852,6 @@ ttest_ssocko_cgeno_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssocko_cgeno_medium_tcp6(suite) ->
-    [];
-ttest_ssocko_cgeno_medium_tcp6(doc) ->
-    [];
 ttest_ssocko_cgeno_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_cgeno_medium_tcp6,
@@ -46205,7 +47859,7 @@ ttest_ssocko_cgeno_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, once,
               gen, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -46218,10 +47872,6 @@ ttest_ssocko_cgeno_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssocko_cgeno_large_tcp4(suite) ->
-    [];
-ttest_ssocko_cgeno_large_tcp4(doc) ->
-    [];
 ttest_ssocko_cgeno_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_cgeno_large_tcp4,
@@ -46229,7 +47879,7 @@ ttest_ssocko_cgeno_large_tcp4(Config) when is_list(Config) ->
               inet,
               sock, once,
               gen, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -46242,10 +47892,6 @@ ttest_ssocko_cgeno_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssocko_cgeno_large_tcp6(suite) ->
-    [];
-ttest_ssocko_cgeno_large_tcp6(doc) ->
-    [];
 ttest_ssocko_cgeno_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_cgeno_large_tcp6,
@@ -46253,7 +47899,7 @@ ttest_ssocko_cgeno_large_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, once,
               gen, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -46266,10 +47912,6 @@ ttest_ssocko_cgeno_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssocko_cgent_small_tcp4(suite) ->
-    [];
-ttest_ssocko_cgent_small_tcp4(doc) ->
-    [];
 ttest_ssocko_cgent_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_cgent_small_tcp4,
@@ -46277,7 +47919,7 @@ ttest_ssocko_cgent_small_tcp4(Config) when is_list(Config) ->
               inet,
               sock, once,
               gen, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -46290,10 +47932,6 @@ ttest_ssocko_cgent_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssocko_cgent_small_tcp6(suite) ->
-    [];
-ttest_ssocko_cgent_small_tcp6(doc) ->
-    [];
 ttest_ssocko_cgent_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_cgent_small_tcp6,
@@ -46301,7 +47939,7 @@ ttest_ssocko_cgent_small_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, once,
               gen, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -46314,10 +47952,6 @@ ttest_ssocko_cgent_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssocko_cgent_medium_tcp4(suite) ->
-    [];
-ttest_ssocko_cgent_medium_tcp4(doc) ->
-    [];
 ttest_ssocko_cgent_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_cgent_medium_tcp4,
@@ -46325,7 +47959,7 @@ ttest_ssocko_cgent_medium_tcp4(Config) when is_list(Config) ->
               inet,
               sock, once,
               gen, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -46338,10 +47972,6 @@ ttest_ssocko_cgent_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssocko_cgent_medium_tcp6(suite) ->
-    [];
-ttest_ssocko_cgent_medium_tcp6(doc) ->
-    [];
 ttest_ssocko_cgent_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_cgent_medium_tcp6,
@@ -46349,7 +47979,7 @@ ttest_ssocko_cgent_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, once,
               gen, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -46362,10 +47992,6 @@ ttest_ssocko_cgent_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssocko_cgent_large_tcp4(suite) ->
-    [];
-ttest_ssocko_cgent_large_tcp4(doc) ->
-    [];
 ttest_ssocko_cgent_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_cgent_large_tcp4,
@@ -46373,7 +47999,7 @@ ttest_ssocko_cgent_large_tcp4(Config) when is_list(Config) ->
               inet,
               sock, once,
               gen, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -46386,10 +48012,6 @@ ttest_ssocko_cgent_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssocko_cgent_large_tcp6(suite) ->
-    [];
-ttest_ssocko_cgent_large_tcp6(doc) ->
-    [];
 ttest_ssocko_cgent_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_cgent_large_tcp6,
@@ -46397,7 +48019,7 @@ ttest_ssocko_cgent_large_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, once,
               gen, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -46410,10 +48032,6 @@ ttest_ssocko_cgent_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssocko_csockf_small_tcp4(suite) ->
-    [];
-ttest_ssocko_csockf_small_tcp4(doc) ->
-    [];
 ttest_ssocko_csockf_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csockf_small_tcp4,
@@ -46421,7 +48039,7 @@ ttest_ssocko_csockf_small_tcp4(Config) when is_list(Config) ->
               inet,
               sock, once,
               sock, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -46434,10 +48052,6 @@ ttest_ssocko_csockf_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssocko_csockf_small_tcp6(suite) ->
-    [];
-ttest_ssocko_csockf_small_tcp6(doc) ->
-    [];
 ttest_ssocko_csockf_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csockf_small_tcp6,
@@ -46445,7 +48059,7 @@ ttest_ssocko_csockf_small_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, once,
               sock, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -46458,10 +48072,6 @@ ttest_ssocko_csockf_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssocko_csockf_small_tcpL(suite) ->
-    [];
-ttest_ssocko_csockf_small_tcpL(doc) ->
-    [];
 ttest_ssocko_csockf_small_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csockf_small_tcpL,
@@ -46469,7 +48079,7 @@ ttest_ssocko_csockf_small_tcpL(Config) when is_list(Config) ->
               local,
               sock, once,
               sock, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -46482,10 +48092,6 @@ ttest_ssocko_csockf_small_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssocko_csockf_medium_tcp4(suite) ->
-    [];
-ttest_ssocko_csockf_medium_tcp4(doc) ->
-    [];
 ttest_ssocko_csockf_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csockf_medium_tcp4,
@@ -46493,7 +48099,7 @@ ttest_ssocko_csockf_medium_tcp4(Config) when is_list(Config) ->
               inet,
               sock, once,
               sock, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -46506,10 +48112,6 @@ ttest_ssocko_csockf_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssocko_csockf_medium_tcp6(suite) ->
-    [];
-ttest_ssocko_csockf_medium_tcp6(doc) ->
-    [];
 ttest_ssocko_csockf_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csockf_medium_tcp6,
@@ -46517,7 +48119,7 @@ ttest_ssocko_csockf_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, once,
               sock, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -46530,10 +48132,6 @@ ttest_ssocko_csockf_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssocko_csockf_medium_tcpL(suite) ->
-    [];
-ttest_ssocko_csockf_medium_tcpL(doc) ->
-    [];
 ttest_ssocko_csockf_medium_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csockf_medium_tcpL,
@@ -46541,7 +48139,7 @@ ttest_ssocko_csockf_medium_tcpL(Config) when is_list(Config) ->
               local,
               sock, once,
               sock, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -46554,10 +48152,6 @@ ttest_ssocko_csockf_medium_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssocko_csockf_large_tcp4(suite) ->
-    [];
-ttest_ssocko_csockf_large_tcp4(doc) ->
-    [];
 ttest_ssocko_csockf_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csockf_large_tcp4,
@@ -46565,7 +48159,7 @@ ttest_ssocko_csockf_large_tcp4(Config) when is_list(Config) ->
               inet,
               sock, once,
               sock, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -46578,10 +48172,6 @@ ttest_ssocko_csockf_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssocko_csockf_large_tcp6(suite) ->
-    [];
-ttest_ssocko_csockf_large_tcp6(doc) ->
-    [];
 ttest_ssocko_csockf_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csockf_large_tcp6,
@@ -46589,7 +48179,7 @@ ttest_ssocko_csockf_large_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, once,
               sock, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -46602,10 +48192,6 @@ ttest_ssocko_csockf_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssocko_csockf_large_tcpL(suite) ->
-    [];
-ttest_ssocko_csockf_large_tcpL(doc) ->
-    [];
 ttest_ssocko_csockf_large_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csockf_large_tcpL,
@@ -46613,7 +48199,7 @@ ttest_ssocko_csockf_large_tcpL(Config) when is_list(Config) ->
               local,
               sock, once,
               sock, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -46626,10 +48212,6 @@ ttest_ssocko_csockf_large_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssocko_csocko_small_tcp4(suite) ->
-    [];
-ttest_ssocko_csocko_small_tcp4(doc) ->
-    [];
 ttest_ssocko_csocko_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csocko_small_tcp4,
@@ -46637,7 +48219,7 @@ ttest_ssocko_csocko_small_tcp4(Config) when is_list(Config) ->
               inet,
               sock, once,
               sock, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -46650,10 +48232,6 @@ ttest_ssocko_csocko_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssocko_csocko_small_tcp6(suite) ->
-    [];
-ttest_ssocko_csocko_small_tcp6(doc) ->
-    [];
 ttest_ssocko_csocko_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csocko_small_tcp6,
@@ -46661,7 +48239,7 @@ ttest_ssocko_csocko_small_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, once,
               sock, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -46674,10 +48252,6 @@ ttest_ssocko_csocko_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssocko_csocko_small_tcpL(suite) ->
-    [];
-ttest_ssocko_csocko_small_tcpL(doc) ->
-    [];
 ttest_ssocko_csocko_small_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csocko_small_tcpL,
@@ -46685,7 +48259,7 @@ ttest_ssocko_csocko_small_tcpL(Config) when is_list(Config) ->
               local,
               sock, once,
               sock, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -46698,10 +48272,6 @@ ttest_ssocko_csocko_small_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssocko_csocko_medium_tcp4(suite) ->
-    [];
-ttest_ssocko_csocko_medium_tcp4(doc) ->
-    [];
 ttest_ssocko_csocko_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csocko_medium_tcp4,
@@ -46709,7 +48279,7 @@ ttest_ssocko_csocko_medium_tcp4(Config) when is_list(Config) ->
               inet,
               sock, once,
               sock, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -46722,10 +48292,6 @@ ttest_ssocko_csocko_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssocko_csocko_medium_tcp6(suite) ->
-    [];
-ttest_ssocko_csocko_medium_tcp6(doc) ->
-    [];
 ttest_ssocko_csocko_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csocko_medium_tcp6,
@@ -46733,7 +48299,7 @@ ttest_ssocko_csocko_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, once,
               sock, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -46746,10 +48312,6 @@ ttest_ssocko_csocko_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssocko_csocko_medium_tcpL(suite) ->
-    [];
-ttest_ssocko_csocko_medium_tcpL(doc) ->
-    [];
 ttest_ssocko_csocko_medium_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csocko_medium_tcpL,
@@ -46757,7 +48319,7 @@ ttest_ssocko_csocko_medium_tcpL(Config) when is_list(Config) ->
               local,
               sock, once,
               sock, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -46770,10 +48332,6 @@ ttest_ssocko_csocko_medium_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssocko_csocko_large_tcp4(suite) ->
-    [];
-ttest_ssocko_csocko_large_tcp4(doc) ->
-    [];
 ttest_ssocko_csocko_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csocko_large_tcp4,
@@ -46781,7 +48339,7 @@ ttest_ssocko_csocko_large_tcp4(Config) when is_list(Config) ->
               inet,
               sock, once,
               sock, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -46794,10 +48352,6 @@ ttest_ssocko_csocko_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssocko_csocko_large_tcp6(suite) ->
-    [];
-ttest_ssocko_csocko_large_tcp6(doc) ->
-    [];
 ttest_ssocko_csocko_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csocko_large_tcp6,
@@ -46805,7 +48359,7 @@ ttest_ssocko_csocko_large_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, once,
               sock, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -46818,10 +48372,6 @@ ttest_ssocko_csocko_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssocko_csocko_large_tcpL(suite) ->
-    [];
-ttest_ssocko_csocko_large_tcpL(doc) ->
-    [];
 ttest_ssocko_csocko_large_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csocko_large_tcpL,
@@ -46829,7 +48379,7 @@ ttest_ssocko_csocko_large_tcpL(Config) when is_list(Config) ->
               local,
               sock, once,
               sock, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -46842,10 +48392,6 @@ ttest_ssocko_csocko_large_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssocko_csockt_small_tcp4(suite) ->
-    [];
-ttest_ssocko_csockt_small_tcp4(doc) ->
-    [];
 ttest_ssocko_csockt_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csockt_small_tcp4,
@@ -46853,7 +48399,7 @@ ttest_ssocko_csockt_small_tcp4(Config) when is_list(Config) ->
               inet,
               sock, once,
               sock, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -46866,10 +48412,6 @@ ttest_ssocko_csockt_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssocko_csockt_small_tcp6(suite) ->
-    [];
-ttest_ssocko_csockt_small_tcp6(doc) ->
-    [];
 ttest_ssocko_csockt_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csocko_small_tcp6,
@@ -46877,7 +48419,7 @@ ttest_ssocko_csockt_small_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, once,
               sock, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -46890,10 +48432,6 @@ ttest_ssocko_csockt_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssocko_csockt_small_tcpL(suite) ->
-    [];
-ttest_ssocko_csockt_small_tcpL(doc) ->
-    [];
 ttest_ssocko_csockt_small_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csocko_small_tcpL,
@@ -46901,7 +48439,7 @@ ttest_ssocko_csockt_small_tcpL(Config) when is_list(Config) ->
               local,
               sock, once,
               sock, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -46914,10 +48452,6 @@ ttest_ssocko_csockt_small_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssocko_csockt_medium_tcp4(suite) ->
-    [];
-ttest_ssocko_csockt_medium_tcp4(doc) ->
-    [];
 ttest_ssocko_csockt_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csockt_medium_tcp4,
@@ -46925,7 +48459,7 @@ ttest_ssocko_csockt_medium_tcp4(Config) when is_list(Config) ->
               inet,
               sock, once,
               sock, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -46938,10 +48472,6 @@ ttest_ssocko_csockt_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssocko_csockt_medium_tcp6(suite) ->
-    [];
-ttest_ssocko_csockt_medium_tcp6(doc) ->
-    [];
 ttest_ssocko_csockt_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csockt_medium_tcp6,
@@ -46949,7 +48479,7 @@ ttest_ssocko_csockt_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, once,
               sock, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -46962,10 +48492,6 @@ ttest_ssocko_csockt_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssocko_csockt_medium_tcpL(suite) ->
-    [];
-ttest_ssocko_csockt_medium_tcpL(doc) ->
-    [];
 ttest_ssocko_csockt_medium_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csockt_medium_tcpL,
@@ -46973,7 +48499,7 @@ ttest_ssocko_csockt_medium_tcpL(Config) when is_list(Config) ->
               local,
               sock, once,
               sock, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -46986,10 +48512,6 @@ ttest_ssocko_csockt_medium_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssocko_csockt_large_tcp4(suite) ->
-    [];
-ttest_ssocko_csockt_large_tcp4(doc) ->
-    [];
 ttest_ssocko_csockt_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csockt_large_tcp4,
@@ -46997,7 +48519,7 @@ ttest_ssocko_csockt_large_tcp4(Config) when is_list(Config) ->
               inet,
               sock, once,
               sock, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -47010,10 +48532,6 @@ ttest_ssocko_csockt_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssocko_csockt_large_tcp6(suite) ->
-    [];
-ttest_ssocko_csockt_large_tcp6(doc) ->
-    [];
 ttest_ssocko_csockt_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csockt_large_tcp6,
@@ -47021,7 +48539,7 @@ ttest_ssocko_csockt_large_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, once,
               sock, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -47034,10 +48552,6 @@ ttest_ssocko_csockt_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssocko_csockt_large_tcpL(suite) ->
-    [];
-ttest_ssocko_csockt_large_tcpL(doc) ->
-    [];
 ttest_ssocko_csockt_large_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssocko_csockt_large_tcpL,
@@ -47045,7 +48559,7 @@ ttest_ssocko_csockt_large_tcpL(Config) when is_list(Config) ->
               local,
               sock, once,
               sock, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -47058,10 +48572,6 @@ ttest_ssocko_csockt_large_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockt_cgenf_small_tcp4(suite) ->
-    [];
-ttest_ssockt_cgenf_small_tcp4(doc) ->
-    [];
 ttest_ssockt_cgenf_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_cgenf_small_tcp4,
@@ -47069,7 +48579,7 @@ ttest_ssockt_cgenf_small_tcp4(Config) when is_list(Config) ->
               inet,
               sock, true,
               gen, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -47082,10 +48592,6 @@ ttest_ssockt_cgenf_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockt_cgenf_small_tcp6(suite) ->
-    [];
-ttest_ssockt_cgenf_small_tcp6(doc) ->
-    [];
 ttest_ssockt_cgenf_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_cgenf_small_tcp6,
@@ -47093,7 +48599,7 @@ ttest_ssockt_cgenf_small_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, true,
               gen, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -47106,10 +48612,6 @@ ttest_ssockt_cgenf_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockt_cgenf_medium_tcp4(suite) ->
-    [];
-ttest_ssockt_cgenf_medium_tcp4(doc) ->
-    [];
 ttest_ssockt_cgenf_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_cgenf_medium_tcp4,
@@ -47117,7 +48619,7 @@ ttest_ssockt_cgenf_medium_tcp4(Config) when is_list(Config) ->
               inet,
               sock, true,
               gen, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -47130,10 +48632,6 @@ ttest_ssockt_cgenf_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockt_cgenf_medium_tcp6(suite) ->
-    [];
-ttest_ssockt_cgenf_medium_tcp6(doc) ->
-    [];
 ttest_ssockt_cgenf_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_cgenf_medium_tcp6,
@@ -47141,7 +48639,7 @@ ttest_ssockt_cgenf_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, true,
               gen, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -47154,10 +48652,6 @@ ttest_ssockt_cgenf_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockt_cgenf_large_tcp4(suite) ->
-    [];
-ttest_ssockt_cgenf_large_tcp4(doc) ->
-    [];
 ttest_ssockt_cgenf_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_cgenf_large_tcp4,
@@ -47165,7 +48659,7 @@ ttest_ssockt_cgenf_large_tcp4(Config) when is_list(Config) ->
               inet,
               sock, true,
               gen, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -47178,10 +48672,6 @@ ttest_ssockt_cgenf_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockt_cgenf_large_tcp6(suite) ->
-    [];
-ttest_ssockt_cgenf_large_tcp6(doc) ->
-    [];
 ttest_ssockt_cgenf_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_cgenf_large_tcp6,
@@ -47189,7 +48679,7 @@ ttest_ssockt_cgenf_large_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, true,
               gen, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -47202,10 +48692,6 @@ ttest_ssockt_cgenf_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockt_cgeno_small_tcp4(suite) ->
-    [];
-ttest_ssockt_cgeno_small_tcp4(doc) ->
-    [];
 ttest_ssockt_cgeno_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_cgeno_small_tcp4,
@@ -47213,7 +48699,7 @@ ttest_ssockt_cgeno_small_tcp4(Config) when is_list(Config) ->
               inet,
               sock, true,
               gen, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -47226,10 +48712,6 @@ ttest_ssockt_cgeno_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockt_cgeno_small_tcp6(suite) ->
-    [];
-ttest_ssockt_cgeno_small_tcp6(doc) ->
-    [];
 ttest_ssockt_cgeno_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_cgeno_small_tcp6,
@@ -47237,7 +48719,7 @@ ttest_ssockt_cgeno_small_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, true,
               gen, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -47250,10 +48732,6 @@ ttest_ssockt_cgeno_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockt_cgeno_medium_tcp4(suite) ->
-    [];
-ttest_ssockt_cgeno_medium_tcp4(doc) ->
-    [];
 ttest_ssockt_cgeno_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_cgeno_medium_tcp4,
@@ -47261,7 +48739,7 @@ ttest_ssockt_cgeno_medium_tcp4(Config) when is_list(Config) ->
               inet,
               sock, true,
               gen, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -47274,10 +48752,6 @@ ttest_ssockt_cgeno_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockt_cgeno_medium_tcp6(suite) ->
-    [];
-ttest_ssockt_cgeno_medium_tcp6(doc) ->
-    [];
 ttest_ssockt_cgeno_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_cgeno_medium_tcp6,
@@ -47285,7 +48759,7 @@ ttest_ssockt_cgeno_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, true,
               gen, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -47298,10 +48772,6 @@ ttest_ssockt_cgeno_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockt_cgeno_large_tcp4(suite) ->
-    [];
-ttest_ssockt_cgeno_large_tcp4(doc) ->
-    [];
 ttest_ssockt_cgeno_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_cgeno_large_tcp4,
@@ -47309,7 +48779,7 @@ ttest_ssockt_cgeno_large_tcp4(Config) when is_list(Config) ->
               inet,
               sock, true,
               gen, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -47322,10 +48792,6 @@ ttest_ssockt_cgeno_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockt_cgeno_large_tcp6(suite) ->
-    [];
-ttest_ssockt_cgeno_large_tcp6(doc) ->
-    [];
 ttest_ssockt_cgeno_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_cgeno_large_tcp6,
@@ -47333,7 +48799,7 @@ ttest_ssockt_cgeno_large_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, true,
               gen, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -47346,10 +48812,6 @@ ttest_ssockt_cgeno_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockt_cgent_small_tcp4(suite) ->
-    [];
-ttest_ssockt_cgent_small_tcp4(doc) ->
-    [];
 ttest_ssockt_cgent_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_cgent_small_tcp4,
@@ -47357,7 +48819,7 @@ ttest_ssockt_cgent_small_tcp4(Config) when is_list(Config) ->
               inet,
               sock, true,
               gen, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -47370,10 +48832,6 @@ ttest_ssockt_cgent_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockt_cgent_small_tcp6(suite) ->
-    [];
-ttest_ssockt_cgent_small_tcp6(doc) ->
-    [];
 ttest_ssockt_cgent_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_cgent_small_tcp6,
@@ -47381,7 +48839,7 @@ ttest_ssockt_cgent_small_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, true,
               gen, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -47394,10 +48852,6 @@ ttest_ssockt_cgent_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockt_cgent_medium_tcp4(suite) ->
-    [];
-ttest_ssockt_cgent_medium_tcp4(doc) ->
-    [];
 ttest_ssockt_cgent_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_cgent_medium_tcp4,
@@ -47405,7 +48859,7 @@ ttest_ssockt_cgent_medium_tcp4(Config) when is_list(Config) ->
               inet,
               sock, true,
               gen, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -47418,10 +48872,6 @@ ttest_ssockt_cgent_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockt_cgent_medium_tcp6(suite) ->
-    [];
-ttest_ssockt_cgent_medium_tcp6(doc) ->
-    [];
 ttest_ssockt_cgent_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_cgent_medium_tcp6,
@@ -47429,7 +48879,7 @@ ttest_ssockt_cgent_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, true,
               gen, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -47442,10 +48892,6 @@ ttest_ssockt_cgent_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockt_cgent_large_tcp4(suite) ->
-    [];
-ttest_ssockt_cgent_large_tcp4(doc) ->
-    [];
 ttest_ssockt_cgent_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_cgent_large_tcp4,
@@ -47453,7 +48899,7 @@ ttest_ssockt_cgent_large_tcp4(Config) when is_list(Config) ->
               inet,
               sock, true,
               gen, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -47466,10 +48912,6 @@ ttest_ssockt_cgent_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockt_cgent_large_tcp6(suite) ->
-    [];
-ttest_ssockt_cgent_large_tcp6(doc) ->
-    [];
 ttest_ssockt_cgent_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_cgent_large_tcp6,
@@ -47477,7 +48919,7 @@ ttest_ssockt_cgent_large_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, true,
               gen, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -47490,10 +48932,6 @@ ttest_ssockt_cgent_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockt_csockf_small_tcp4(suite) ->
-    [];
-ttest_ssockt_csockf_small_tcp4(doc) ->
-    [];
 ttest_ssockt_csockf_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csockf_small_tcp4,
@@ -47501,7 +48939,7 @@ ttest_ssockt_csockf_small_tcp4(Config) when is_list(Config) ->
               inet,
               sock, true,
               sock, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -47514,10 +48952,6 @@ ttest_ssockt_csockf_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockt_csockf_small_tcp6(suite) ->
-    [];
-ttest_ssockt_csockf_small_tcp6(doc) ->
-    [];
 ttest_ssockt_csockf_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csockf_small_tcp6,
@@ -47525,7 +48959,7 @@ ttest_ssockt_csockf_small_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, true,
               sock, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -47538,10 +48972,6 @@ ttest_ssockt_csockf_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssockt_csockf_small_tcpL(suite) ->
-    [];
-ttest_ssockt_csockf_small_tcpL(doc) ->
-    [];
 ttest_ssockt_csockf_small_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csockf_small_tcpL,
@@ -47549,7 +48979,7 @@ ttest_ssockt_csockf_small_tcpL(Config) when is_list(Config) ->
               local,
               sock, true,
               sock, false,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -47562,10 +48992,6 @@ ttest_ssockt_csockf_small_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockt_csockf_medium_tcp4(suite) ->
-    [];
-ttest_ssockt_csockf_medium_tcp4(doc) ->
-    [];
 ttest_ssockt_csockf_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csockf_medium_tcp4,
@@ -47573,7 +48999,7 @@ ttest_ssockt_csockf_medium_tcp4(Config) when is_list(Config) ->
               inet,
               sock, true,
               sock, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -47586,10 +49012,6 @@ ttest_ssockt_csockf_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockt_csockf_medium_tcp6(suite) ->
-    [];
-ttest_ssockt_csockf_medium_tcp6(doc) ->
-    [];
 ttest_ssockt_csockf_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csockf_medium_tcp6,
@@ -47597,7 +49019,7 @@ ttest_ssockt_csockf_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, true,
               sock, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -47610,10 +49032,6 @@ ttest_ssockt_csockf_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssockt_csockf_medium_tcpL(suite) ->
-    [];
-ttest_ssockt_csockf_medium_tcpL(doc) ->
-    [];
 ttest_ssockt_csockf_medium_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csockf_medium_tcpL,
@@ -47621,7 +49039,7 @@ ttest_ssockt_csockf_medium_tcpL(Config) when is_list(Config) ->
               local,
               sock, true,
               sock, false,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -47634,10 +49052,6 @@ ttest_ssockt_csockf_medium_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockt_csockf_large_tcp4(suite) ->
-    [];
-ttest_ssockt_csockf_large_tcp4(doc) ->
-    [];
 ttest_ssockt_csockf_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csockf_large_tcp4,
@@ -47645,7 +49059,7 @@ ttest_ssockt_csockf_large_tcp4(Config) when is_list(Config) ->
               inet,
               sock, true,
               sock, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -47658,10 +49072,6 @@ ttest_ssockt_csockf_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockt_csockf_large_tcp6(suite) ->
-    [];
-ttest_ssockt_csockf_large_tcp6(doc) ->
-    [];
 ttest_ssockt_csockf_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csockf_large_tcp6,
@@ -47669,7 +49079,7 @@ ttest_ssockt_csockf_large_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, true,
               sock, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -47682,10 +49092,6 @@ ttest_ssockt_csockf_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssockt_csockf_large_tcpL(suite) ->
-    [];
-ttest_ssockt_csockf_large_tcpL(doc) ->
-    [];
 ttest_ssockt_csockf_large_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csockf_large_tcpL,
@@ -47693,7 +49099,7 @@ ttest_ssockt_csockf_large_tcpL(Config) when is_list(Config) ->
               local,
               sock, true,
               sock, false,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -47706,10 +49112,6 @@ ttest_ssockt_csockf_large_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockt_csocko_small_tcp4(suite) ->
-    [];
-ttest_ssockt_csocko_small_tcp4(doc) ->
-    [];
 ttest_ssockt_csocko_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csocko_small_tcp4,
@@ -47717,7 +49119,7 @@ ttest_ssockt_csocko_small_tcp4(Config) when is_list(Config) ->
               inet,
               sock, true,
               sock, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -47730,10 +49132,6 @@ ttest_ssockt_csocko_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockt_csocko_small_tcp6(suite) ->
-    [];
-ttest_ssockt_csocko_small_tcp6(doc) ->
-    [];
 ttest_ssockt_csocko_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csocko_small_tcp6,
@@ -47741,7 +49139,7 @@ ttest_ssockt_csocko_small_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, true,
               sock, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -47754,10 +49152,6 @@ ttest_ssockt_csocko_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssockt_csocko_small_tcpL(suite) ->
-    [];
-ttest_ssockt_csocko_small_tcpL(doc) ->
-    [];
 ttest_ssockt_csocko_small_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csocko_small_tcpL,
@@ -47765,7 +49159,7 @@ ttest_ssockt_csocko_small_tcpL(Config) when is_list(Config) ->
               local,
               sock, true,
               sock, once,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -47778,10 +49172,6 @@ ttest_ssockt_csocko_small_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockt_csocko_medium_tcp4(suite) ->
-    [];
-ttest_ssockt_csocko_medium_tcp4(doc) ->
-    [];
 ttest_ssockt_csocko_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csocko_medium_tcp4,
@@ -47789,7 +49179,7 @@ ttest_ssockt_csocko_medium_tcp4(Config) when is_list(Config) ->
               inet,
               sock, true,
               sock, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -47802,10 +49192,6 @@ ttest_ssockt_csocko_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockt_csocko_medium_tcp6(suite) ->
-    [];
-ttest_ssockt_csocko_medium_tcp6(doc) ->
-    [];
 ttest_ssockt_csocko_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csocko_medium_tcp6,
@@ -47813,7 +49199,7 @@ ttest_ssockt_csocko_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, true,
               sock, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -47826,10 +49212,6 @@ ttest_ssockt_csocko_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssockt_csocko_medium_tcpL(suite) ->
-    [];
-ttest_ssockt_csocko_medium_tcpL(doc) ->
-    [];
 ttest_ssockt_csocko_medium_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csocko_medium_tcpL,
@@ -47837,7 +49219,7 @@ ttest_ssockt_csocko_medium_tcpL(Config) when is_list(Config) ->
               local,
               sock, true,
               sock, once,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -47850,10 +49232,6 @@ ttest_ssockt_csocko_medium_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockt_csocko_large_tcp4(suite) ->
-    [];
-ttest_ssockt_csocko_large_tcp4(doc) ->
-    [];
 ttest_ssockt_csocko_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csocko_large_tcp4,
@@ -47861,7 +49239,7 @@ ttest_ssockt_csocko_large_tcp4(Config) when is_list(Config) ->
               inet,
               sock, true,
               sock, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -47874,10 +49252,6 @@ ttest_ssockt_csocko_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockt_csocko_large_tcp6(suite) ->
-    [];
-ttest_ssockt_csocko_large_tcp6(doc) ->
-    [];
 ttest_ssockt_csocko_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csocko_large_tcp6,
@@ -47885,7 +49259,7 @@ ttest_ssockt_csocko_large_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, true,
               sock, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -47898,10 +49272,6 @@ ttest_ssockt_csocko_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssockt_csocko_large_tcpL(suite) ->
-    [];
-ttest_ssockt_csocko_large_tcpL(doc) ->
-    [];
 ttest_ssockt_csocko_large_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csocko_large_tcpL,
@@ -47909,7 +49279,7 @@ ttest_ssockt_csocko_large_tcpL(Config) when is_list(Config) ->
               local,
               sock, true,
               sock, once,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -47922,10 +49292,6 @@ ttest_ssockt_csocko_large_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockt_csockt_small_tcp4(suite) ->
-    [];
-ttest_ssockt_csockt_small_tcp4(doc) ->
-    [];
 ttest_ssockt_csockt_small_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csockt_small_tcp4,
@@ -47933,7 +49299,7 @@ ttest_ssockt_csockt_small_tcp4(Config) when is_list(Config) ->
               inet,
               sock, true,
               sock, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -47946,10 +49312,6 @@ ttest_ssockt_csockt_small_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockt_csockt_small_tcp6(suite) ->
-    [];
-ttest_ssockt_csockt_small_tcp6(doc) ->
-    [];
 ttest_ssockt_csockt_small_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csocko_small_tcp6,
@@ -47957,7 +49319,7 @@ ttest_ssockt_csockt_small_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, true,
               sock, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -47970,10 +49332,6 @@ ttest_ssockt_csockt_small_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssockt_csockt_small_tcpL(suite) ->
-    [];
-ttest_ssockt_csockt_small_tcpL(doc) ->
-    [];
 ttest_ssockt_csockt_small_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csocko_small_tcpL,
@@ -47981,7 +49339,7 @@ ttest_ssockt_csockt_small_tcpL(Config) when is_list(Config) ->
               local,
               sock, true,
               sock, true,
-              1, 200).
+              1, ttest_small_max_outstanding(Config)).
 
 
 
@@ -47994,10 +49352,6 @@ ttest_ssockt_csockt_small_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockt_csockt_medium_tcp4(suite) ->
-    [];
-ttest_ssockt_csockt_medium_tcp4(doc) ->
-    [];
 ttest_ssockt_csockt_medium_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csockt_medium_tcp4,
@@ -48005,7 +49359,7 @@ ttest_ssockt_csockt_medium_tcp4(Config) when is_list(Config) ->
               inet,
               sock, true,
               sock, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -48018,10 +49372,6 @@ ttest_ssockt_csockt_medium_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockt_csockt_medium_tcp6(suite) ->
-    [];
-ttest_ssockt_csockt_medium_tcp6(doc) ->
-    [];
 ttest_ssockt_csockt_medium_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csockt_medium_tcp6,
@@ -48029,7 +49379,7 @@ ttest_ssockt_csockt_medium_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, true,
               sock, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -48042,10 +49392,6 @@ ttest_ssockt_csockt_medium_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssockt_csockt_medium_tcpL(suite) ->
-    [];
-ttest_ssockt_csockt_medium_tcpL(doc) ->
-    [];
 ttest_ssockt_csockt_medium_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csockt_medium_tcpL,
@@ -48053,7 +49399,7 @@ ttest_ssockt_csockt_medium_tcpL(Config) when is_list(Config) ->
               local,
               sock, true,
               sock, true,
-              2, 20).
+              2, ttest_medium_max_outstanding(Config)).
 
 
 
@@ -48066,10 +49412,6 @@ ttest_ssockt_csockt_medium_tcpL(Config) when is_list(Config) ->
 %% Domain:       inet
 %%
 
-ttest_ssockt_csockt_large_tcp4(suite) ->
-    [];
-ttest_ssockt_csockt_large_tcp4(doc) ->
-    [];
 ttest_ssockt_csockt_large_tcp4(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csockt_large_tcp4,
@@ -48077,7 +49419,7 @@ ttest_ssockt_csockt_large_tcp4(Config) when is_list(Config) ->
               inet,
               sock, true,
               sock, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -48090,10 +49432,6 @@ ttest_ssockt_csockt_large_tcp4(Config) when is_list(Config) ->
 %% Domain:       inet6
 %% 
 
-ttest_ssockt_csockt_large_tcp6(suite) ->
-    [];
-ttest_ssockt_csockt_large_tcp6(doc) ->
-    [];
 ttest_ssockt_csockt_large_tcp6(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csockt_large_tcp6,
@@ -48101,7 +49439,7 @@ ttest_ssockt_csockt_large_tcp6(Config) when is_list(Config) ->
               inet6,
               sock, true,
               sock, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
 
 
 
@@ -48114,10 +49452,6 @@ ttest_ssockt_csockt_large_tcp6(Config) when is_list(Config) ->
 %% Domain:       local
 %% 
 
-ttest_ssockt_csockt_large_tcpL(suite) ->
-    [];
-ttest_ssockt_csockt_large_tcpL(doc) ->
-    [];
 ttest_ssockt_csockt_large_tcpL(Config) when is_list(Config) ->
     Runtime = which_ttest_runtime(Config),
     ttest_tcp(ttest_ssockt_csockt_large_tcpL,
@@ -48125,7 +49459,71 @@ ttest_ssockt_csockt_large_tcpL(Config) when is_list(Config) ->
               local,
               sock, true,
               sock, true,
-              3, 2).
+              3, ttest_large_max_outstanding(Config)).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% This test case uses the time test (ttest) utility to implement a 
+%% ping-pong like test case.
+%% Server:       Transport = socket(tcp), Active = true
+%% Client:       Transport = socket(tcp), Active = once
+%% Message Size: small (=1)
+%% Domain:       inet
+%% Remote:       false (run everything on the local node)
+%%
+
+ttest_simple_ssockt_csocko_small_tcp4(Config) when is_list(Config) ->
+    Runtime = which_ttest_runtime(Config),
+    ttest_tcp(?FUNCTION_NAME,
+              Runtime,
+              inet,
+              sock, true,
+              sock, once,
+              1, ttest_small_max_outstanding(Config),
+	      false).
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% This test case uses the time test (ttest) utility to implement a 
+%% ping-pong like test case.
+%% Server:       Transport = socket(tcp), Active = true
+%% Client:       Transport = socket(tcp), Active = once
+%% Message Size: small (=1)
+%% Domain:       inet6
+%% 
+
+ttest_simple_ssockt_csocko_small_tcp6(Config) when is_list(Config) ->
+    Runtime = which_ttest_runtime(Config),
+    ttest_tcp(?FUNCTION_NAME,
+              Runtime,
+              inet6,
+              sock, true,
+              sock, once,
+              1, ttest_small_max_outstanding(Config),
+	      false).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% This test case uses the time test (ttest) utility to implement a 
+%% ping-pong like test case.
+%% Server:       Transport = socket(tcp), Active = true
+%% Client:       Transport = socket(tcp), Active = once
+%% Message Size: small (=1)
+%% Domain:       local
+%% 
+
+ttest_simple_ssockt_csocko_small_tcpL(Config) when is_list(Config) ->
+    Runtime = which_ttest_runtime(Config),
+    ttest_tcp(?FUNCTION_NAME,
+              Runtime,
+              local,
+              sock, true,
+              sock, once,
+              1, ttest_small_max_outstanding(Config),
+	      false).
+
 
 
 
@@ -48187,6 +49585,20 @@ ttest_tcp(TC,
           ServerMod, ServerActive,
           ClientMod, ClientActive,
           MsgID, MaxOutstanding) ->
+    ttest_tcp(TC,
+	      Runtime,
+	      Domain,
+	      ServerMod, ServerActive,
+	      ClientMod, ClientActive,
+	      MsgID, MaxOutstanding, true).
+
+ttest_tcp(TC,
+          Runtime,
+          Domain,
+          ServerMod, ServerActive,
+          ClientMod, ClientActive,
+          MsgID, MaxOutstanding,
+	  Remote) ->
     tc_try(TC,
            fun() ->
                    if
@@ -48195,10 +49607,12 @@ ttest_tcp(TC,
                            %% On darwin we seem to hit the system limit(s)
                            %% much earlier.
                            %% The tests "mostly" work, but random cases fail
-                           %% (even on reasonably powerfull machines),
+                           %% (even on reasonably powerful machines),
                            %% so its much simpler to just skip on darwin...
                            has_support_unix_domain_socket(),
-                           is_not_darwin(); 
+                           is_not_darwin();
+                       (Domain =:= inet) ->
+                           has_support_ipv4();
                        (Domain =:= inet6) ->
                            has_support_ipv6();
                        true -> ok 
@@ -48208,6 +49622,19 @@ ttest_tcp(TC,
                    %% This may be overkill, depending on the runtime,
                    %% but better safe then sorry...
                    ?TT(Runtime + ?SECS(60)),
+                   ?P("Parameters: "
+                      "~n   Domain:          ~p"
+                      "~n   Message ID:      ~p"
+                      "~n   Max Outstanding: ~p"
+                      "~n   Running Time:    ~p"
+                      "~n   Server Module:   ~p"
+                      "~n   Server Active:   ~p"
+                      "~n   Client Module:   ~p"
+                      "~n   Client Active:   ~p"
+                      "~n   Remote:          ~p",
+                      [Domain, MsgID, MaxOutstanding, Runtime,
+                       ServerMod, ServerActive, ClientMod, ClientActive,
+		       Remote]),
                    InitState = #{domain          => Domain,
                                  msg_id          => MsgID,
                                  max_outstanding => MaxOutstanding,
@@ -48215,7 +49642,8 @@ ttest_tcp(TC,
                                  server_mod      => ServerMod,
                                  server_active   => ServerActive,
                                  client_mod      => ClientMod,
-                                 client_active   => ClientActive},
+                                 client_active   => ClientActive,
+				 remote          => Remote},
                    ok = ttest_tcp(InitState)
            end).
 
@@ -48239,19 +49667,25 @@ ttest_tcp(InitState) ->
 
 
          %% *** Init part ***
-         #{desc => "create node",
-           cmd  => fun(#{host := Host} = State) ->
-                           case start_node(Host, server) of
-                               {ok, Node} ->
-                                   {ok, State#{node => Node}};
-                               {error, Reason} ->
-                                   {skip, Reason}
-                           end
+         #{desc => "(maybe) create node",
+           cmd  => fun(#{remote := true} = State) ->
+                           {Peer, Node} = ?START_NODE("server"),
+			   ?SEV_IPRINT("server node created:"
+				       "~n   Peer: ~p"
+				       "~n   Node: ~p", [Peer, Node]),
+                           {ok, State#{peer => Peer, node => Node}};
+		      (State) ->
+			   ?SEV_IPRINT("use local node for server"),
+			   {ok, State#{peer => undefined, node => node()}}
                    end},
-         #{desc => "monitor server node",
-           cmd  => fun(#{node := Node} = _State) ->
+         #{desc => "(maybe) monitor server node",
+           cmd  => fun(#{node := Node} = _State) when (Node =/= node) ->
                            true = erlang:monitor_node(Node, true),
-                           ok
+			   ?SEV_IPRINT("~p monitored", [Node]),
+                           ok;
+		      (_State) ->
+			   ?SEV_IPRINT("nothing"),
+			   ok
                    end},
          #{desc => "start ttest (remote) server",
            cmd  => fun(#{domain := local = Domain,
@@ -48261,6 +49695,9 @@ ttest_tcp(InitState) ->
                            case ttest_tcp_server_start(Node,
                                                        Domain, Mod, Active) of
                                {ok, {{Pid, _}, Path}} ->
+                                   ?SEV_IPRINT("server started: "
+                                               "~n   Pid:  ~p"
+                                               "~n   Path: ~p", [Pid, Path]),
                                    {ok, State#{rserver => Pid,
                                                path    => Path}};
                                {error, _} = ERROR ->
@@ -48273,6 +49710,11 @@ ttest_tcp(InitState) ->
                            case ttest_tcp_server_start(Node,
                                                        Domain, Mod, Active) of
                                {ok, {{Pid, _}, {Addr, Port}}} ->
+                                   ?SEV_IPRINT("server started: "
+                                               "~n   Pid:  ~p"
+                                               "~n   Addr: ~p"
+                                               "~n   Port: ~p",
+                                               [Pid, Addr, Port]),
                                    {ok, State#{rserver => Pid,
                                                addr    => Addr,
                                                port    => Port}};
@@ -48301,8 +49743,11 @@ ttest_tcp(InitState) ->
                            case ?SEV_AWAIT_TERMINATE(Tester, tester,
                                                      [{rserver, RServer}]) of
                                ok ->
+                                   ?SEV_IPRINT("received termination request"),
                                    {ok, maps:remove(tester, State)};
-                               {error, _} = ERROR ->
+                               {error, Reason} = ERROR ->
+                                   ?SEV_EPRINT("received unexpected error: "
+                                               "~n   ~p", [Reason]),
                                    ERROR
                            end
                    end},
@@ -48320,10 +49765,10 @@ ttest_tcp(InitState) ->
                            State1 = maps:remove(rserver, State),
                            {ok, State1}
                    end},
-         #{desc => "stop (server) node",
-           cmd  => fun(#{node := Node} = State) ->
+         #{desc => "(maybe) stop (server) node",
+           cmd  => fun(#{peer := Peer} = State)  when (Peer =/= undefined) ->
                            {ok,
-                            try stop_node(Node) of
+                            try peer:stop(Peer) of
                                 ok ->
                                     State#{node_stop => ok};
                                 {error, Reason} ->
@@ -48337,10 +49782,14 @@ ttest_tcp(InitState) ->
                                                 "~n   Error: ~p"
                                                 "~n   Stack: ~p",[C, E, S]),
                                     State#{node_stop => error}
-                            end}
+                            end};
+		      (_) ->
+                           ?SEV_IPRINT("nothing"),
+			   ok
                    end},
-         #{desc => "await (server) node termination",
-           cmd  => fun(#{node := Node, node_stop := ok} = State) ->
+         #{desc => "(maybe) await (server) node termination",
+           cmd  => fun(#{node := Node, node_stop := ok} = State)
+			 when (Node =/= node()) ->
                            ?SEV_IPRINT("Success node stop - await nodedown"),
                            receive
                                {nodedown, Node} ->
@@ -48350,6 +49799,10 @@ ttest_tcp(InitState) ->
                            end;
                       (#{node_stop := error} = State) ->
                            ?SEV_IPRINT("Failed node stop - cleanup"),
+                           State1 = maps:remove(node, State),
+                           {ok, State1};
+		      (State) ->
+                           ?SEV_IPRINT("nothing"),
                            State1 = maps:remove(node, State),
                            {ok, State1}
                    end},
@@ -48366,11 +49819,17 @@ ttest_tcp(InitState) ->
            cmd  => fun(#{domain := local} = State) ->
                            {Tester, ServerPath} = 
                                ?SEV_AWAIT_START(),
+                           ?SEV_IPRINT("started with server info: "
+                                       "~n   Path: ~p", [ServerPath]),
                            {ok, State#{tester      => Tester,
                                        server_path => ServerPath}};
                       (State) ->
                            {Tester, {ServerAddr, ServerPort}} = 
                                ?SEV_AWAIT_START(),
+                           ?SEV_IPRINT("started with server info: "
+                                       "~n   Addr: ~p"
+                                       "~n   Port: ~p",
+                                       [ServerAddr, ServerPort]),
                            {ok, State#{tester      => Tester,
                                        server_addr => ServerAddr,
                                        server_port => ServerPort}}
@@ -48384,18 +49843,24 @@ ttest_tcp(InitState) ->
 
          %% *** Init part ***
          #{desc => "create node",
-           cmd  => fun(#{host := Host} = State) ->
-                           case start_node(Host, client) of
-                               {ok, Node} ->
-                                   {ok, State#{node => Node}};
-                               {error, Reason} ->
-                                   {skip, Reason}
-                           end
+           cmd  => fun(#{remote := true, host := _Host} = State) ->
+                           %% Because peer does not accept a host argument,
+                           %% we can no longer start "remote" nodes...
+                           %% Not that we actually did that. We always
+                           %% used local-host.
+                           {Peer, Node} = ?START_NODE("client"),
+                           {ok, State#{peer => Peer, node => Node}};
+		      (State) ->
+			   {ok, State#{peer => undefined, node => node()}}
                    end},
-         #{desc => "monitor client node",
-           cmd  => fun(#{node := Node} = _State) ->
+         #{desc => "(maybe) monitor client node",
+           cmd  => fun(#{node := Node} = _State) when (Node =/= node()) ->
                            true = erlang:monitor_node(Node, true),
-                           ok
+			   ?SEV_IPRINT("~p monitored", [Node]),
+                           ok;
+		      (_) ->
+			   ?SEV_IPRINT("nothing"),
+			   ok
                    end},
          #{desc => "announce ready (init)",
            cmd  => fun(#{tester := Tester}) ->
@@ -48457,6 +49922,19 @@ ttest_tcp(InitState) ->
                                                        RunTime) of
                                {ok, {Pid, _MRef}} ->
                                    {ok, State#{rclient => Pid}};
+                               {error, {connect, Reason, ServerInfo} = EI} ->
+                                   ?SEV_EPRINT("Failed connecting to server: "
+                                               "~n   Reason: ~p"
+                                               "~n   Server: ~p",
+                                               [Reason, ServerInfo]),
+                                   case Reason of
+                                       eaddrnotavail ->
+                                           {skip, Reason};
+                                       network_unreachable ->
+                                           {skip, Reason};
+                                       _ ->
+                                           {error, EI}
+                                   end;
                                {error, _} = ERROR ->
                                    ERROR
                            end
@@ -48496,10 +49974,10 @@ ttest_tcp(InitState) ->
                                    ERROR
                            end
                    end},
-         #{desc => "stop (client) node",
-           cmd  => fun(#{node := Node} = State) ->
+         #{desc => "(maybe) stop (client) node",
+           cmd  => fun(#{peer := Peer} = State) when (Peer =/= undefined) ->
                            {ok,
-                            try stop_node(Node) of
+                            try peer:stop(Peer) of
                                 ok ->
                                     State#{node_stop => ok};
                                 {error, Reason} ->
@@ -48513,10 +49991,14 @@ ttest_tcp(InitState) ->
                                                 "~n   Error: ~p"
                                                 "~n   Stack: ~p",[C, E, S]),
                                     State#{node_stop => error}
-                            end}
+                            end};
+		      (_) ->
+			   ?SEV_IPRINT("nothing"),
+			   ok
                    end},
-         #{desc => "await (client) node termination",
-           cmd  => fun(#{node := Node, node_stop := ok} = State) ->
+         #{desc => "(maybe) await (client) node termination",
+           cmd  => fun(#{node := Node, node_stop := ok} = State)
+			 when (Node =/= node()) ->
                            ?SEV_IPRINT("Success node stop - await nodedown"),
                            receive
                                {nodedown, Node} ->
@@ -48527,7 +50009,10 @@ ttest_tcp(InitState) ->
                       (#{node_stop := error} = State) ->
                            ?SEV_IPRINT("Failed node stop - cleanup"),
                            State1 = maps:remove(node, State),
-                           {ok, State1}
+                           {ok, State1};
+		      (_) ->
+			   ?SEV_IPRINT("nothing"),
+			   ok
                    end},
 
 
@@ -48750,6 +50235,10 @@ ttest_tcp_server_start(Node, Domain, gen, Active) ->
     TransportMod = socket_test_ttest_tcp_gen,
     Transport    = {TransportMod, #{domain => Domain}},
     socket_test_ttest_tcp_server:start_monitor(Node, Transport, Active);
+ttest_tcp_server_start(Node, Domain, gs, Active) ->
+    TransportMod = socket_test_ttest_tcp_gs,
+    Transport    = {TransportMod, #{domain => Domain}},
+    socket_test_ttest_tcp_server:start_monitor(Node, Transport, Active);
 ttest_tcp_server_start(Node, Domain, sock, Active) ->
     TransportMod = socket_test_ttest_tcp_socket,
     Transport    = {TransportMod, #{domain => Domain,
@@ -48765,6 +50254,18 @@ ttest_tcp_client_start(Node,
                        Domain, gen,
                        ServerInfo, Active, MsgID, MaxOutstanding, RunTime) ->
     TransportMod = socket_test_ttest_tcp_gen,
+    Transport    = {TransportMod, #{domain => Domain}},    
+    socket_test_ttest_tcp_client:start_monitor(Node,
+                                               Notify,
+                                               Transport,
+                                               ServerInfo,
+                                               Active,
+                                               MsgID, MaxOutstanding, RunTime);
+ttest_tcp_client_start(Node,
+                       Notify,
+                       Domain, gs,
+                       ServerInfo, Active, MsgID, MaxOutstanding, RunTime) ->
+    TransportMod = socket_test_ttest_tcp_gs,
     Transport    = {TransportMod, #{domain => Domain}},    
     socket_test_ttest_tcp_client:start_monitor(Node,
                                                Notify,
@@ -48831,7 +50332,7 @@ ttest_report(Domain,
                            bytes = NumBytes,
                            msgs  = NumMsgs},
     %% If we run just one test case, the group init has never been run
-    %% and therefor the ttest manager is not running (we also don't actually
+    %% and therefore the ttest manager is not running (we also don't actually
     %% care about collecting reports in that case).
     (catch global:send(?TTEST_MANAGER, Report)),
     ok.
@@ -48978,13 +50479,10 @@ which_ttest_reports(Domain, MsgID) ->
 %% Create several acceptor processes (processes that calls socket:accept/1)
 %% and then a couple of clients connects to them without any problems.
 %% TCP, IPv4.
-otp16359_maccept_tcp4(suite) ->
-    [];
-otp16359_maccept_tcp4(doc) ->
-    [];
 otp16359_maccept_tcp4(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(otp16359_maccept_tcp4,
+           fun() -> has_support_ipv4() end,
            fun() ->
                    InitState = #{domain   => inet,
                                  protocol => tcp},
@@ -48997,10 +50495,6 @@ otp16359_maccept_tcp4(_Config) when is_list(_Config) ->
 %% Create several acceptor processes (processes that calls socket:accept/1)
 %% and then a couple of clients connects to them without any problems.
 %% TCP, IPv6.
-otp16359_maccept_tcp6(suite) ->
-    [];
-otp16359_maccept_tcp6(doc) ->
-    [];
 otp16359_maccept_tcp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(otp16359_maccept_tcp6,
@@ -49017,10 +50511,6 @@ otp16359_maccept_tcp6(_Config) when is_list(_Config) ->
 %% Create several acceptor processes (processes that calls socket:accept/1)
 %% and then a couple of clients connects to them without any problems.
 %% TCP, UNix Domain Sockets.
-otp16359_maccept_tcpL(suite) ->
-    [];
-otp16359_maccept_tcpL(doc) ->
-    [];
 otp16359_maccept_tcpL(_Config) when is_list(_Config) ->
     ?TT(?SECS(10)),
     tc_try(otp16359_maccept_tcpL,
@@ -49635,66 +51125,369 @@ otp16359_maccept_tcp(InitState) ->
                             Tester]).
 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% This test case is to verify that we do not leak monitors.
+otp18240_accept_mon_leak_tcp4(Config) when is_list(Config) ->
+    ?TT(?SECS(30)),
+    tc_try(?FUNCTION_NAME,
+           fun() -> has_support_ipv4() end,
+           fun() ->
+                   InitState = #{domain    => inet,
+                                 protocol  => tcp,
+                                 num_socks => 10},
+                   ok = otp18240_accept_tcp(InitState)
+           end).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%% This mechanism has only one purpose: So that we are able to kill
-%% the node-starter process if it takes to long. The node-starter
-%% runs on the local node.
-%% This crapola is hopefully temporary, but we have seen that on
-%% some platforms the ct_slave:start simply hangs.
--define(NODE_START_TIMEOUT, 10000).
-start_node(Host, NodeName) ->
-    start_node(Host, NodeName, ?NODE_START_TIMEOUT).
+%% This test case is to verify that we do not leak monitors.
+otp18240_accept_mon_leak_tcp6(Config) when is_list(Config) ->
+    ?TT(?SECS(30)),
+    tc_try(?FUNCTION_NAME,
+           fun() -> has_support_ipv6() end,
+           fun() ->
+                   InitState = #{domain    => inet6,
+                                 protocol  => tcp,
+                                 num_socks => 10},
+                   ok = otp18240_accept_tcp(InitState)
+           end).
 
-start_node(Host, NodeName, Timeout) ->
-    {NodeStarter, _} =
-        spawn_monitor(fun() -> exit(start_unique_node(Host, NodeName)) end),
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+otp18240_accept_tcp(#{domain    := Domain,
+                      protocol  := Proto,
+                      num_socks := NumSocks}) ->
+    Self = self(),
+    {Pid, Mon} = spawn_monitor(fun() ->
+                                       otp18240_acceptor(Self,
+                                                         Domain, Proto,
+                                                         NumSocks)
+                               end),
+    otp18240_await_acceptor(Pid, Mon).
+
+otp18240_await_acceptor(Pid, Mon) ->
     receive
-        {'DOWN', _, process, NodeStarter, Result} ->
-            %% i("Node Starter (~p) reported: ~p", [NodeStarter, Result]),
-            Result
-    after Timeout ->
-            exit(NodeStarter, kill),
-            {error, {failed_starting_node, NodeName, timeout}}
-    end.
-
-start_unique_node(Host, NodeName) ->
-    UniqueNodeName = f("~w_~w", [NodeName, erlang:system_time(millisecond)]),
-    case do_start_node(Host, UniqueNodeName) of
-        {ok, _} = OK ->
-            global:sync(),
-            %% i("Node ~p started: "
-            %%    "~n   Nodes:        ~p"
-            %%    "~n   Logger:       ~p"
-            %%    "~n   Global Names: ~p",
-            %%    [NodeName, nodes(),
-            %%     global:whereis_name(socket_test_logger),
-            %%     global:registered_names()]),
-            OK;
-        {error, Reason, _} ->
-            {error, Reason}
-    end.
-
-do_start_node(Host, NodeName) when is_list(NodeName) ->
-    do_start_node(Host, list_to_atom(NodeName));
-do_start_node(Host, NodeName) when is_atom(NodeName) ->
-    Dir   = filename:dirname(code:which(?MODULE)),
-    Flags = "-pa " ++ Dir,
-    Opts  = [{monitor_master, true}, {erl_flags, Flags}],
-    ct_slave:start(Host, NodeName, Opts).
-
-
-stop_node(Node) ->
-    case ct_slave:stop(Node) of
-        {ok, _} ->
+	{'DOWN', Mon, process, Pid, ok} ->
+	    i("acceptor successfully terminated"),
             ok;
-        {error, _} = ERROR ->
-            ERROR
+	{'DOWN', Mon, process, Pid, {skip, _} = SKIP} ->
+	    i("acceptor successfully terminated"),
+            exit(SKIP);
+        {'DOWN', Mon, process, Pid, Info} ->
+            i("acceptor unexpected termination: "
+              "~n   ~p", [Info]),
+            exit({unexpected_result, Info})
+    after 5000 ->
+	    i("acceptor process (~p) info"
+	      "~n   Refs: ~p"
+	      "~n   Info: ~p",
+	      [Pid, monitored_by(Pid), erlang:process_info(Pid)]),
+	    otp18240_await_acceptor(Pid, Mon)
     end.
 
-    
+otp18240_acceptor(Parent, Domain, Proto, NumSocks) ->
+    i("[acceptor] begin with: "
+      "~n   Parent:   ~p"
+      "~n   Domain:   ~p"
+      "~n   Protocol: ~p", [Parent, Domain, Proto]),
+    MonitoredBy0 = monitored_by(),
+    ?SLEEP(?SECS(5)),
+    Addr = case ?LIB:which_local_host_info(Domain) of
+               {ok, #{addr := A}} ->
+                   A;
+               {error, Reason} ->
+                   exit({skip, Reason})
+           end,
+    {ok, LSock} = socket:open(Domain, stream, Proto,
+                              #{use_registry => false}),
+    ok = socket:bind(LSock, #{family => Domain, addr => Addr, port => 0}),
+    ok = socket:listen(LSock, NumSocks),
+    ?SLEEP(?SECS(5)),
+    MonitoredBy1 = monitored_by(),
+    i("[acceptor]: listen socket created"
+      "~n   'Montored By' before listen socket: ~p"
+      "~n   'Montored By' after listen socket:  ~p",
+      [MonitoredBy0, MonitoredBy1]),
+
+    [LSockMon] = MonitoredBy1 -- MonitoredBy0,
+
+    i("[acceptor]: "
+      "~n   Listen Socket Monitor: ~p"
+      "~n   Listen Socket info:    ~p",
+      [LSockMon, socket:info(LSock)]),
+
+    {ok, #{port := Port}} = socket:sockname(LSock),
+
+    i("[acceptor] create ~w clients (connectors)", [NumSocks]),
+    _Clients = [spawn_link(fun() ->
+                                   otp18240_client(CID,
+                                                   Domain, Proto,
+                                                   Addr, Port)
+                           end) || CID <- lists:seq(1, NumSocks)],
+
+    i("[acceptor] accept ~w connections", [NumSocks]),
+    ServSocks = [otp18240_do_accept(AID, LSock) ||
+                    AID <- lists:seq(1, NumSocks)],
+
+    i("[acceptor] close accepted connections when: "
+      "~n   Listen Socket info: ~p", [socket:info(LSock)]),
+    _ = [otp18240_do_close(S) || S <- ServSocks],
+
+    %% at this point in time there should be no monitors from NIFs,
+    %% because we're not accepting anything
+    i("[acceptor] check monitor status"),
+    MonitoredBy2 = monitored_by(),
+    MonitoredBy3 = MonitoredBy2 -- [Parent, LSockMon],
+    i("[acceptor] monitor status: "
+      "~n   UnRefs:       ~p"
+      "~n   MonitoredBy2: ~p"
+      "~n   MonitoredBy3: ~p",
+      [[Parent, LSockMon], MonitoredBy2, MonitoredBy3]),
+    if
+        ([] =:= MonitoredBy3) ->
+            i("[acceptor] done"),
+            socket:close(LSock),
+            exit(ok);
+        true ->
+            socket:close(LSock),
+            i("[acceptor] Unexpected monitors: "
+              "~n   ~p", [MonitoredBy2]),
+            exit({unexpected_monitors, MonitoredBy2})
+    end.
+
+
+otp18240_client(ID, Domain, Proto, Addr, PortNo) ->
+    i("[connector ~w] try create connector socket", [ID]),
+    {ok, Sock} = socket:open(Domain, stream, Proto, #{use_registry => false}),
+    ok = socket:bind(Sock, #{family => Domain, addr => Addr, port => 0}),
+    %% ok = socket:setopt(Sock, otp, debug, true),
+    i("[connector ~w] try connect", [ID]),
+    case socket:connect(Sock,
+                        #{family => Domain, addr => Addr, port => PortNo}) of
+        ok ->
+            i("[connector ~w] connected - now try recv", [ID]),
+            case socket:recv(Sock) of
+                {ok, Data} ->
+                    i("[connector ~w] received unexpected data: "
+                      "~n   ~p", [ID, Data]),
+                    (catch socket:close(Sock)),
+                    exit('unexpected data');
+                {error, closed} ->
+                    i("[connector ~w] expected socket close", [ID]);
+                {error, Reason} ->
+                    i("[connector ~w] unexpected error when reading: "
+                      "~n   ~p", [ID, Reason]),
+                    (catch socket:close(Sock))
+            end;
+        {error, {completion_status, #{info := invalid_netname = R} = Reason}} ->
+            i("[connector ~w] failed connecting: "
+              "~n   ~p", [ID, Reason]),
+            (catch socket:close(Sock)),
+            exit({skip, R});
+        {error, {completion_status, invalid_netname = Reason}} ->
+            i("[connector ~w] failed connecting: "
+              "~n   ~p", [ID, Reason]),
+            (catch socket:close(Sock)),
+            exit({skip, Reason});
+        {error, enetunreach = Reason} ->
+            i("[connector ~w] failed connecting: "
+              "~n   ~p", [ID, Reason]),
+            (catch socket:close(Sock)),
+            exit({skip, Reason});
+
+        {error, Reason} ->
+            i("[connector ~w] failed connecting: "
+              "~n   ~p", [ID, Reason]),
+            (catch socket:close(Sock))
+    end,
+    i("[connector ~w] done", [ID]),
+    ok.
+
+
+otp18240_do_accept(ID, LSock) ->
+    i("[acceptor ~w] try accept", [ID]),
+    {ok, Sock} = socket:accept(LSock),
+    i("[acceptor ~w] accepted: ~p", [ID, Sock]),
+    {ID, Sock}.
+
+
+otp18240_do_close({ID, Sock}) ->
+    i("[acceptor ~w] try close ~p", [ID, Sock]),
+    case socket:close(Sock) of
+	ok ->
+	    i("[acceptor ~w] socket closed", [ID]),
+	    ok;
+	{error, Reason} ->
+	    i("[acceptor ~w] failed close socket: "
+	      "~n   ~p", [ID, Reason]),
+	    error
+    end.
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% This test case is to verify that we do not leak monitors.
+otp18635(Config) when is_list(Config) ->
+    ?TT(?SECS(10)),
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   is_not_windows(),
+                   has_support_ipv4()
+           end,
+           fun() ->
+                   InitState = #{},
+                   ok = do_otp18635(InitState)
+           end).
+
+
+do_otp18635(_) ->
+    Parent = self(),
+
+    ?P("try create (listen) socket when"
+       "~n   (gen socket) info: ~p"
+       "~n   Sockets:           ~p",
+       [socket:info(), socket:which_sockets()]),
+
+    ?P("Get \"proper\" local socket address"),
+    LSA = which_local_socket_addr(inet),
+
+    {ok, LSock} = socket:open(inet, stream, #{use_registry => true}),
+
+    ?P("bind (listen) socket to: "
+       "~n   ~p", [LSA]),
+    ok = socket:bind(LSock, LSA),
+
+    ?P("make listen socket"),
+    ok = socket:listen(LSock),
+
+    ?P("get sockname for listen socket"),
+    {ok, SA} = socket:sockname(LSock),
+
+    %% ok = socket:setopt(LSock, otp, debug, true),
+
+    % show handle returned from nowait accept
+    ?P("try accept with timeout = nowait - expect select when"
+       "~n   (gen socket) info: ~p"
+       "~n   Sockets:           ~p",
+       [socket:info(), socket:which_sockets()]),
+    {select, {select_info, _, Handle}} = socket:accept(LSock, nowait),
+    ?P("expected select result: "
+       "~n   Select Handle:     ~p"
+       "~n   (gen socket) info: ~p"
+       "~n   Sockets:           ~p",
+       [Handle, socket:info(), socket:which_sockets()]),
+
+    ?SLEEP(?SECS(1)),
+
+    %% perform a blocking accept that will fail (timeout)
+    ?P("attempt accept with timeout = 500 - expect failure (timeout)"),
+    {error, timeout} = socket:accept(LSock, 500),
+
+    ?P("await abort message for the first accept call: "
+       "~n   Select Handle:     ~p"
+       "~n   (gen socket) info: ~p"
+       "~n   Sockets:           ~p",
+       [Handle, socket:info(), socket:which_sockets()]),
+    receive
+        {'$socket', LSock, abort, {Handle, cancelled}} ->
+            ?P("received expected abort message"),
+            ok
+    end,
+
+    %% spawn a client to connect
+    ?P("spawn connector when"
+       "~n   (gen socket) info:  ~p"
+       "~n   Listen Socket info: ~p"
+       "~n   Sockets:            ~p",
+       [socket:info(), socket:info(LSock), socket:which_sockets()]),
+    {Connector, MRef} =
+        spawn_monitor(
+          fun() ->
+                  ?P("[connector] try create socket"),
+                  {ok, CSock} = socket:open(inet, stream),
+                  ?P("[connector] try connect: "
+                       "~n   (server) ~p", [SA]),
+                  ok = socket:connect(CSock, SA),
+                  ?P("[connector] connected - inform parent"),
+                  Parent ! {self(), connected},
+                  ?P("[connector] await termination command"),
+                  receive
+                      {Parent, terminate} ->
+                          ?P("[connector] terminate - close socket"),
+                          (catch socket:close(CSock)),
+                          exit(normal)
+                  end
+              end),
+
+    ?P("await (connection-) confirmation from connector (~p)", [Connector]),
+    receive
+        {Connector, connected} ->
+            ?P("connector connected"),
+            ok
+    end,
+
+    %% We should *not* get *any* select messages;
+    %% since the second call (that *replaced* the current active request)
+    %% timeout out
+    ?P("wait for a select message that should never come"),
+    Result =
+        receive
+            {'$socket', LSock, select, AnyHandle} ->
+                ?P("received unexpected select message when"
+                   "~n   Unexpected Handle:  ~p"
+                   "~n   (gen socket) info:  ~p"
+                   "~n   Listen Socket info: ~p"
+                   "~n   Sockets:            ~p",
+                   [AnyHandle,
+                    socket:info(), socket:info(LSock), socket:which_sockets()]),
+                error
+        after 5000 ->
+                ?P("expected timeout"),
+                ok
+        end,
+
+    ?P("try accept the waiting connection when"
+       "~n   (gen socket) info:  ~p"
+       "~n   Listen Socket info: ~p"
+       "~n   Sockets:            ~p",
+       [socket:info(), socket:info(LSock), socket:which_sockets()]),
+
+    {ok, ASock} = socket:accept(LSock),
+
+    ?P("connection accepted"
+       "~n   (gen socket) info:    ~p"
+       "~n   Accepted socket:      ~p"
+       "~n   Accepted Socket info: ~p"
+       "~n   Listen Socket info:   ~p"
+       "~n   Sockets:              ~p",
+       [socket:info(),
+        ASock,
+        socket:info(ASock),
+        socket:info(LSock),
+        socket:which_sockets()]),
+
+    ?P("cleanup"),
+    socket:close(LSock),
+    socket:close(ASock),
+    Connector ! {self(), terminate},
+    receive
+        {'DOWN', MRef, process, Connector, _} ->
+            ?P("connector terminated"),
+            ok
+    end,
+
+    ?SLEEP(?SECS(1)),
+
+    ?P("done when"
+       "~n   (gen socket) info: ~p"
+       "~n   Sockets:           ~p", [socket:info(), socket:which_sockets()]),
+
+    Result.
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -49778,37 +51571,11 @@ local_host() ->
 
 %% The point of this is to "ensure" that paths from different test runs
 %% don't clash.
+
 mk_unique_path() ->
-    [NodeName | _] = string:tokens(atom_to_list(node()), [$@]),
-    Path = ?LIB:f("/tmp/esock_~s_~w", [NodeName, erlang:system_time(nanosecond)]),
-    ensure_unique_path(Path).
+    ?LIB:mk_unique_path().
 
-ensure_unique_path(Path) ->
-    case file:read_file_info(Path) of
-        {ok, _} -> % Ouch, append a unique ID and try again
-            ensure_unique_path(Path, 1);
-        {error, _} ->
-            %% We assume this means it does not exist yet...
-            %% If we have several process in paralell trying to create
-            %% (unique) path's, then we are in trouble. To *really* be
-            %% on the safe side we should have a (central) path registry...
-            encode_path(Path)
-    end.
 
-ensure_unique_path(Path, ID) when (ID < 100) -> % If this is not enough...
-    NewPath = ?LIB:f("~s_~w", [Path, ID]),
-    case file:read_file_info(NewPath) of
-        {ok, _} -> % Ouch, this also existed, increment and try again
-            ensure_unique_path(Path, ID + 1);
-        {error, _} -> % We assume this means it does not exist yet...
-            encode_path(NewPath)
-    end;
-ensure_unique_path(_, _) -> 
-    skip("Could not create unique path").
-
-encode_path(Path) ->
-    unicode:characters_to_binary(Path, file:native_name_encoding()).
-            
 which_local_socket_addr(local = Domain) ->
     #{family => Domain,
       path   => mk_unique_path()};
@@ -49817,10 +51584,18 @@ which_local_socket_addr(local = Domain) ->
 %% We should really implement this using the (new) net module,
 %% but until that gets the necessary functionality...
 which_local_socket_addr(Domain) ->
-    case ?LIB:which_local_host_info(Domain) of
-        {ok, #{addr := Addr}} ->
+    case ?KLIB:which_local_host_info(Domain) of
+        {ok, [#{addr := Addr}|_]} ->
             #{family => Domain,
               addr   => Addr};
+        {error, Reason} ->
+            ?FAIL(Reason)
+    end.
+
+which_local_host_info(Domain) ->
+    case ?KLIB:which_local_host_info(Domain) of
+        {ok, [Info|_]} ->
+            {ok, Info#{family => Domain}};
         {error, Reason} ->
             ?FAIL(Reason)
     end.
@@ -49834,8 +51609,16 @@ which_local_addr(local = _Domain) ->
 %% We should really implement this using the (new) net module,
 %% but until that gets the necessary functionality...
 which_local_addr(Domain) ->
-    ?LIB:which_local_addr(Domain).
+    ?KLIB:which_local_addr(Domain).
 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+monitored_by() ->
+    monitored_by(self()).
+monitored_by(Pid) ->	
+    {monitored_by, Refs} = erlang:process_info(Pid, monitored_by),
+    Refs.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -49878,6 +51661,7 @@ has_support_sock_bindtodevice() ->
     has_support_socket_option_sock(bindtodevice).
 
 has_support_sock_broadcast() ->
+    has_support_ipv4(),
     has_support_socket_option_sock(broadcast),
     case ?LIB:which_local_host_info(inet) of
         {ok, #{flags := Flags}} ->
@@ -49902,6 +51686,21 @@ has_support_sock_dontroute() ->
 
 has_support_sock_keepalive() ->
     has_support_socket_option_sock(keepalive).
+
+has_support_sock_reuseaddr() ->
+    has_support_socket_option_sock(reuseaddr).
+
+has_support_sock_bsp_state() ->
+    has_support_socket_option_sock(bsp_state).
+
+has_support_sock_exclusiveaddruse() ->
+    has_support_socket_option_sock(exclusiveaddruse).
+
+has_support_sock_maxdg() ->
+    has_support_socket_option_sock(maxdg).
+
+has_support_sock_max_msg_size() ->
+    has_support_socket_option_sock(max_msg_size).
 
 has_support_sock_oobinline() ->
     has_support_socket_option_sock(oobinline).
@@ -50026,6 +51825,15 @@ has_support_tcp_maxseg() ->
 has_support_tcp_nodelay() ->
     has_support_socket_option_tcp(nodelay).
 
+has_support_tcp_keepcnt() ->
+    has_support_socket_option_tcp(keepcnt).
+
+has_support_tcp_keepidle() ->
+    has_support_socket_option_tcp(keepidle).
+
+has_support_tcp_keepintvl() ->
+    has_support_socket_option_tcp(keepintvl).
+
 
 %% --- UDP socket option test functions ---
 
@@ -50131,11 +51939,19 @@ is_not_netbsd() ->
 is_not_darwin() ->
     is_not_platform(darwin, "Darwin").
 
+is_not_windows() ->
+    case os:type() of
+        {win32, nt} ->
+            skip("This does not work on Windows");
+        _ ->
+            ok
+    end.
+
 is_not_platform(Platform, PlatformStr)
   when is_atom(Platform) andalso is_list(PlatformStr) ->
       case os:type() of
-        {unix, Platform} ->
-            skip("This does not work on " ++ PlatformStr);
+          {unix, Platform} ->
+              skip("This does not work on " ++ PlatformStr);
         _ ->
             ok
     end.
@@ -50150,16 +51966,11 @@ unix_domain_socket_host_cond(_, _) ->
     ok.
 
 has_support_unix_domain_socket() ->
-    case os:type() of
-        {win32, _} ->
-            skip("Not supported");
-        _ ->
-            case socket:is_supported(local) of
-                true ->
-                    ok;
-                false ->
-                    skip("Not supported")
-            end
+    case socket:is_supported(local) of
+	true ->
+	    ok;
+	false ->
+	    skip("Not supported")
     end.
 
 has_support_sctp() ->
@@ -50180,10 +51991,23 @@ has_support_sctp() ->
 
 
 %% The idea is that this function shall test if the test host has 
-%% support for IPv6. If not, there is no point in running IPv6 tests.
+%% support for IPv4 or IPv6. If not, there is no point in running corresponding tests.
 %% Currently we just skip.
+has_support_ipv4() ->
+    ?KLIB:has_support_ipv4().
+
 has_support_ipv6() ->
-    ?LIB:has_support_ipv6().
+    ?KLIB:has_support_ipv6().
+
+inet_or_inet6() ->
+    try
+        has_support_ipv4(),
+        inet
+    catch
+        throw:{skip, _Reason} ->
+            has_support_ipv6(),
+            inet6
+    end.
 
 has_support_sendfile() ->
     try socket:is_supported(sendfile) of
@@ -50222,6 +52046,9 @@ has_support_ioctl_requests() ->
 has_support_ioctl_gifconf() ->
     has_support_ioctl_request(gifconf).
 
+has_support_ioctl_nread() ->
+    has_support_ioctl_request(nread).
+
 has_support_ioctl_gifname() ->
     has_support_ioctl_request(gifname).
 
@@ -50254,6 +52081,9 @@ has_support_ioctl_gifflags() ->
 
 has_support_ioctl_gifmap() ->
     has_support_ioctl_request(gifmap).
+
+has_support_ioctl_tcp_info() ->
+    has_support_ioctl_request(tcp_info).
 
 has_support_ioctl_request(Req) when is_atom(Req) ->
     try socket:is_supported(ioctl_requests, Req) of
@@ -50409,19 +52239,19 @@ tc_try(Case, TCCondFun, TCFun)
                 end
             catch
                 C:{skip, _} = SKIP when ((C =:= throw) orelse (C =:= exit)) ->
-                    %% i("catched[tc] (skip): "
+                    %% i("caught[tc] (skip): "
                     %%   "~n   C:    ~p"
                     %%   "~n   SKIP: ~p"
                     %%   "~n", [C, SKIP]),
-                    tc_end( f("skipping(catched,~w,tc)", [C]) ),
+                    tc_end( f("skipping(caught,~w,tc)", [C]) ),
                     SKIP;
                 C:E:S ->
-                    %% i("catched[tc]: "
+                    %% i("caught[tc]: "
                     %%   "~n   C: ~p"
                     %%   "~n   E: ~p"
                     %%   "~n   S: ~p"
                     %%    "~n", [C, E, S]),
-                    tc_end( f("failed(catched,~w,tc)", [C]) ),
+                    tc_end( f("failed(caught,~w,tc)", [C]) ),
                     erlang:raise(C, E, S)
             end;
         {skip, _} = SKIP ->
@@ -50432,19 +52262,19 @@ tc_try(Case, TCCondFun, TCFun)
             exit({tc_cond_failed, Reason})
     catch
         C:{skip, _} = SKIP when ((C =:= throw) orelse (C =:= exit)) ->
-            %% i("catched[cond] (skip): "
+            %% i("caught[cond] (skip): "
             %%   "~n   C:    ~p"
             %%   "~n   SKIP: ~p"
             %%   "~n", [C, SKIP]),
-            tc_end( f("skipping(catched,~w,cond)", [C]) ),
+            tc_end( f("skipping(caught,~w,cond)", [C]) ),
             SKIP;
         C:E:S ->
-            %% i("catched[cond]: "
+            %% i("caught[cond]: "
             %%   "~n   C: ~p"
             %%   "~n   E: ~p"
             %%   "~n   S: ~p"
             %%   "~n", [C, E, S]),
-            tc_end( f("failed(catched,~w,cond)", [C]) ),
+            tc_end( f("failed(caught,~w,cond)", [C]) ),
             erlang:raise(C, E, S)
     end.
 
@@ -50472,1020 +52302,42 @@ tc_which_name() ->
     end.
     
    
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%% This function prints various host info, which might be usefull
-%% when analyzing the test suite (results).
-%% It also returns a "factor" that can be used when deciding 
-%% the load for some test cases (traffic). Such as run time or
-%% number of iterations. This only works for some OSes (linux).
-%% Also, mostly it just returns the factor 1.
-%% At this time we just look at BogoMIPS!
-analyze_and_print_host_info() ->
-    {OsFam, OsName} = os:type(),
-    Version         =
-        case os:version() of
-            {Maj, Min, Rel} ->
-                f("~w.~w.~w", [Maj, Min, Rel]);
-            VStr ->
-                VStr
-        end,
-    case {OsFam, OsName} of
-        {unix, linux} ->
-            analyze_and_print_linux_host_info(Version);
-        {unix, openbsd} ->
-            analyze_and_print_openbsd_host_info(Version);
-        {unix, freebsd} ->
-            analyze_and_print_freebsd_host_info(Version);           
-        {unix, netbsd} ->
-            analyze_and_print_netbsd_host_info(Version);           
-        {unix, sunos} ->
-            analyze_and_print_solaris_host_info(Version);
-        {win32, nt} ->
-            analyze_and_print_win_host_info(Version);
-        _ ->
-            io:format("OS Family: ~p"
-                      "~n   OS Type:        ~p"
-                      "~n   Version:        ~p"
-                      "~n   Num Schedulers: ~s"
-                      "~n", [OsFam, OsName, Version, str_num_schedulers()]),
-            num_schedulers_to_factor()
-    end.
+%% start_node(Name) ->
+%%     start_node(Name, 5000).
 
-str_num_schedulers() ->
-    try erlang:system_info(schedulers) of
-        N -> f("~w", [N])
+start_node(Name, Timeout) when is_integer(Timeout) andalso (Timeout > 0) ->
+    try ?CT_PEER(#{name => Name, wait_boot => Timeout}) of
+        {ok, Peer, Node} ->
+            ?SEV_IPRINT("Started node ~p", [Name]),
+            {Peer, Node};
+        {error, Reason} ->
+            ?SEV_EPRINT("failed starting node ~p (=> SKIP):"
+                        "~n   ~p", [Name, Reason]),
+            skip(Reason)
     catch
-        _:_:_ -> "-"
+        Class:Reason:Stack ->
+            ?SEV_EPRINT("Failed starting node: "
+                        "~n   Class:  ~p"
+                        "~n   Reason: ~p"
+                        "~n   Stack:  ~p",
+                        [Class, Reason, Stack]),
+            skip({node_start, Class, Reason})
     end.
 
-num_schedulers_to_factor() ->
-    try erlang:system_info(schedulers) of
-        1 ->
-            10;
-        2 ->
-            5;
-        N when (N =< 6) ->
-            2;
-        _ ->
-            1
-    catch
-        _:_:_ ->
-            10
-    end.
-    
+            
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-    
-%% --- Linux ---
+mq() ->
+    mq(self()).
 
-linux_which_distro(Version) ->
-    case file:read_file_info("/etc/issue") of
-        {ok, _} ->
-            case [string:trim(S) ||
-                     S <- string:tokens(os:cmd("cat /etc/issue"), [$\n])] of
-                [DistroStr|_] ->
-                    io:format("Linux: ~s"
-                              "~n   ~s"
-                              "~n",
-                              [Version, DistroStr]),
-                    case DistroStr of
-                        "Wind River Linux" ++ _ ->
-                            wind_river;
-                        "MontaVista" ++ _ ->
-                            montavista;
-                        "Yellow Dog" ++ _ ->
-                            yellow_dog;
-                        _ ->
-                            other
-                    end;
-                X ->
-                    io:format("Linux: ~s"
-                              "~n   ~p"
-                              "~n",
-                              [Version, X]),
-                    other
-            end;
-        _ ->
-            io:format("Linux: ~s"
-                      "~n", [Version]),
-            other
-    end.
+mq(Pid) when is_pid(Pid) ->
+    {messages, MQ} = process_info(Pid, messages),
+    MQ.
 
-    
-analyze_and_print_linux_host_info(Version) ->
-    Distro = linux_which_distro(Version),
-    Factor =
-        case (catch linux_which_cpuinfo(Distro)) of
-            {ok, {CPU, BogoMIPS}} ->
-                io:format("CPU: "
-                          "~n   Model:          ~s"
-                          "~n   BogoMIPS:       ~w"
-                          "~n   Num Schedulers: ~s"
-                          "~n", [CPU, BogoMIPS, str_num_schedulers()]),
-                if
-                    (BogoMIPS > 20000) ->
-                        1;
-                    (BogoMIPS > 10000) ->
-                        2;
-                    (BogoMIPS > 5000) ->
-                        3;
-                    (BogoMIPS > 2000) ->
-                        5;
-                    (BogoMIPS > 1000) ->
-                        8;
-                    true ->
-                        10
-                end;
-            {ok, CPU} ->
-                io:format("CPU: "
-                          "~n   Model:          ~s"
-                          "~n   Num Schedulers: ~s"
-                          "~n", [CPU, str_num_schedulers()]),
-                num_schedulers_to_factor();
-            _ ->
-                5
-        end,
-    %% Check if we need to adjust the factor because of the memory
-    try linux_which_meminfo() of
-        AddFactor ->
-            Factor + AddFactor
-    catch
-        _:_:_ ->
-            Factor
-    end.
-
-
-linux_cpuinfo_lookup(Key) when is_list(Key) ->
-    linux_info_lookup(Key, "/proc/cpuinfo").
-
-linux_cpuinfo_cpu() ->
-    case linux_cpuinfo_lookup("cpu") of
-        [Model] ->
-            Model;
-        _ ->
-            "-"
-    end.
-
-linux_cpuinfo_motherboard() ->
-    case linux_cpuinfo_lookup("motherboard") of
-        [MB] ->
-            MB;
-        _ ->
-            "-"
-    end.
-
-linux_cpuinfo_bogomips() ->
-    case linux_cpuinfo_lookup("bogomips") of
-        BMips when is_list(BMips) ->
-            try lists:sum([bogomips_to_int(BM) || BM <- BMips])
-            catch
-                _:_:_ ->
-                    "-"
-            end;
-        _ ->
-            "-"
-    end.
-
-linux_cpuinfo_total_bogomips() ->
-    case linux_cpuinfo_lookup("total bogomips") of
-        [TBM] ->
-            try bogomips_to_int(TBM)
-            catch
-                _:_:_ ->
-                    "-"
-            end;
-        _ ->
-            "-"
-    end.
-
-bogomips_to_int(BM) ->
-    try list_to_float(BM) of
-        F ->
-            floor(F)
-    catch
-        _:_:_ ->
-            try list_to_integer(BM) of
-                I ->
-                    I
-            catch
-                _:_:_ ->
-                    throw(noinfo)
-            end
-    end.
-
-linux_cpuinfo_model() ->
-    case linux_cpuinfo_lookup("model") of
-        [M] ->
-            M;
-        _ ->
-            "-"
-    end.
-
-linux_cpuinfo_platform() ->
-    case linux_cpuinfo_lookup("platform") of
-        [P] ->
-            P;
-        _ ->
-            "-"
-    end.
-
-linux_cpuinfo_model_name() ->
-    case linux_cpuinfo_lookup("model name") of
-        [P|_] ->
-            P;
-        _X ->
-            "-"
-    end.
-
-linux_cpuinfo_processor() ->
-    case linux_cpuinfo_lookup("Processor") of
-        [P] ->
-            P;
-        _ ->
-            "-"
-    end.
-
-linux_which_cpuinfo(montavista) ->
-    CPU =
-        case linux_cpuinfo_cpu() of
-            "-" ->
-                throw(noinfo);
-            Model ->
-                case linux_cpuinfo_motherboard() of
-                    "-" ->
-                        Model;
-                    MB ->
-                        Model ++ " (" ++ MB ++ ")"
-                end
-        end,
-    case linux_cpuinfo_bogomips() of
-        "-" ->
-            {ok, CPU};
-        BMips ->
-            {ok, {CPU, BMips}}
-    end;
-
-linux_which_cpuinfo(yellow_dog) ->
-    CPU =
-        case linux_cpuinfo_cpu() of
-            "-" ->
-                throw(noinfo);
-            Model ->
-                case linux_cpuinfo_motherboard() of
-                    "-" ->
-                        Model;
-                    MB ->
-                        Model ++ " (" ++ MB ++ ")"
-                end
-        end,
-    {ok, CPU};
-
-linux_which_cpuinfo(wind_river) ->
-    CPU =
-        case linux_cpuinfo_model() of
-            "-" ->
-                throw(noinfo);
-            Model ->
-                case linux_cpuinfo_platform() of
-                    "-" ->
-                        Model;
-                    Platform ->
-                        Model ++ " (" ++ Platform ++ ")"
-                end
-        end,
-    case linux_cpuinfo_total_bogomips() of
-        "-" ->
-            {ok, CPU};
-        BMips ->
-            {ok, {CPU, BMips}}
-    end;
-
-linux_which_cpuinfo(other) ->
-    %% Check for x86 (Intel or AMD)
-    CPU =
-        case linux_cpuinfo_model_name() of
-            "-" ->
-                %% ARM (at least some distros...)
-                case linux_cpuinfo_processor() of
-                    "-" ->
-                        %% Ok, we give up
-                        throw(noinfo);
-                    Proc ->
-                        Proc
-                end;
-            ModelName ->
-                ModelName
-        end,
-    case linux_cpuinfo_bogomips() of
-        "-" ->
-            {ok, CPU};
-        BMips ->
-            {ok, {CPU, BMips}}
-    end.
-
-linux_meminfo_lookup(Key) when is_list(Key) ->
-    linux_info_lookup(Key, "/proc/meminfo").
-
-linux_meminfo_memtotal() ->
-    case linux_meminfo_lookup("MemTotal") of
-        [X] ->
-            X;
-        _ ->
-            "-"
-    end.
-
-%% We *add* the value this return to the Factor.
-linux_which_meminfo() ->
-    case linux_meminfo_memtotal() of
-        "-" ->
-            0;
-        MemTotal ->
-            io:format("Memory:"
-                      "~n   ~s"
-                      "~n", [MemTotal]),
-            case string:tokens(MemTotal, [$ ]) of
-                [MemSzStr, MemUnit] ->
-                    MemSz2 = list_to_integer(MemSzStr),
-                    MemSz3 = 
-                        case string:to_lower(MemUnit) of
-                            "kb" ->
-                                MemSz2;
-                            "mb" ->
-                                MemSz2*1024;
-                            "gb" ->
-                                MemSz2*1024*1024;
-                            _ ->
-                                throw(noinfo)
-                        end,
-                    if
-                        (MemSz3 >= 8388608) ->
-                            0;
-                        (MemSz3 >= 4194304) ->
-                            1;
-                        (MemSz3 >= 2097152) ->
-                            3;
-                        true ->
-                            5
-                    end;
-                _X ->
-                    0
-            end
-    end.
-
-
-linux_info_lookup(Key, File) ->
-    try [string:trim(S) || S <- string:tokens(os:cmd("grep " ++ "\"" ++ Key ++ "\"" ++ " " ++ File), [$:,$\n])] of
-        Info ->
-            linux_info_lookup_collect(Key, Info, [])
-    catch
-        _:_:_ ->
-            "-"
-    end.
-
-linux_info_lookup_collect(_Key, [], Values) ->
-    lists:reverse(Values);
-linux_info_lookup_collect(Key, [Key, Value|Rest], Values) ->
-    linux_info_lookup_collect(Key, Rest, [Value|Values]);
-linux_info_lookup_collect(_, _, Values) ->
-    lists:reverse(Values).
-    
-
-%% --- OpenBSD ---
-
-%% Just to be clear: This is ***not*** scientific...
-analyze_and_print_openbsd_host_info(Version) ->
-    io:format("OpenBSD:"
-              "~n   Version: ~p"
-              "~n", [Version]),
-    Extract =
-        fun(Key) -> 
-                string:tokens(string:trim(os:cmd("sysctl " ++ Key)), [$=])
-        end,
-    try
-        begin
-            CPU =
-                case Extract("hw.model") of
-                    ["hw.model", Model] ->
-                        string:trim(Model);
-                    _ ->
-                        "-"
-                end,
-            CPUSpeed =
-                case Extract("hw.cpuspeed") of
-                    ["hw.cpuspeed", Speed] ->
-                        list_to_integer(Speed);
-                    _ ->
-                        -1
-                end,
-            NCPU =
-                case Extract("hw.ncpufound") of
-                    ["hw.ncpufound", N] ->
-                        list_to_integer(N);
-                    _ ->
-                        -1
-                end,
-            Memory =
-                case Extract("hw.physmem") of
-                    ["hw.physmem", PhysMem] ->
-                        list_to_integer(PhysMem) div 1024;
-                    _ ->
-                        -1
-                end,
-            io:format("CPU:"
-                      "~n   Model: ~s"
-                      "~n   Speed: ~w"
-                      "~n   N:     ~w"
-                      "~nMemory:"
-                      "~n   ~w KB"
-                      "~n", [CPU, CPUSpeed, NCPU, Memory]),
-            CPUFactor =
-                if
-                    (CPUSpeed =:= -1) ->
-                        1;
-                    (CPUSpeed >= 2000) ->
-                        if
-                            (NCPU >= 4) ->
-                                1;
-                            (NCPU >= 2) ->
-                                2;
-                            true ->
-                                3
-                        end;
-                    true ->
-                        if
-                            (NCPU >= 4) ->
-                                2;
-                            (NCPU >= 2) ->
-                                3;
-                            true ->
-                                4
-                        end
-                end,
-            MemAddFactor =
-                if
-                    (Memory =:= -1) ->
-                        0;
-                    (Memory >= 8388608) ->
-                        0;
-                    (Memory >= 4194304) ->
-                        1;
-                    (Memory >= 2097152) ->
-                        2;
-                    true ->
-                        3
-                end,
-            CPUFactor + MemAddFactor
-        end
-    catch
-        _:_:_ ->
-            1
-    end.
-
-
-%% --- FreeBSD ---
-
-analyze_and_print_freebsd_host_info(Version) ->
-    io:format("FreeBSD:"
-              "~n   Version: ~p"
-              "~n", [Version]),
-    %% This test require that the program 'sysctl' is in the path.
-    %% First test with 'which sysctl', if that does not work
-    %% try with 'which /sbin/sysctl'. If that does not work either,
-    %% we skip the test...
-    try
-        begin
-            SysCtl =
-                case string:trim(os:cmd("which sysctl")) of
-                    [] ->
-                        case string:trim(os:cmd("which /sbin/sysctl")) of
-                            [] ->
-                                throw(sysctl);
-                            SC2 ->
-                                SC2
-                        end;
-                    SC1 ->
-                        SC1
-                end,
-            Extract =
-                fun(Key) ->
-                        string:tokens(string:trim(os:cmd(SysCtl ++ " " ++ Key)),
-                                      [$:])
-                end,
-            CPU      = analyze_freebsd_cpu(Extract),
-            CPUSpeed = analyze_freebsd_cpu_speed(Extract),
-            NCPU     = analyze_freebsd_ncpu(Extract),
-            Memory   = analyze_freebsd_memory(Extract),
-            io:format("CPU:"
-                      "~n   Model:          ~s"
-                      "~n   Speed:          ~w"
-                      "~n   N:              ~w"
-                      "~n   Num Schedulers: ~w"
-                      "~nMemory:"
-                      "~n   ~w KB"
-                      "~n",
-                      [CPU, CPUSpeed, NCPU,
-                       erlang:system_info(schedulers), Memory]),
-            CPUFactor =
-                if
-                    (CPUSpeed =:= -1) ->
-                        1;
-                    (CPUSpeed >= 2000) ->
-                        if
-                            (NCPU >= 4) ->
-                                1;
-                            (NCPU >= 2) ->
-                                2;
-                            true ->
-                                3
-                        end;
-                    true ->
-                        if
-                            (NCPU =:= -1) ->
-                                1;
-                            (NCPU >= 4) ->
-                                2;
-                            (NCPU >= 2) ->
-                                3;
-                            true ->
-                                4
-                        end
-                end,
-            MemAddFactor =
-                if
-                    (Memory =:= -1) ->
-                        0;
-                    (Memory >= 8388608) ->
-                        0;
-                    (Memory >= 4194304) ->
-                        1;
-                    (Memory >= 2097152) ->
-                        2;
-                    true ->
-                        3
-                end,
-            CPUFactor + MemAddFactor
-        end
-    catch
-        _:_:_ ->
-            io:format("CPU:"
-                      "~n   Num Schedulers: ~w"
-                      "~n", [erlang:system_info(schedulers)]),
-            case erlang:system_info(schedulers) of
-                1 ->
-                    10;
-                2 ->
-                    5;
-                _ ->
-                    2
-            end
-    end.
-
-analyze_freebsd_cpu(Extract) ->
-    analyze_freebsd_item(Extract, "hw.model", fun(X) -> X end, "-").
-
-analyze_freebsd_cpu_speed(Extract) ->
-    analyze_freebsd_item(Extract,
-                         "hw.clockrate",
-                         fun(X) -> list_to_integer(X) end,
-                         -1).
-
-analyze_freebsd_ncpu(Extract) ->
-    analyze_freebsd_item(Extract,
-                         "hw.ncpu",
-                         fun(X) -> list_to_integer(X) end,
-                         -1).
-
-analyze_freebsd_memory(Extract) ->
-    analyze_freebsd_item(Extract,
-                         "hw.physmem",
-                         fun(X) -> list_to_integer(X) div 1024 end,
-                         -1).
-
-analyze_freebsd_item(Extract, Key, Process, Default) ->
-    try
-        begin
-            case Extract(Key) of
-                [Key, Model] ->
-                    Process(string:trim(Model));
-                _ ->
-                    Default
-            end
-        end
-    catch
-        _:_:_ ->
-            Default
-    end.
-
-
-%% --- NetBSD ---
-
-analyze_and_print_netbsd_host_info(Version) ->
-    io:format("NetBSD:"
-              "~n   Version: ~p"
-              "~n", [Version]),
-    %% This test require that the program 'sysctl' is in the path.
-    %% First test with 'which sysctl', if that does not work
-    %% try with 'which /sbin/sysctl'. If that does not work either,
-    %% we skip the test...
-    try
-        begin
-            SysCtl =
-                case string:trim(os:cmd("which sysctl")) of
-                    [] ->
-                        case string:trim(os:cmd("which /sbin/sysctl")) of
-                            [] ->
-                                throw(sysctl);
-                            SC2 ->
-                                SC2
-                        end;
-                    SC1 ->
-                        SC1
-                end,
-            Extract =
-                fun(Key) ->
-                        [string:trim(S) ||
-                            S <-
-                                string:tokens(string:trim(os:cmd(SysCtl ++ " " ++ Key)),
-                                              [$=])]
-                end,
-            CPU      = analyze_netbsd_cpu(Extract),
-            Machine  = analyze_netbsd_machine(Extract),
-            Arch     = analyze_netbsd_machine_arch(Extract),
-            CPUSpeed = analyze_netbsd_cpu_speed(Extract),
-            NCPU     = analyze_netbsd_ncpu(Extract),
-            Memory   = analyze_netbsd_memory(Extract),
-            io:format("CPU:"
-                      "~n   Model:          ~s (~s, ~s)"
-                      "~n   Speed:          ~w MHz"
-                      "~n   N:              ~w"
-                      "~n   Num Schedulers: ~w"
-                      "~nMemory:"
-                      "~n   ~w KB"
-                      "~n",
-                      [CPU, Machine, Arch, CPUSpeed, NCPU,
-                       erlang:system_info(schedulers), Memory]),
-            CPUFactor =
-                if
-                    (CPUSpeed =:= -1) ->
-                        1;
-                    (CPUSpeed >= 2000) ->
-                        if
-                            (NCPU >= 4) ->
-                                1;
-                            (NCPU >= 2) ->
-                                2;
-                            true ->
-                                3
-                        end;
-                    true ->
-                        if
-                            (NCPU =:= -1) ->
-                                1;
-                            (NCPU >= 4) ->
-                                2;
-                            (NCPU >= 2) ->
-                                3;
-                            true ->
-                                4
-                        end
-                end,
-            MemAddFactor =
-                if
-                    (Memory =:= -1) ->
-                        0;
-                    (Memory >= 8388608) ->
-                        0;
-                    (Memory >= 4194304) ->
-                        1;
-                    (Memory >= 2097152) ->
-                        2;
-                    true ->
-                        3
-                end,
-            CPUFactor + MemAddFactor
-        end
-    catch
-        _:_:_ ->
-            io:format("CPU:"
-                      "~n   Num Schedulers: ~w"
-                      "~n", [erlang:system_info(schedulers)]),
-            case erlang:system_info(schedulers) of
-                1 ->
-                    10;
-                2 ->
-                    5;
-                _ ->
-                    2
-            end
-    end.
-
-analyze_netbsd_cpu(Extract) ->
-    analyze_netbsd_item(Extract, "hw.model", fun(X) -> X end, "-").
-
-analyze_netbsd_machine(Extract) ->
-    analyze_netbsd_item(Extract, "hw.machine", fun(X) -> X end, "-").
-
-analyze_netbsd_machine_arch(Extract) ->
-    analyze_netbsd_item(Extract, "hw.machine_arch", fun(X) -> X end, "-").
-
-analyze_netbsd_cpu_speed(Extract) ->
-    analyze_netbsd_item(Extract, "machdep.dmi.processor-frequency", 
-                        fun(X) -> case string:tokens(X, [$\ ]) of
-                                      [MHz, "MHz"] ->
-                                          list_to_integer(MHz);
-                                      _ ->
-                                          -1
-                                  end
-                        end, "-").
-
-analyze_netbsd_ncpu(Extract) ->
-    analyze_netbsd_item(Extract,
-                        "hw.ncpu",
-                        fun(X) -> list_to_integer(X) end,
-                        -1).
-
-analyze_netbsd_memory(Extract) ->
-    analyze_netbsd_item(Extract,
-                        "hw.physmem64",
-                        fun(X) -> list_to_integer(X) div 1024 end,
-                        -1).
-
-analyze_netbsd_item(Extract, Key, Process, Default) ->
-    analyze_freebsd_item(Extract, Key, Process, Default).
-
-
-
-%% --- Solaris ---
-
-analyze_and_print_solaris_host_info(Version) ->
-    Release =
-        case file:read_file_info("/etc/release") of
-            {ok, _} ->
-                case [string:trim(S) || S <- string:tokens(os:cmd("cat /etc/release"), [$\n])] of
-                    [Rel | _] ->
-                        Rel;
-                    _ ->
-                        "-"
-                end;
-            _ ->
-                "-"
-        end,
-    %% Display the firmware device tree root properties (prtconf -b)
-    Props = [list_to_tuple([string:trim(PS) || PS <- Prop]) ||
-                Prop <- [string:tokens(S, [$:]) ||
-                            S <- string:tokens(os:cmd("prtconf -b"), [$\n])]],
-    BannerName = case lists:keysearch("banner-name", 1, Props) of
-                     {value, {_, BN}} ->
-                         string:trim(BN);
-                     _ ->
-                         "-"
-                 end,
-    InstructionSet =
-        case string:trim(os:cmd("isainfo -k")) of
-            "Pseudo-terminal will not" ++ _ ->
-                "-";
-            IS ->
-                IS
-        end,
-    PtrConf = [list_to_tuple([string:trim(S) || S <- Items]) || Items <- [string:tokens(S, [$:]) || S <- string:tokens(os:cmd("prtconf"), [$\n])], length(Items) > 1],
-    SysConf =
-        case lists:keysearch("System Configuration", 1, PtrConf) of
-            {value, {_, SC}} ->
-                SC;
-            _ ->
-                "-"
-        end,
-    NumPhysProc =
-        begin
-            NPPStr = string:trim(os:cmd("psrinfo -p")),
-            try list_to_integer(NPPStr) of
-                _ ->
-                    NPPStr
-            catch
-                _:_:_ ->
-                    "-"
-            end
-        end,
-    NumProc = try integer_to_list(length(string:tokens(os:cmd("psrinfo"), [$\n]))) of
-                  NPStr ->
-                      NPStr
-              catch
-                  _:_:_ ->
-                      "-"
-              end,
-    MemSz =
-        case lists:keysearch("Memory size", 1, PtrConf) of
-            {value, {_, MS}} ->
-                MS;
-            _ ->
-                "-"
-        end,
-    io:format("Solaris: ~s"
-              "~n   Release:         ~s"
-              "~n   Banner Name:     ~s"
-              "~n   Instruction Set: ~s"
-              "~n   CPUs:            ~s (~s)"
-              "~n   System Config:   ~s"
-              "~n   Memory Size:     ~s"
-              "~n   Num Schedulers:  ~s"
-              "~n~n", [Version, Release, BannerName, InstructionSet,
-                       NumPhysProc, NumProc,
-                       SysConf, MemSz,
-                       str_num_schedulers()]),
-    MemFactor =
-        try string:tokens(MemSz, [$ ]) of
-            [SzStr, "Mega" ++ _] ->
-                try list_to_integer(SzStr) of
-                    Sz when Sz > 8192 ->
-                        0;
-                    Sz when Sz > 4096 ->
-                        1;
-                    Sz when Sz > 2048 ->
-                        2;
-                    _ -> 
-                        5
-                catch
-                    _:_:_ ->
-                        10
-                end;
-            [SzStr, "Giga" ++ _] ->
-                try list_to_integer(SzStr) of
-                    Sz when Sz > 8 ->
-                        0;
-                    Sz when Sz > 4 ->
-                        1;
-                    Sz when Sz > 2 ->
-                        2;
-                    _ -> 
-                        5
-                catch
-                    _:_:_ ->
-                        10
-                end;
-            _ ->
-                10
-        catch
-            _:_:_ ->
-                10
-        end,
-    try erlang:system_info(schedulers) of
-        1 ->
-            10;
-        2 ->
-            5;
-        N when (N =< 6) ->
-            2;
-        _ ->
-            1
-    catch
-        _:_:_ ->
-            10
-    end + MemFactor.    
-
-
-%% --- Windows ---
-
-analyze_and_print_win_host_info(Version) ->
-    SysInfo    = which_win_system_info(),
-    OsName     = win_sys_info_lookup(os_name,             SysInfo),
-    OsVersion  = win_sys_info_lookup(os_version,          SysInfo),
-    SysMan     = win_sys_info_lookup(system_manufacturer, SysInfo),
-    SysMod     = win_sys_info_lookup(system_model,        SysInfo),
-    NumProcs   = win_sys_info_lookup(num_processors,      SysInfo),
-    TotPhysMem = win_sys_info_lookup(total_phys_memory,   SysInfo),
-    io:format("Windows: ~s"
-              "~n   OS Version:             ~s (~p)"
-              "~n   System Manufacturer:    ~s"
-              "~n   System Model:           ~s"
-              "~n   Number of Processor(s): ~s"
-              "~n   Total Physical Memory:  ~s"
-              "~n   Num Schedulers:         ~s"
-              "~n", [OsName, OsVersion, Version,
-		     SysMan, SysMod, NumProcs, TotPhysMem,
-		     str_num_schedulers()]),
-    MemFactor =
-        try
-            begin
-                [MStr, MUnit|_] =
-                    string:tokens(lists:delete($,, TotPhysMem), [$\ ]),
-                case string:to_lower(MUnit) of
-                    "gb" ->
-                        try list_to_integer(MStr) of
-                            M when M > 8 ->
-                                0;
-                            M when M > 4 ->
-                                1;
-                            M when M > 2 ->
-                                2;
-                            _ -> 
-                                5
-                        catch
-                            _:_:_ ->
-                                10
-                        end;
-                    "mb" ->
-                        try list_to_integer(MStr) of
-                            M when M > 8192 ->
-                                0;
-                            M when M > 4096 ->
-                                1;
-                            M when M > 2048 ->
-                                2;
-                            _ -> 
-                                5
-                        catch
-                            _:_:_ ->
-                                10
-                        end;
-                    _ ->
-                        10
-                end
-            end
-        catch
-            _:_:_ ->
-                10
-        end,
-    CPUFactor = 
-        case erlang:system_info(schedulers) of
-            1 ->
-                10;
-            2 ->
-                5;
-            _ ->
-                2
-        end,
-    CPUFactor + MemFactor.
-
-win_sys_info_lookup(Key, SysInfo) ->
-    win_sys_info_lookup(Key, SysInfo, "-").
-
-win_sys_info_lookup(Key, SysInfo, Def) ->
-    case lists:keysearch(Key, 1, SysInfo) of
-        {value, {Key, Value}} ->
-            Value;
-        false ->
-            Def
-    end.
-
-%% This function only extracts the prop(s) we actually care about!
-%% On some hosts this (systeminfo) takes a *long time* (several minutes).
-%% And since there is no way to provide a timeout to the os command call,
-%% we have to wrap it in a process.
-which_win_system_info() ->
-    F = fun() ->
-                try
-                    begin
-                        SysInfo = os:cmd("systeminfo"),
-                        process_win_system_info(
-                          string:tokens(SysInfo, [$\r, $\n]), [])
-                    end
-                catch
-                    C:E:S ->
-                        io:format("Failed get or process System info: "
-                                  "   Error Class: ~p"
-                                  "   Error:       ~p"
-                                  "   Stack:       ~p"
-                                  "~n", [C, E, S]),
-                        []
-                end
-        end,
-    ?LIB:pcall(F, ?MINS(1), []).
-
-process_win_system_info([], Acc) ->
-    Acc;
-process_win_system_info([H|T], Acc) ->
-    case string:tokens(H, [$:]) of
-        [Key, Value] ->
-            case string:to_lower(Key) of
-                "os name" ->
-                    process_win_system_info(T,
-                                            [{os_name, string:trim(Value)}|Acc]);
-                "os version" ->
-                    process_win_system_info(T,
-                                            [{os_version, string:trim(Value)}|Acc]);
-                "system manufacturer" ->
-                    process_win_system_info(T,
-                                            [{system_manufacturer, string:trim(Value)}|Acc]);
-                "system model" ->
-                    process_win_system_info(T,
-                                            [{system_model, string:trim(Value)}|Acc]);
-                "processor(s)" ->
-                    [NumProcStr|_] = string:tokens(Value, [$\ ]),
-                    T2 = lists:nthtail(list_to_integer(NumProcStr), T),
-                    process_win_system_info(T2,
-                                            [{num_processors, NumProcStr}|Acc]);
-                "total physical memory" ->
-                    process_win_system_info(T,
-                                            [{total_phys_memory, string:trim(Value)}|Acc]);
-                _ ->
-                    process_win_system_info(T, Acc)
-            end;
-        _ ->
-            process_win_system_info(T, Acc)
-    end.
-                    
-
-
+             
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 nowait(Config) ->
@@ -51501,9 +52353,6 @@ sock_port(S) ->
         {ok, #{port := Port}} -> Port;
         {ok, #{}}             -> undefined
     end.
-
-l2a(S) when is_list(S) ->
-    list_to_atom(S).
 
 l2b(L) when is_list(L) ->
     list_to_binary(L).

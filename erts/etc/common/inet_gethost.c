@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1998-2021. All Rights Reserved.
+ * Copyright Ericsson AB 1998-2022. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -973,7 +973,7 @@ static void main_loop(void)
 	    }   
 
 	    if (BEE_GREEDY()) {
-		DEBUGF(4,("Beeing greedy!"));
+		DEBUGF(4,("Being greedy!"));
 		if ((cw = pick_worker_greedy(domainbuff)) != NULL) {
 		    /* Put it in the worker specific que if the 
 		       domainname matches... */
@@ -1483,7 +1483,7 @@ static int ignore_reply(Worker *pw)
 #endif /* !WIN32 */
 
 /*
- * Domain name "parsing" and worker specific queing
+ * Domain name "parsing" and worker specific queueing
  */
 static void domaincopy(AddrByte *out, AddrByte *in)
 {
@@ -1754,12 +1754,11 @@ static int worker_loop(void)
 	/* Decode the request... */
 	serial = get_serial(req);
 	if (OP_CONTROL == (op = get_op(req))) {
-	    CtlType ctl;
 	    if (serial != INVALID_SERIAL) {
 		DEBUGF(1, ("Worker got invalid serial: %d.", serial));
 		exit(0);
 	    }
-	    switch (ctl = get_ctl(req)) {
+	    switch (get_ctl(req)) {
 	    case SETOPT_DEBUG_LEVEL:
 		debug_level = get_debug_level(req);
 		DEBUGF(debug_level, 
@@ -2333,7 +2332,7 @@ static int read_exact(HANDLE fd, void *vbuff, DWORD nbytes, HANDLE ev)
 		}
 	    }
 	} else {
-	    DEBUGF(4,("Read completed syncronously, result %d",ret));
+	    DEBUGF(4,("Read completed synchronously, result %d",ret));
 	}	    
 	if (ret == 0) {
 	    DEBUGF(1, ("End of file detected as zero read from pipe."));
@@ -2369,7 +2368,7 @@ static int write_exact(HANDLE fd, AddrByte *buff, DWORD len, HANDLE ev)
 	stat = WriteFile(fd,buff,x,&res,&ov);
 	if (!stat) {
 	    if ((err = GetLastError()) == ERROR_IO_PENDING) {
-		DEBUGF(4,("Overlapped write, waiting for competion..."));
+		DEBUGF(4,("Overlapped write, waiting for completion..."));
 		WaitForSingleObject(ov.hEvent,INFINITE);
 		stat = GetOverlappedResult(fd,&ov,&res,TRUE);
 		DEBUGF(4,("Overlapped write, completed with status %d,"
@@ -2383,7 +2382,7 @@ static int write_exact(HANDLE fd, AddrByte *buff, DWORD len, HANDLE ev)
 		}
 	    }
 	} else {
-	    DEBUGF(4,("Write completed syncronously, result %d",res));
+	    DEBUGF(4,("Write completed synchronously, result %d",res));
 	}
 	    
 	if (res < x) {

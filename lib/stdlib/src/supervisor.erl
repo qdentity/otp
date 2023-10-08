@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2021. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -72,11 +72,11 @@
 -type shutdown()      :: 'brutal_kill' | timeout().
 -type worker()        :: 'worker' | 'supervisor'.
 -type sup_name()      :: {'local', Name :: atom()}
-                       | {'global', Name :: atom()}
+                       | {'global', Name :: term()}
                        | {'via', Module :: module(), Name :: any()}.
 -type sup_ref()       :: (Name :: atom())
                        | {Name :: atom(), Node :: node()}
-                       | {'global', Name :: atom()}
+                       | {'global', Name :: term()}
                        | {'via', Module :: module(), Name :: any()}
                        | pid().
 -type child_spec()    :: #{id := child_id(),             % mandatory
@@ -132,16 +132,16 @@
 -type child_rec() :: #child{}.
 
 -record(state, {name,
-		strategy               :: strategy() | 'undefined',
+		strategy = one_for_one:: strategy(),
 		children = {[],#{}}    :: children(), % Ids in start order
                 dynamics               :: {'maps', #{pid() => list()}}
                                         | {'mapsets', #{pid() => []}}
                                         | 'undefined',
-		intensity              :: non_neg_integer() | 'undefined',
-		period                 :: pos_integer() | 'undefined',
+		intensity = 1          :: non_neg_integer(),
+		period    = 5          :: pos_integer(),
 		restarts = [],
 		dynamic_restarts = 0   :: non_neg_integer(),
-		auto_shutdown          :: auto_shutdown(),
+		auto_shutdown = never  :: auto_shutdown(),
 	        module,
 	        args}).
 -type state() :: #state{}.
@@ -161,7 +161,7 @@
 %%% ---------------------------------------------------
 %%% This is a general process supervisor built upon gen_server.erl.
 %%% Servers/processes should/could also be built using gen_server.erl.
-%%% SupName = {local, atom()} | {global, atom()}.
+%%% SupName = {local, atom()} | {global, term()}.
 %%% ---------------------------------------------------
 
 -type startlink_err() :: {'already_started', pid()}
@@ -255,7 +255,7 @@ which_children(Supervisor) ->
       Count :: {specs, ChildSpecCount :: non_neg_integer()}
              | {active, ActiveProcessCount :: non_neg_integer()}
              | {supervisors, ChildSupervisorCount :: non_neg_integer()}
-             |{workers, ChildWorkerCount :: non_neg_integer()}.
+             | {workers, ChildWorkerCount :: non_neg_integer()}.
 count_children(Supervisor) ->
     call(Supervisor, count_children).
 
@@ -349,7 +349,10 @@ init_children(State, StartSpec) ->
         {ok, Children} ->
             case start_children(Children, SupName) of
                 {ok, NChildren} ->
-                    {ok, State#state{children = NChildren}};
+                    %% Static supervisor are not expected to
+                    %% have much work to do so hibernate them
+                    %% to improve memory handling.
+                    {ok, State#state{children = NChildren}, hibernate};
                 {error, NChildren, Reason} ->
                     _ = terminate_children(NChildren, SupName),
                     {stop, {shutdown, Reason}}
@@ -361,6 +364,9 @@ init_children(State, StartSpec) ->
 init_dynamic(State, [StartSpec]) ->
     case check_startspec([StartSpec], State#state.auto_shutdown) of
         {ok, Children} ->
+            %% Simple one for one supervisors are expected to
+            %% have many children coming and going so do not
+            %% hibernate.
 	    {ok, dyn_init(State#state{children = Children})};
         Error ->
             {stop, {start_spec, Error}}
@@ -371,7 +377,7 @@ init_dynamic(_State, StartSpec) ->
 %%-----------------------------------------------------------------
 %% Func: start_children/2
 %% Args: Children = children() % Ids in start order
-%%       SupName = {local, atom()} | {global, atom()} | {pid(), Mod}
+%%       SupName = {local, atom()} | {global, term()} | {pid(), Mod}
 %% Purpose: Start all children.  The new map contains #child's
 %%          with pids.
 %% Returns: {ok, NChildren} | {error, NChildren, Reason}
@@ -710,6 +716,8 @@ handle_start_child(Child, State) ->
 		    {{ok, Pid}, save_child(Child#child{pid = Pid}, State)};
 		{ok, Pid, Extra} ->
 		    {{ok, Pid, Extra}, save_child(Child#child{pid = Pid}, State)};
+		{error, {already_started, _Pid} = What} ->
+		    {{error, What}, State};
 		{error, What} ->
 		    {{error, {What, Child}}, State}
 	    end;
@@ -879,7 +887,7 @@ try_again_restart(TryAgainId) ->
 %%-----------------------------------------------------------------
 %% Func: terminate_children/2
 %% Args: Children = children() % Ids in termination order
-%%       SupName = {local, atom()} | {global, atom()} | {pid(),Mod}
+%%       SupName = {local, atom()} | {global, term()} | {pid(),Mod}
 %% Returns: NChildren = children() % Ids in startup order
 %%                                 % (reversed termination order)
 %%-----------------------------------------------------------------
@@ -1296,7 +1304,7 @@ append({Ids1,Db1},{Ids2,Db2}) ->
 
 %%-----------------------------------------------------------------
 %% Func: init_state/4
-%% Args: SupName = {local, atom()} | {global, atom()} | self
+%% Args: SupName = {local, atom()} | {global, term()} | self
 %%       Type = {Strategy, MaxIntensity, Period}
 %%         Strategy = one_for_one | one_for_all | simple_one_for_one |
 %%                    rest_for_one
@@ -1516,7 +1524,7 @@ add_restart(State) ->
     P = State#state.period,
     R = State#state.restarts,
     Now = erlang:monotonic_time(1),
-    R1 = add_restart([Now|R], Now, P),
+    R1 = add_restart(R, Now, P),
     State1 = State#state{restarts = R1},
     case length(R1) of
 	CurI when CurI  =< I ->
@@ -1525,18 +1533,13 @@ add_restart(State) ->
 	    {terminate, State1}
     end.
 
-add_restart([R|Restarts], Now, Period) ->
-    case inPeriod(R, Now, Period) of
-	true ->
-	    [R|add_restart(Restarts, Now, Period)];
-	_ ->
-	    []
-    end;
-add_restart([], _, _) ->
-    [].
-
-inPeriod(Then, Now, Period) ->
-    Now =< Then + Period.
+add_restart(Restarts0, Now, Period) ->
+    Treshold = Now - Period,
+    Restarts1 = lists:takewhile(
+                  fun (R) -> R >= Treshold end,
+                  Restarts0
+                 ),
+    [Now | Restarts1].
 
 %%% ------------------------------------------------------
 %%% Error and progress reporting.

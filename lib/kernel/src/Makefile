@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 1996-2021. All Rights Reserved.
+# Copyright Ericsson AB 1996-2022. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -100,6 +100,8 @@ MODULES = \
 	inet_config \
 	inet_db \
 	inet_dns \
+	inet_epmd_dist \
+	inet_epmd_socket \
 	inet_gethost_native \
 	inet_hosts \
 	inet_parse \
@@ -138,9 +140,9 @@ MODULES = \
 	seq_trace \
 	socket \
 	standard_error \
-	user \
 	user_drv \
 	user_sup \
+	prim_tty \
 	raw_file_io \
 	raw_file_io_compressed \
 	raw_file_io_inflate \
@@ -188,7 +190,7 @@ ERL_COMPILE_FLAGS += -I../include
 # Targets
 # ----------------------------------------------------
 
-debug opt: $(TARGET_FILES) 
+$(TYPES): $(TARGET_FILES) 
 
 # Note: In the open-source build clean must not destroyed the preloaded
 # beam files.

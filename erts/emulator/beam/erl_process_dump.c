@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2003-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2003-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -159,9 +159,12 @@ Uint erts_process_memory(Process *p, int include_sigs_in_transit)
          * Size of message queue plus size of all signals
          * in transit to the process!
          */
-        erts_proc_lock(p, ERTS_PROC_LOCK_MSGQ);
-        erts_proc_sig_fetch(p);
-        erts_proc_unlock(p, ERTS_PROC_LOCK_MSGQ);
+        if (!(p->sig_qs.flags & FS_FLUSHING_SIGS)
+            || ERTS_IS_CRASH_DUMPING) {
+            erts_proc_sig_queue_lock(p);
+            erts_proc_sig_fetch(p);
+            erts_proc_unlock(p, ERTS_PROC_LOCK_MSGQ);
+        }
 
         ERTS_FOREACH_SIG_PRIVQS(
             p, mp,
@@ -228,7 +231,9 @@ dump_process_info(fmtfn_t to, void *to_arg, Process *p)
     if (ERTS_TRACE_FLAGS(p) & F_SENSITIVE)
         return;
 
-    erts_proc_sig_fetch(p);
+    if (!(p->sig_qs.flags & FS_FLUSHING_SIGS) || ERTS_IS_CRASH_DUMPING) {
+        erts_proc_sig_fetch(p);
+    }
 
     if (p->sig_qs.first || p->sig_qs.cont) {
 	erts_print(to, to_arg, "=proc_messages:%T\n", p->common.id);
@@ -708,7 +713,7 @@ dump_externally(fmtfn_t to, void *to_arg, Eterm term)
     byte* s; 
     byte* p;
 
-    if (is_fun(term)) {
+    if (is_any_fun(term)) {
 	/*
 	 * The fun's environment used to cause trouble. There were
 	 * two kind of problems:
@@ -1123,8 +1128,8 @@ erts_dump_extended_process_state(fmtfn_t to, void *to_arg, erts_aint32_t psflg) 
                 erts_print(to, to_arg, "FREE"); break;
             case ERTS_PSFLG_EXITING:
                 erts_print(to, to_arg, "EXITING"); break;
-            case ERTS_PSFLG_UNUSED:
-                erts_print(to, to_arg, "UNUSED"); break;
+            case ERTS_PSFLG_MSG_SIG_IN_Q:
+                erts_print(to, to_arg, "MSG_SIG_IN_Q"); break;
             case ERTS_PSFLG_ACTIVE:
                 erts_print(to, to_arg, "ACTIVE"); break;
             case ERTS_PSFLG_IN_RUNQ:
@@ -1137,8 +1142,8 @@ erts_dump_extended_process_state(fmtfn_t to, void *to_arg, erts_aint32_t psflg) 
                 erts_print(to, to_arg, "GC"); break;
             case ERTS_PSFLG_SYS_TASKS:
                 erts_print(to, to_arg, "SYS_TASKS"); break;
-            case ERTS_PSFLG_SIG_IN_Q:
-                erts_print(to, to_arg, "SIG_IN_Q"); break;
+            case ERTS_PSFLG_NMSG_SIG_IN_Q:
+                erts_print(to, to_arg, "NMSG_SIG_IN_Q"); break;
             case ERTS_PSFLG_ACTIVE_SYS:
                 erts_print(to, to_arg, "ACTIVE_SYS"); break;
             case ERTS_PSFLG_RUNNING_SYS:

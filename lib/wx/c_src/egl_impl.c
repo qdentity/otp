@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2011-2021. All Rights Reserved.
+ * Copyright Ericsson AB 2011-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,7 +51,7 @@ ERL_NIF_TERM EGL_ATOM_BADARG;
 
 static ErlNifFunc egl_funcs[] =
 {
-    {"lookup_func", 0, egl_lookup_func_func}
+    {"lookup_func_nif", 1, egl_lookup_func_func}
 };
 static int egl_init(ErlNifEnv *env, void **priv_data, ERL_NIF_TERM arg)
 {
@@ -142,9 +142,22 @@ void * egl_lookup_func(int op)
     return gl_fns[op-GLE_LIB_START].nif_cb;
 }
 
+const char * egl_lookup_func_desc(int op)
+{
+    return gl_fns[op-GLE_LIB_START].name;
+}
+
+
 ERL_NIF_TERM egl_lookup_func_func(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
-    egl_uword func = (egl_uword) egl_lookup_func;
+    egl_uword func = 0;
+    unsigned int which;
+    if(!(enif_get_uint(env, argv[0], &which)) && !(which == 1 || which == 2))
+        return enif_make_badarg(env);
+    if(which == 1)
+        func = (egl_uword) egl_lookup_func;
+    if(which == 2)
+        func = (egl_uword) egl_lookup_func_desc;
     if(sizeof(void *) == sizeof(unsigned int))
         return enif_make_uint(env, (unsigned int) func);
     else
@@ -279,7 +292,7 @@ int egl_load_functions() {
 }
 
 /* *******************************************************************************
- * GLU Tesselation special
+ * GLU Tessellation special
  * ******************************************************************************/
 
 static GLUtesselator* tess;
@@ -355,7 +368,7 @@ egl_ogla_error(GLenum errorCode)
 {
     // const GLubyte *err;
     // err = gluErrorString(errorCode);
-    // fprintf(stderr, "Tesselation error: %d: %s\r\n", (int) errorCode, err);
+    // fprintf(stderr, "Tessellation error: %d: %s\r\n", (int) errorCode, err);
 }
 
 void init_tess()

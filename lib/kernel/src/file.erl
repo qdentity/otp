@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2021. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@
 %% %CopyrightEnd%
 %%
 -module(file).
+-deprecated([{pid2name,1,"this functionality is no longer supported"}]).
 
 %% Interface module for the file server and the file io servers.
 
@@ -69,7 +70,7 @@
 
 %% Types that can be used from other modules -- alphabetically ordered.
 -export_type([date_time/0, fd/0, file_info/0, filename/0, filename_all/0,
-              io_device/0, mode/0, name/0, name_all/0, posix/0]).
+              io_device/0, location/0, mode/0, name/0, name_all/0, posix/0]).
 
 %%% Includes and defines
 -include("file_int.hrl").
@@ -95,7 +96,7 @@
                       Size :: non_neg_integer(),
                       Delay :: non_neg_integer()}
 		   | 'delayed_write' | {'read_ahead', Size :: pos_integer()}
-		   | 'read_ahead' | 'compressed'
+		   | 'read_ahead' | 'compressed' | 'compressed_one'
 		   | {'encoding', unicode:encoding()}
 		   | sync.
 -type deep_list() :: [char() | atom() | deep_list()].
@@ -172,16 +173,9 @@ format_error(ErrorId) ->
       Pid :: pid().
 
 pid2name(Pid) when is_pid(Pid) ->
-    case whereis(?FILE_SERVER) of
-	undefined ->
-	    undefined;
-	_ ->
-	    case ets:lookup(?FILE_IO_SERVER_TABLE, Pid) of
-		[{_, Name} | _] ->
-		    {ok, Name};
-		_ ->
-		    undefined
-	    end
+    case file_request(Pid, pid2name) of
+        {ok, _} = Ok -> Ok;
+        _ -> undefined
     end.
 
 %%%-----------------------------------------------------------------
@@ -588,7 +582,7 @@ allocate(#file_descriptor{module = Module} = Handle, Offset, Length) ->
     Module:allocate(Handle, Offset, Length).
 
 -spec read(IoDevice, Number) -> {ok, Data} | eof | {error, Reason} when
-      IoDevice :: io_device() | atom(),
+      IoDevice :: io_device() | io:device(),
       Number :: non_neg_integer(),
       Data :: string() | binary(),
       Reason :: posix()
@@ -610,7 +604,7 @@ read(_, _) ->
     {error, badarg}.
 
 -spec read_line(IoDevice) -> {ok, Data} | eof | {error, Reason} when
-      IoDevice :: io_device() | atom(),
+      IoDevice :: io_device() | io:device(),
       Data :: string() | binary(),
       Reason :: posix()
               | badarg
@@ -674,7 +668,7 @@ pread(_, _, _) ->
     {error, badarg}.
 
 -spec write(IoDevice, Bytes) -> ok | {error, Reason} when
-      IoDevice :: io_device() | atom(),
+      IoDevice :: io_device() | io:device(),
       Bytes :: iodata(),
       Reason :: posix() | badarg | terminated.
 

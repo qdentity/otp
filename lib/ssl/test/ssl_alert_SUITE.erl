@@ -22,6 +22,7 @@
 
 -behaviour(ct_suite).
 
+-include("ssl_test_lib.hrl").
 -include_lib("common_test/include/ct.hrl").
 -include_lib("public_key/include/public_key.hrl").
 
@@ -29,6 +30,8 @@
 
 %% Common test
 -export([all/0,
+         init_per_suite/1,
+         end_per_suite/1,
          init_per_testcase/2,
          end_per_testcase/2
         ]).
@@ -54,6 +57,19 @@ all() ->
      bad_connect_response
     ].
 
+init_per_suite(Config0) ->
+    catch crypto:stop(),
+    try crypto:start() of
+	ok ->
+            ssl_test_lib:clean_start(),
+            Config0
+    catch _:_ ->
+	    {skip, "Crypto did not start"}
+    end.
+
+end_per_suite(_Config) ->
+    ssl:stop(),
+    application:stop(crypto).
 init_per_testcase(_TestCase, Config) ->
     ct:timetrap({seconds, 5}),
     Config.
@@ -118,7 +134,7 @@ alert_details_not_too_big(Config) when is_list(Config) ->
                                                                                      line => 1710}}, server, "TLS", cipher),
     case byte_size(term_to_binary(Txt)) < (byte_size(term_to_binary(ReasonText)) - PrefixLen) of
         true ->
-            ct:pal("~s", [Txt]);
+            ?CT_PAL("~s", [Txt]);
         false ->
             ct:fail(ssl_alert_text_too_big)
     end.
@@ -142,7 +158,7 @@ check_response({error, {tls_alert, {unexpected_message, _}}}) ->
 check_response({error, {options, {insufficient_crypto_support,_}}}) ->
     ok;
 check_response(What) ->
-    ct:pal("RES: ~p~n", [What]),
+    ?CT_PAL("RES: ~p~n", [What]),
     What.
 
 echo_server_init(Tester) ->
@@ -161,7 +177,7 @@ echo_server(Socket, Listen) ->
             {ok, New} = gen_tcp:accept(Listen),
             echo_server(New, Listen);
         Msg ->
-            ct:pal("Server: ~p~n", [Msg]),
+            ?CT_PAL("Server: ~p~n", [Msg]),
             echo_server(Socket, Listen)
     end.
 

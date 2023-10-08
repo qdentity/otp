@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1998-2021. All Rights Reserved.
+ * Copyright Ericsson AB 1998-2023. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -165,10 +165,11 @@ erts_debug_breakpoint_2(BIF_ALIST_2)
         mfa.arity = signed_val(tp[3]);
     }
 
-    if (!erts_try_seize_code_write_permission(BIF_P)) {
+    if (!erts_try_seize_code_mod_permission(BIF_P)) {
 	ERTS_BIF_YIELD2(BIF_TRAP_EXPORT(BIF_erts_debug_breakpoint_2),
 			BIF_P, BIF_ARG_1, BIF_ARG_2);
     }
+
     erts_proc_unlock(p, ERTS_PROC_LOCK_MAIN);
     erts_thr_progress_block();
 
@@ -182,13 +183,17 @@ erts_debug_breakpoint_2(BIF_ALIST_2)
 	erts_commit_staged_bp();
 	erts_uninstall_breakpoints(&f);
     }
-    erts_consolidate_bp_data(&f, 1);
+    erts_consolidate_local_bp_data(&f);
     res = make_small(f.matched);
     erts_bp_free_matched_functions(&f);
 
+    erts_blocking_code_barrier();
+
     erts_thr_progress_unblock();
     erts_proc_lock(p, ERTS_PROC_LOCK_MAIN);
-    erts_release_code_write_permission();
+
+    erts_release_code_mod_permission();
+
     return res;
 
  error:
@@ -306,7 +311,7 @@ erts_debug_disassemble_1(BIF_ALIST_1)
 	     * But this code_ptr will point to the start of the Export,
 	     * not the function's func_info instruction. BOOM !?
 	     */
-	    cmfa = erts_code_to_codemfa(ep->addresses[code_ix]);
+	    cmfa = erts_code_to_codemfa(ep->dispatch.addresses[code_ix]);
 	} else if (modp == NULL || (code_hdr = modp->curr.code_hdr) == NULL) {
 	    BIF_RET(am_undef);
 	} else {
@@ -624,7 +629,11 @@ print_op(fmtfn_t to, void *to_arg, int op, int size, BeamInstr* addr)
                 }
                 break;
 	    default:
+#ifdef ARCH_64
+		erts_print(to, to_arg, "%ld", *ap);
+#else
 		erts_print(to, to_arg, "%d", *ap);
+#endif
 	    }
 	    ap++;
 	    break;
@@ -678,7 +687,7 @@ print_op(fmtfn_t to, void *to_arg, int op, int size, BeamInstr* addr)
 	case 'F':		/* Function definition */
 	    {
 		ErlFunEntry* fe = (ErlFunEntry *) *ap;
-		const ErtsCodeMFA *cmfa = erts_find_function_from_pc(fe->address);
+		const ErtsCodeMFA *cmfa = erts_get_fun_mfa(fe, erts_active_code_ix());
 		erts_print(to, to_arg, "fun(`%T`:`%T`/%bpu)", cmfa->module,
 			   cmfa->function, cmfa->arity);
 		ap++;
@@ -885,7 +894,7 @@ print_op(fmtfn_t to, void *to_arg, int op, int size, BeamInstr* addr)
 	    }
 	}
 	break;
-    case op_i_make_fun3_Fdt:
+    case op_i_make_fun3_Fdtt:
 	{
 	    int n = unpacked[-1];
 
@@ -905,6 +914,55 @@ print_op(fmtfn_t to, void *to_arg, int op, int size, BeamInstr* addr)
 	    }
 	}
 	break;
+    case op_i_bs_create_bin_jIWdW:
+        {
+            int n = unpacked[-1];
+            int i = 0;
+            Eterm type = 0;
+
+            while (n > 0) {
+                switch (i % 5) {
+                case 0:           /* Type */
+                    type = ap[i];
+                    erts_print(to, to_arg, " `%d`", type);
+                    break;
+                case 1:           /* Unit */
+                case 2:           /* Flags */
+                    erts_print(to, to_arg, " `%d`", (Eterm) ap[i]);
+                    break;
+                case 4:         /* Size */
+                    if (type == BSC_BINARY_FIXED_SIZE ||
+                        type == BSC_FLOAT_FIXED_SIZE ||
+                        type == BSC_INTEGER_FIXED_SIZE ||
+                        type == BSC_STRING ||
+                        type == BSC_UTF32) {
+                        erts_print(to, to_arg, " `%d`", ap[i]);
+                        break;
+                    }
+
+                    /*FALLTHROUGH*/
+                case 3:         /* Src */
+                    if (type == BSC_STRING) {
+                        erts_print(to, to_arg, " ");
+                        print_byte_string(to, to_arg, (byte *) ap[i], ap[i+1]);
+                        break;
+                    }
+                    switch (loader_tag(ap[i])) {
+                    case LOADER_X_REG:
+                        erts_print(to, to_arg, " x(%d)", loader_x_reg_index(ap[i]));
+                        break;
+                    case LOADER_Y_REG:
+                        erts_print(to, to_arg, " y(%d)", loader_y_reg_index(ap[i]) - CP_SIZE);
+                        break;
+                    default:
+                        erts_print(to, to_arg, " `%T`", (Eterm) ap[i]);
+                        break;
+                    }
+                }
+                i++, size++, n--;
+            }
+        }
+        break;
     }
     erts_print(to, to_arg, "\n");
 
@@ -1085,7 +1143,7 @@ dirty_test(Process *c_p, Eterm type, Eterm arg1, Eterm arg2, ErtsCodePtr I)
 	    Eterm *hp, sz;
 	    Eterm cpy;
 	    /* We do not want this to be optimized,
-	       but rather the oposite... */
+	       but rather the opposite... */
 	    sz = size_object(arg2);
 	    hp = HAlloc(c_p, sz);
 	    cpy = copy_struct(arg2, sz, &hp, &c_p->off_heap);

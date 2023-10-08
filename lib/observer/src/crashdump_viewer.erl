@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2003-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2003-2023. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -1399,7 +1399,7 @@ get_pid_from_name(Name,Node) ->
 		[{_,Pid}] when is_pid(Pid) ->
 		    pid_to_list(Pid);
 		_ ->
-		    "<unkonwn_pid>"
+		    "<unknown_pid>"
 	    end;
 	_ ->
 	    "<unknown_pid_other_node>"
@@ -1652,7 +1652,7 @@ read_heap_lines_1(Fd, Acc) ->
 
             %% Reduce the memory consumption by converting the
             %% line to a binary. Measurements show that it may also
-            %% be benefical for performance, too, because it makes the
+            %% be beneficial for performance, too, because it makes the
             %% garbage collections cheaper.
 
             Line = list_to_binary(Line1),
@@ -3357,7 +3357,7 @@ collect(Pids,Acc) ->
 	    collect(lists:delete(Pid,Pids),[Result|Acc]);
         {'DOWN', _Ref, process, Pid, _Error} ->
             Warning =
-                "WARNING: an error occured while parsing data.\n" ++
+                "WARNING: an error occurred while parsing data.\n" ++
                 case get(truncated) of
                     true -> "This might be because the dump is truncated.\n";
                     false -> ""

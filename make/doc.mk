@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 1997-2021. All Rights Reserved.
+# Copyright Ericsson AB 1997-2022. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ RELCHUNKSDIR = $(RELEASE_PATH)/lib/$(APPLICATION)-$(VSN)
 
 APP_DIR = $(ERL_TOP)/lib/$(APPLICATION)
 APP_SRC_DIR = $(APP_DIR)/src
-APP_EBIN_DIR = $(APP_DIR)/src
+APP_EBIN_DIR = $(APP_DIR)/ebin
 
 # ----------------------------------------------------
 HTML_FILES = $(XML_APPLICATION_FILES:%.xml=$(HTMLDIR)/%.html) \
@@ -71,7 +71,7 @@ endif
 CHUNK_REF3_FILES = $(filter-out $(NO_CHUNKS), $(XML_ALL_REF3_FILES))
 CHUNK_FILES = $(CHUNK_REF3_FILES:%.xml=$(CHUNKSDIR)/%.chunk)
 
-ERL_CHUNK_FILES = $(patsubst $(APP_EBIN_DIR)/%.BEAM,$(CHUNKSDIR)/%.chunk,$(wildcard $(APP_EBIN_DIR)/*.beam))
+ERL_CHUNK_FILES = $(patsubst $(APP_EBIN_DIR)/%.beam,$(CHUNKSDIR)/%.chunk,$(wildcard $(APP_EBIN_DIR)/*.beam))
 EMPTY_CHUNK_FILES = $(filter-out $(NO_CHUNKS:%.xml=$(CHUNKSDIR)/%.chunk) $(CHUNK_FILES), $(ERL_CHUNK_FILES))
 
 
@@ -129,7 +129,7 @@ info:
 	@echo "XML_CHAPTER_FILES:     $(XML_CHAPTER_FILES)"
 	@echo "BOOK_FILES:            $(BOOK_FILES)"
 
-debug opt lcnt:
+$(TYPES):
 
 clean clean_docs: clean_xml clean_pdf clean_html clean_man clean_chunks
 	rm -rf $(EXTRA_FILES)
@@ -155,9 +155,6 @@ clean_chunks:
 # Release Target
 # ----------------------------------------------------
 include $(ERL_TOP)/make/otp_release_targets.mk
-
-$(RELSYSDIR) $(RELSYSDIR)/doc:
-	$(INSTALL_DIR) "$@"
 
 release_pdf_spec: pdf
 	$(INSTALL_DIR) "$(RELSYSDIR)/doc/pdf"
@@ -206,8 +203,8 @@ ifneq ($(MAN7_FILES),)
 	$(INSTALL_DATA) $(MAN7_FILES) "$(RELEASE_PATH)/man/man7"
 endif
 
-release_docs_spec: $(RELSYSDIR)/doc $(INFO_FILE) $(DOC_TARGETS:%=release_%_spec)
-	$(INSTALL_DATA) $(INFO_FILE) $(RELSYSDIR)
+release_docs_spec: $(INFO_FILE) $(DOC_TARGETS:%=release_%_spec)
+	$(INSTALL_DATA) $(INFO_FILE) "$(RELSYSDIR)"
 ifneq ($(STANDARDS),)
 	$(INSTALL_DIR) "$(RELEASE_PATH)/doc/standard"
 	$(INSTALL_DATA) $(STANDARDS) "$(RELEASE_PATH)/doc/standard"
